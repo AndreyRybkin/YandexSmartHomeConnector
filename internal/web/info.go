@@ -1,0 +1,333 @@
+package web
+
+import (
+	"encoding/json"
+	"fmt"
+	"maps"
+	"net/http"
+	"slices"
+	"strings"
+	"sync/atomic"
+	"time"
+
+	"gopkg.in/yaml.v3"
+
+	"hcgateway/internal/appliance"
+	"hcgateway/internal/config"
+	"hcgateway/internal/delonghi"
+	"hcgateway/internal/hcdevice"
+	"hcgateway/internal/profile"
+)
+
+// Страница «Всё о приборе» /devices/<id>/info и её поток SSE /devices/<id>/stream:
+// раз в секунду шлюз сравнивает состояние прибора с отправленным и шлёт новое.
+
+const (
+	// streamTick - как часто поток проверяет прибор.
+	streamTick = time.Second
+	// streamKeepAlive - комментарий в поток, если состояние не менялось: прокси не закрывает
+	// соединение без данных.
+	streamKeepAlive = 15 * time.Second
+	// streamMax - сколько живёт поток. Браузер переподключается сам, а шлюз при этом снова
+	// проверяет сессию.
+	streamMax = 10 * time.Minute
+	// maxStreams - предел одновременных потоков.
+	maxStreams = 8
+)
+
+// streams - открытые потоки SSE.
+var streams atomic.Int32
+
+type infoView struct {
+	ID, Name, Room, Source, Type, Manufacturer string
+	// Fields - адрес, haId, серийный номер и прочее, чем прибор подключён.
+	Fields []kv
+	// Alice - устройства Алисы прибора: умения и свойства по-русски.
+	Alice []aliceInfo
+	Live  snapshot
+	// Что умеет прибор.
+	Programs []string
+	Options  []optionRow
+	Commands []string
+	Events   []string
+	// Profile - действующий профиль в YAML, Origins - откуда каждое его поле.
+	Profile string
+	Origins []kv
+}
+
+type aliceInfo struct {
+	ID, Type, Name string
+	Items          []aliceItem
+}
+
+type optionRow struct {
+	Key, Limits, Values string
+	Setting             bool
+}
+
+// snapshot - то, что меняется: его отдаёт поток SSE.
+type snapshot struct {
+	Online  bool   `json:"online"`
+	Summary string `json:"summary"`
+	// Tone - вид метки состояния (stateTone); Notice - что требует внимания (status).
+	Tone   string `json:"tone"`
+	Notice string `json:"notice"`
+	// Mappings - сводка сопоставлений для вкладки «Сопоставления» страницы прибора.
+	Mappings []mapRow     `json:"mappings"`
+	Values   []valueRow   `json:"values"`
+	Alice    []aliceState `json:"alice"`
+	History  []historyRow `json:"history"`
+}
+
+type valueRow struct {
+	Key     string `json:"key"`
+	Value   string `json:"value"`
+	Mapping string `json:"mapping"`
+}
+
+type historyRow struct {
+	Time  string `json:"time"`
+	Kind  string `json:"kind"`
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+var kindLabels = map[string]string{"event": "событие", "value": "значение", "online": "связь"}
+
+func (s *Server) infoPage(w http.ResponseWriter, r *http.Request, sess *session) {
+	id := r.PathValue("id")
+	cfg, _ := s.file.Current()
+	dc, ok := cfg.Devices[id]
+	dev, built := s.gw.Device(id)
+	if !ok || !built {
+		s.notFound(w, sess)
+		return
+	}
+	v := infoView{ID: id, Name: dc.Name, Room: dc.Room, Source: dc.Source, Live: s.snapshot(id)}
+	v.Fields = deviceFields(dc)
+	for _, info := range dev.Info() {
+		a := aliceInfo{ID: info.ID, Type: info.Type, Name: info.Name}
+		v.Manufacturer = info.DeviceInfo.Manufacturer
+		for _, c := range append(slices.Clone(info.Capabilities), info.Properties...) {
+			a.Items = append(a.Items, describe(c))
+		}
+		v.Alice = append(v.Alice, a)
+	}
+	if hc, ok := s.gw.HomeConnect(id); ok {
+		desc := hc.Appliance.Describe()
+		v.Type, v.Programs, v.Commands, v.Events = desc.Type, desc.Programs, desc.Commands, desc.Events
+		if len(v.Programs) > 50 && dc.Source == config.SourceDeLonghi {
+			// Рецепты 1-255 - не список программ машины, а допустимые номера.
+			v.Programs = []string{delonghi.ProgramPrefix + "1 … " + delonghi.ProgramPrefix + "255"}
+		}
+		for _, k := range slices.Sorted(maps.Keys(desc.Options)) {
+			o := desc.Options[k]
+			row := optionRow{Key: k, Setting: o.Setting, Values: strings.Join(o.Values, ", ")}
+			if o.Max > o.Min {
+				row.Limits = fmt.Sprintf("от %s до %s, шаг %s", formatValue(o.Min), formatValue(o.Max), formatValue(o.Step))
+			}
+			v.Options = append(v.Options, row)
+		}
+		if out, err := yaml.Marshal(hc.Profile); err == nil {
+			v.Profile = string(out)
+		}
+		t := s.infoTarget(cfg, dc, desc.Type)
+		for _, f := range profileFields {
+			v.Origins = append(v.Origins, kv{f.name, t.origin(f.name)})
+		}
+	}
+	s.render(w, http.StatusOK, "info", s.newPage(sess, "devices", dc.Name, v))
+}
+
+// infoTarget - слои профиля прибора, как в редакторе: по ним видно, откуда поле.
+func (s *Server) infoTarget(cfg *config.Config, dc config.Device, haType string) *editTarget {
+	builtin := profile.BuiltinProfile(haType)
+	if dc.Source == config.SourceDeLonghi {
+		builtin = profile.Merge(builtin, profile.DeLonghiLayer(dc.Recipes, dc.DefaultDrink))
+	}
+	return &editTarget{builtin: builtin, forType: cfg.Profiles[haType], forDevice: dc.Profile, device: true}
+}
+
+// deviceFields - чем прибор подключён: только заданные поля.
+func deviceFields(dc config.Device) []kv {
+	var out []kv
+	add := func(k, v string) {
+		if v != "" {
+			out = append(out, kv{k, v})
+		}
+	}
+	add("haId", dc.HaID)
+	add("адрес", dc.Host)
+	add("deviceId", dc.DeviceID)
+	add("камера", dc.Location)
+	add("серийный номер", dc.Serial)
+	add("отпечаток сертификата", groups(dc.Pin))
+	if dc.ProfileID != nil {
+		add("профиль пользователя машины", fmt.Sprint(*dc.ProfileID))
+	}
+	return out
+}
+
+// snapshot - связь, значения с сопоставлениями, состояния устройств Алисы и история.
+func (s *Server) snapshot(id string) snapshot {
+	var sn snapshot
+	dev, ok := s.gw.Device(id)
+	if !ok {
+		return sn
+	}
+	cfg, _ := s.file.Current()
+	st := s.status(id, cfg.Devices[id])
+	sn.Online, sn.Summary, sn.Tone, sn.Notice, sn.Alice = st.Online, st.Text, st.Tone, st.Notice, deviceState(dev).Alice
+	hc, ok := dev.(*hcdevice.Device)
+	if !ok {
+		return sn
+	}
+	ast := hc.Appliance.State()
+	sn.Mappings = mapRows(hc.Profile, &ast, hc)
+	mapping := mappings(hc.Profile)
+	if ast.ActiveProgram != "" {
+		sn.Values = append(sn.Values, valueRow{"программа", ast.ActiveProgram, mapping[ast.ActiveProgram]})
+	}
+	if ast.SelectedProgram != "" {
+		sn.Values = append(sn.Values, valueRow{"выбранная программа", ast.SelectedProgram, mapping[ast.SelectedProgram]})
+	}
+	for _, k := range slices.Sorted(maps.Keys(ast.Values)) {
+		sn.Values = append(sn.Values, valueRow{k, formatValue(ast.Values[k]), mapping[k]})
+	}
+	for _, c := range hc.History() {
+		sn.History = append(sn.History, historyRow{Time: c.Time.Local().Format("15:04:05"), Kind: kindLabels[c.Kind], Key: c.Key, Value: c.Value})
+	}
+	return sn
+}
+
+// implicit - значения Home Connect, которые шлюз читает сам, без полей профиля: идёт ли
+// программа и можно ли её запустить. Если значение берёт поле профиля, видна подпись поля.
+var implicit = map[string]string{
+	appliance.StatusOperationState:     "шлюз: идёт ли программа",
+	appliance.StatusRemoteStartAllowed: "шлюз: разрешён ли удалённый старт",
+	appliance.StatusDoorState:          "шлюз: закрыта ли дверца перед стартом",
+}
+
+// mappings - имя функции прибора -> что из него берёт Алиса или сам шлюз.
+func mappings(p *profile.Profile) map[string]string {
+	out := map[string]string{}
+	add := func(k, v string) {
+		if k == "" {
+			return
+		}
+		if out[k] != "" {
+			out[k] += "; "
+		}
+		out[k] += v
+	}
+	if pw := p.Power; pw != nil {
+		add(pw.Setting, "on_off: питание")
+		add(pw.State, "on_off: включён, кроме "+strings.Join(pw.Idle, ", "))
+		add(pw.Allowed, "on_off: разрешение")
+	} else if p.OnOff == "power" {
+		add(appliance.SettingPowerState, "on_off: питание")
+	}
+	if p.OnOff == "program" {
+		add(appliance.StatusOperationState, "on_off: включён, пока идёт программа")
+	}
+	for _, m := range p.Modes {
+		add(m.Option, "mode "+m.Instance)
+		for k, v := range m.Programs {
+			add(k, "mode "+m.Instance+": "+v)
+		}
+	}
+	for _, r := range p.Ranges {
+		add(r.Option, "range "+r.Instance)
+	}
+	for _, t := range p.Toggles {
+		add(t.Setting, "toggle "+t.Instance)
+		if t.Instance == "pause" && t.Setting == "" {
+			add(appliance.StatusOperationState, "toggle pause: на паузе ли программа")
+		}
+	}
+	if c := p.Color; c != nil {
+		add(c.Setting, "color_setting: цвет")
+		add(c.Hue, "color_setting: оттенок")
+		add(c.Saturation, "color_setting: насыщенность")
+		add(c.Temperature, "color_setting: цветовая температура")
+	}
+	for _, pr := range p.Properties {
+		label := pr.Type + " " + pr.Instance
+		if c := conversionLabel(&pr); c != "" {
+			label += ", " + c
+		}
+		add(pr.Status, label)
+	}
+	if e := p.Events; e != nil {
+		for _, k := range e.FoodLevel {
+			add(k, "датчик: food_level")
+		}
+		for _, k := range slices.Sorted(maps.Keys(e.Button)) {
+			name, _, _ := strings.Cut(k, "=")
+			add(name, "датчик: button "+e.Button[k])
+		}
+	}
+	for k, v := range implicit {
+		if out[k] == "" {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// stream - поток SSE состояния прибора: событие state с JSON снимка при каждом изменении.
+func (s *Server) stream(w http.ResponseWriter, r *http.Request, _ *session) {
+	id := r.PathValue("id")
+	if _, ok := s.gw.Device(id); !ok {
+		http.NotFound(w, r)
+		return
+	}
+	s.sse(w, r, "state", func() any { return s.snapshot(id) })
+}
+
+// sse - поток SSE: раз в секунду снимок snap сравнивается с отправленным, новый уходит
+// событием event с JSON.
+func (s *Server) sse(w http.ResponseWriter, r *http.Request, event string, snap func() any) {
+	if streams.Add(1) > maxStreams {
+		streams.Add(-1)
+		http.Error(w, "Слишком много потоков", http.StatusServiceUnavailable)
+		return
+	}
+	defer streams.Add(-1)
+	rc := http.NewResponseController(w)
+	h := w.Header()
+	h.Set("Content-Type", "text/event-stream")
+	h.Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	tick := time.NewTicker(streamTick)
+	defer tick.Stop()
+	end := time.Now().Add(streamMax)
+	var last []byte
+	quiet := time.Now()
+	for {
+		now := time.Now()
+		// Сервер ограничивает ответ 30 с: поток продлевает срок перед каждой записью.
+		_ = rc.SetWriteDeadline(now.Add(10 * time.Second))
+		data, _ := json.Marshal(snap())
+		var err error
+		switch {
+		case string(data) != string(last):
+			_, err = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, data)
+			last, quiet = data, now
+		case now.Sub(quiet) >= streamKeepAlive:
+			_, err = fmt.Fprint(w, ": keep-alive\n\n")
+			quiet = now
+		}
+		if err == nil {
+			err = rc.Flush()
+		}
+		if err != nil || now.After(end) {
+			return
+		}
+		select {
+		case <-r.Context().Done():
+			return
+		case <-tick.C:
+		}
+	}
+}

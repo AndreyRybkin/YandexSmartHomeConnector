@@ -1,0 +1,36 @@
+{{define "content"}}{{$p := .}}{{with .Data}}
+<div class="page-head"><h1>Приборы</h1><a class="button primary" href="#add"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>Добавить прибор</a></div>
+{{if .Rooms}}{{if .Problems}}<p class="attention" id="attention" data-problems="{{.ProblemList}}" data-filter aria-live="polite"><svg class="icon" aria-hidden="true"><use href="#i-alert"/></svg><span>Показаны только приборы, которые требуют внимания · <span data-counts>{{or .Attention "сейчас таких нет"}}</span></span><a href="/">Показать все</a></p>
+{{else}}<p class="attention" id="attention" data-problems="{{.ProblemList}}" aria-live="polite"{{if not .Attention}} hidden{{end}}><svg class="icon" aria-hidden="true"><use href="#i-alert"/></svg><a href="/?problems=1">Требует внимания · <span data-counts>{{.Attention}}</span></a></p>{{end}}
+<div id="list" data-stream="/stream">
+{{range .Rooms}}<section class="room">{{if .Room}}<h2>{{.Room}}</h2>{{else if gt (len $p.Data.Rooms) 1}}<h2>Без комнаты</h2>{{end}}
+<div class="tiles">
+{{range .Devices}}<article class="tile {{.Tone}}" id="d-{{.ID}}"{{if and $p.Data.Problems (not .Problem)}} hidden{{end}}>
+<a class="tile-head" href="/devices/{{.ID}}"><svg class="icon" aria-hidden="true"><use href="#i-{{.Icon}}"/></svg><span><span class="tile-name">{{.Name}}</span><span class="tech">{{source .Source}}</span></span></a>
+<p class="state"><span class="chip {{.Tone}}">{{.State}}</span>{{with .Notice}}<span class="chip warn">{{.}}</span>{{end}}</p>
+<div class="tile-foot"><form method="post" action="/devices/{{.ID}}/command"{{if not .Switch}} hidden{{end}}><input type="hidden" name="csrf" value="{{$p.CSRF}}"><input type="hidden" name="type" value="devices.capabilities.on_off"><input type="hidden" name="instance" value="on"><input type="hidden" name="from" value="list"><button class="switch{{if .On}} on{{end}}" name="value" value="{{if .On}}false{{else}}true{{end}}" role="switch" aria-checked="{{.On}}"><svg class="icon" aria-hidden="true"><use href="#i-power"/></svg><span>{{if .On}}Выключить{{else}}Включить{{end}}</span></button></form>
+<a class="icon-link" href="/devices/{{.ID}}/info" title="Всё о приборе" aria-label="Всё о приборе"><svg class="icon" aria-hidden="true"><use href="#i-info"/></svg></a></div>
+</article>{{end}}
+</div></section>{{end}}
+</div>{{else}}<p class="empty">Приборов пока нет. Добавьте первый прибор формой ниже.</p>{{end}}
+<details class="field" id="add"{{if .AddOpen}} open{{end}}><summary><h2>Добавить прибор</h2></summary>
+{{with .Error}}<p class="err">{{.}}</p>{{end}}
+<form method="post" action="/devices" data-names="{{.Names}}">{{template "keys" $p}}
+<datalist id="dl-rooms">{{range .RoomNames}}<option value="{{.}}">{{end}}</datalist>
+<label>Имя <input name="name" value="{{.Form.Name}}" required maxlength="64"><span class="hint" data-voice></span><span class="fit" data-dupe hidden></span></label>
+<label>Комната <input name="room" value="{{.Form.Room}}" maxlength="64" list="dl-rooms" placeholder="без комнаты"></label>
+<label>Идентификатор в Алисе <input name="id" value="{{.FormID}}" maxlength="64" placeholder="из имени" data-slug data-taken="{{.Taken}}"> <span class="muted">латинские буквы, цифры, _ и -; потом не меняется</span></label>
+<label>Источник <select name="source">{{template "opts" .Sources}}</select></label>
+<div data-sources="demo"><label>Тип демо-прибора <select name="demo">{{template "opts" .DemoKinds}}</select></label></div>
+<div data-sources="wled homeconnect-local delonghi webos samsung-tv"><label>Адрес в домашней сети <input name="host" value="{{.Form.Host}}" maxlength="261" placeholder="192.168.1.50 или wled.local"> <span class="muted">кофемашине и телевизору - только IP; <a href="/connections#discovery">найти в сети</a></span></label></div>
+<div data-sources="webos samsung-tv"><label>MAC телевизора <input name="mac" value="{{.Form.MAC}}" maxlength="17" placeholder="AA:BB:CC:DD:EE:FF"> <span class="muted">пусто - шлюз узнает его у включённого телевизора</span></label>
+<label>Широковещательный адрес для включения <input name="broadcast" value="{{.Form.Broadcast}}" maxlength="15" placeholder="255.255.255.255"> <span class="muted">например 192.168.1.255</span></label></div>
+<div data-sources="smartthings"><label>Устройство аккаунта SmartThings {{if .STIDs}}<select name="device_id" data-fill-name>{{template "opts" .STIDs}}</select>{{else}}<input name="device_id" value="{{.Form.DeviceID}}" maxlength="64" placeholder="deviceId"> <span class="muted">список устройств появится на странице «Подключения»</span>{{end}}</label>
+<label>Компонент <input name="location" value="{{.Form.Location}}" maxlength="64" placeholder="main"> <span class="muted">пусто - main; компоненты видны на странице «Подключения»</span></label></div>
+<div data-sources="delonghi"><label>Кофемашина аккаунта De'Longhi {{if .CoffeeSerials}}<select name="serial" data-fill-name>{{template "opts" .CoffeeSerials}}</select>{{else}}<input name="serial" value="{{.Form.Serial}}" maxlength="64" placeholder="серийный номер"> <span class="muted">список машин появится после входа на странице «Подключения»</span>{{end}}</label></div>
+<div data-sources="thinq"><label>Прибор аккаунта LG {{if .ThinQIDs}}<select name="device_id" data-fill-name>{{template "opts" .ThinQIDs}}</select>{{else}}<input name="device_id" value="{{.Form.DeviceID}}" maxlength="128" placeholder="deviceId"> <span class="muted">список приборов появится на странице «Подключения»</span>{{end}}</label>
+<label>Камера прибора LG <input name="location" value="{{.Form.Location}}" maxlength="32" placeholder="FREEZER"> <span class="muted">пусто - прибор целиком; камеры видны на странице «Подключения»</span></label></div>
+<div data-sources="homeconnect-cloud homeconnect-local"><label>Прибор Home Connect {{if .HaIDs}}<select name="ha_id" data-fill-name>{{template "opts" .HaIDs}}</select>{{else}}<input name="ha_id" value="{{.Form.HaID}}" maxlength="64" placeholder="haId"> <span class="muted">список появится после входа в Home Connect или после загрузки ключей командой fetch-keys</span>{{end}}</label></div>
+<button class="primary">Добавить</button>
+</form></details>
+{{end}}{{end}}

@@ -1,0 +1,5 @@
+{{define "content"}}{{$p := .}}{{with .Data}}
+<h1>{{.Title}}</h1>
+<p>{{.Text}}</p>
+<form method="post" action="{{.Action}}">{{template "keys" $p}}<button class="primary">{{.Button}}</button> <a href="{{.Back}}">Отмена</a></form>
+{{end}}{{end}}

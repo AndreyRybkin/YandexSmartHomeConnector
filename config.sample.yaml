@@ -1,0 +1,160 @@
+# Пример настроек hcgateway. Скопируйте в config/config.yaml и подставьте свои значения.
+# config.yaml в git не добавляется. Всё, кроме параметров запуска, можно задать в веб-интерфейсе.
+# Первое сохранение из интерфейса перепишет файл целиком, без этих комментариев.
+
+# Каталог для ключей приборов, токенов Яндекса и пользователя веб-интерфейса. В Docker - том.
+data_dir: /data
+
+# Адрес HTTP-сервера: запросы Яндекса на /v1.0 и /auth, веб-интерфейс - на остальных адресах.
+# Traefik принимает HTTPS и передаёт запросы сюда.
+listen: ":8080"
+
+metrics:
+  # Адрес для Prometheus. Traefik этот порт не публикует, Prometheus забирает метрики по сети Docker.
+  listen: ":8082"
+  # Токен Prometheus, не меньше 32 символов, например из openssl rand -hex 32. Без него порт метрик закрыт.
+  # token: ""
+
+# Прокси, чьему X-Forwarded-For шлюз верит: по нему банятся адреса после неудачных входов.
+# По умолчанию - частные сети и localhost.
+# trusted_proxies: [172.18.0.0/16]
+
+# Пока не заданы client_id и client_secret, шлюз отвечает Яндексу 404.
+# yandex:
+#   # Идентификатор навыка из консоли Яндекс Диалогов, вкладка «Общие сведения».
+#   # Без skill_id и callback_token шлюз работает, но не сообщает Яндексу об изменениях.
+#   skill_id: ""
+#   # Токен владельца навыка для уведомлений. Получить: войти под аккаунтом владельца навыка по ссылке
+#   # https://oauth.yandex.ru/authorize?response_type=token&client_id=c473ca268cd749d3a8371351a8f2bcbd
+#   callback_token: ""
+#   # Придумайте и укажите те же значения в консоли навыка, раздел «Связка аккаунтов».
+#   # client_secret - не меньше 16 символов.
+#   client_id: ""
+#   client_secret: ""
+
+# Облако Home Connect: приложение с Device Flow на портале разработчика Home Connect.
+# Войти в аккаунт можно на странице «Подключения» веб-интерфейса.
+# homeconnect:
+#   client_id: ""
+#   # Секрет приложения, нужен для обновления токена.
+#   client_secret: ""
+#   # Адрес облака; для проверки без приборов - https://simulator.home-connect.com
+#   api_url: https://api.home-connect.com
+
+# Облако LG ThinQ Connect: приборы LG. PAT создаётся на https://connect-pat.lgthinq.com
+# thinq:
+#   pat: ""
+#   # Страна аккаунта LG: по ней шлюз выбирает регион облака.
+#   country: NL
+
+# Облако SmartThings: приложение API Access, созданное командой smartthings smartapps:create.
+# Адрес возврата и области доступа - на странице «Подключения» → «SmartThings», там же вход.
+# API SmartThings работает по платному плану разработчика Samsung.
+# smartthings:
+#   client_id: ""
+#   client_secret: ""
+
+# Сеть поиска приборов в домашней сети: «Подключения» → «Поиск в домашней сети». Только частная
+# IPv4-сеть не больше 1024 адресов (/22). Интерфейс запоминает сеть сам после поиска.
+# discovery:
+#   network: 192.168.1.0/24
+
+# Приборы. Ключ - идентификатор прибора в Алисе: латинские буквы, цифры, _ и -.
+devices:
+  demo-oven:
+    name: Демо-духовка
+    room: Кухня
+    # Значок в интерфейсе; без него - по типу прибора. Допустимо: oven, dishwasher, washer, dryer,
+    # coffee, hood, fridge, robot, light, ac, air, tv, sensor, socket, device.
+    # icon: oven
+    # Источник: demo - демо-прибор в памяти шлюза, homeconnect-cloud - прибор из облака Home Connect,
+    # homeconnect-local - прибор Home Connect в домашней сети, wled - лента WLED, thinq - прибор LG,
+    # delonghi - кофемашина De'Longhi в домашней сети, webos и samsung-tv - телевизоры LG и Samsung
+    # в домашней сети, smartthings - устройство из облака SmartThings.
+    source: demo
+    # Тип демо-прибора: Oven или Dishwasher. Программа идёт 2 минуты.
+    demo: Oven
+  # Лента WLED в домашней сети: адрес и сопоставление пресетов ленты сценам Алисы.
+  # strip:
+  #   name: Лента
+  #   room: Гостиная
+  #   source: wled
+  #   host: 192.168.1.50
+  #   presets: {3: candle, 5: party}
+  # Прибор из облака Home Connect: haId - из списка приборов аккаунта на странице «Подключения».
+  # oven:
+  #   name: Духовка
+  #   room: Кухня
+  #   source: homeconnect-cloud
+  #   ha_id: BOSCH-HCS01OVN1-000000000000
+  # Прибор Home Connect в домашней сети, без облака: ключи загружает команда hcgateway fetch-keys.
+  # Порт по умолчанию - 443 для TLS-PSK и 80 для AES, режим записан в ключах прибора.
+  # dishwasher:
+  #   name: Посудомойка
+  #   room: Кухня
+  #   source: homeconnect-local
+  #   ha_id: SIEMENS-SN658X06TE-000000000000
+  #   host: 192.168.1.60
+  # Прибор LG: deviceId - из списка приборов аккаунта LG на странице «Подключения».
+  # Сопоставления - встроенный профиль типа LG; profile переопределяет его, как у Home Connect.
+  # washer:
+  #   name: Стиральная машина
+  #   room: Ванная
+  #   source: thinq
+  #   device_id: 0123456789abcdef0123456789abcdef
+  # Камера прибора LG - отдельный прибор: имя камеры из профиля LG.
+  # freezer:
+  #   name: Морозильная камера
+  #   room: Кухня
+  #   source: thinq
+  #   device_id: fedcba9876543210fedcba9876543210
+  #   location: FREEZER
+  # Кофемашина De'Longhi с приложением My Coffee Lounge: вход в аккаунт De'Longhi и
+  # подтверждение отпечатка сертификата - на страницах «Подключения» и прибора.
+  # Адрес - только IP в домашней сети. recipes - номер рецепта машины для напитка Алисы.
+  # coffee:
+  #   name: Кофемашина
+  #   room: Кухня
+  #   source: delonghi
+  #   host: 192.168.1.70
+  #   serial: 000000ZZ00000000000
+  #   recipes: {espresso: 1, americano: 6, cappuccino: 15}
+  #   default_drink: americano
+  # Телевизор LG webOS или Samsung в домашней сети: только IP. При первом подключении телевизор
+  # спросит разрешение на экране. Включает выключенный телевизор пакет Wake-on-LAN по MAC, который
+  # телевизор сообщил сам; broadcast - широковещательный адрес домашней сети. Из обычной сети Docker
+  # пакет доходит до телевизора только после настройки сервера: README, раздел 5.8.
+  # tv:
+  #   name: Телевизор
+  #   room: Гостиная
+  #   source: webos
+  #   host: 192.168.1.80
+  #   broadcast: 192.168.1.255
+  # Устройство SmartThings: deviceId - из списка устройств на странице «Подключения»,
+  # location - компонент, например freezer; пусто - main.
+  # lamp:
+  #   name: Лампа
+  #   room: Гостиная
+  #   source: smartthings
+  #   device_id: 00000000-0000-0000-0000-000000000000
+  demo-dishwasher:
+    name: Демо-посудомойка
+    room: Кухня
+    source: demo
+    demo: Dishwasher
+    # Переопределение профиля только для этого прибора.
+    # profile:
+    #   default_program: Dishcare.Dishwasher.Program.Eco50
+
+# Переопределения встроенных профилей по типу прибора: Home Connect, LG, SmartThings или телевизора.
+# Заданное поле заменяет встроенное целиком, остальные остаются встроенными.
+# profiles:
+#   Oven:
+#     default_options:
+#       Cooking.Oven.Option.SetpointTemperature: 200
+#     modes:
+#       - instance: program
+#         programs:
+#           Cooking.Oven.Program.HeatingMode.HotAir: baking
+#           Cooking.Oven.Program.HeatingMode.PizzaSetting: pizza
+#           Cooking.Oven.Program.HeatingMode.Defrost: one

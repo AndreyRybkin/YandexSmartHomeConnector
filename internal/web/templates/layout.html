@@ -1,0 +1,228 @@
+{{define "layout"}}<!doctype html>
+<html lang="ru"{{with .Theme}} data-theme="{{.}}"{{end}}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{{.Title}} - hcgateway</title>
+{{if .RefreshTo}}<meta http-equiv="refresh" content="{{.Refresh}}; url={{.RefreshTo}}">{{else if .Refresh}}<meta http-equiv="refresh" content="{{.Refresh}}">{{end}}
+<link rel="manifest" href="/static/manifest.webmanifest">
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Шлюз">
+{{if eq .Theme "dark"}}<meta name="theme-color" content="#0f1115">{{else if eq .Theme "light"}}<meta name="theme-color" content="#f4f5f7">{{else}}<meta name="theme-color" content="#f4f5f7" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#0f1115" media="(prefers-color-scheme: dark)">{{end}}
+<script src="/static/app.js" defer></script>
+<style>
+:root{color-scheme:light;--bg:#f4f5f7;--surface:#fff;--surface-2:#eef0f3;--fg:#1c1d21;--muted:#6b6f7a;--line:#e1e4ea;--accent:#2563eb;--accent-fg:#fff;--ok:#15803d;--ok-fg:#fff;--ok-bg:#dcfce7;--note:#b45309;--note-bg:#fef3c7;--err:#b91c1c;--err-bg:#fee2e2;--shadow:0 1px 2px rgba(16,24,40,.05),0 1px 3px rgba(16,24,40,.08);--radius:14px}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){color-scheme:dark;--bg:#0f1115;--surface:#171a21;--surface-2:#222632;--fg:#e8eaf0;--muted:#9aa0ad;--line:#2b303c;--accent:#60a5fa;--accent-fg:#0b1220;--ok:#4ade80;--ok-fg:#052e16;--ok-bg:#132c1d;--note:#fbbf24;--note-bg:#33280c;--err:#f87171;--err-bg:#3a1517;--shadow:0 1px 2px rgba(0,0,0,.5)}}
+:root[data-theme=dark]{color-scheme:dark;--bg:#0f1115;--surface:#171a21;--surface-2:#222632;--fg:#e8eaf0;--muted:#9aa0ad;--line:#2b303c;--accent:#60a5fa;--accent-fg:#0b1220;--ok:#4ade80;--ok-fg:#052e16;--ok-bg:#132c1d;--note:#fbbf24;--note-bg:#33280c;--err:#f87171;--err-bg:#3a1517;--shadow:0 1px 2px rgba(0,0,0,.5)}
+*{box-sizing:border-box}
+body{font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--fg);background:var(--bg);margin:0;-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+.sprite{position:absolute;width:0;height:0;overflow:hidden}
+.icon{width:18px;height:18px;flex:none;vertical-align:-3px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+header{position:sticky;top:0;z-index:20;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;padding:10px 20px;padding-top:max(10px,env(safe-area-inset-top));background:var(--bg);background:color-mix(in srgb,var(--bg) 82%,transparent);-webkit-backdrop-filter:saturate(1.6) blur(12px);backdrop-filter:saturate(1.6) blur(12px);border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:8px;font-weight:700;color:var(--fg)}
+.brand:hover{text-decoration:none}
+.brand .icon{width:28px;height:28px;padding:5px;border-radius:8px;background:var(--accent);color:var(--accent-fg)}
+header nav{display:flex;gap:4px;flex-wrap:wrap}
+header nav a{padding:6px 12px;border-radius:999px;color:var(--fg);font-weight:500}
+header nav a:hover{background:var(--surface-2);text-decoration:none}
+header nav a.on{background:var(--surface);color:var(--accent);box-shadow:var(--shadow)}
+.me{display:flex;gap:8px;align-items:center;margin-left:auto;flex-wrap:wrap}
+.me form{margin:0;display:flex;gap:6px;align-items:center}
+header .menu{display:none}
+main{max-width:1180px;margin:0 auto;padding:20px}
+h1{font-size:26px;line-height:1.25;margin:6px 0 14px;letter-spacing:-.01em}h2{font-size:19px;margin:0 0 10px}h3{font-size:16px;margin:0 0 8px}
+.page-head{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between}
+.page-head h1{margin-bottom:6px}
+.device-head{display:flex;gap:14px;align-items:center;margin:6px 0 8px}
+.device-head h1{margin:0 0 4px}
+.device-head .state{margin:0}
+.device-head>.icon{width:52px;height:52px;padding:12px;border-radius:14px;background:var(--surface-2);color:var(--accent)}
+section.field.danger{border-color:var(--err)}
+section.field.danger h2{color:var(--err)}
+table{border-collapse:collapse;width:100%}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:600;font-size:13px;color:var(--muted)}
+.wrap{overflow-x:auto}
+input,select,textarea,button,.button{font:inherit;padding:7px 11px;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--fg);max-width:100%}
+textarea{width:100%}
+input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-visible,a:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button,.button{cursor:pointer;font-weight:500;display:inline-flex;align-items:center;gap:6px;transition:background .15s,filter .15s}
+button:hover,.button:hover{background:var(--surface-2);text-decoration:none}
+button.primary,.button.primary{background:var(--accent);color:var(--accent-fg);border-color:transparent}
+button.primary:hover,.button.primary:hover{background:var(--accent);filter:brightness(1.1)}
+button:disabled{cursor:wait;opacity:.6}
+input[type=checkbox]{-webkit-appearance:none;appearance:none;width:36px;height:20px;padding:0;margin:0;border:none;border-radius:999px;background:var(--line);position:relative;vertical-align:middle;cursor:pointer;transition:background .15s;flex:none}
+input[type=checkbox]::before{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.3);transition:transform .15s}
+input[type=checkbox]:checked{background:var(--accent)}
+input[type=checkbox]:checked::before{transform:translateX(16px)}
+input[name$=".delete"]:checked,input[name$="_clear"]:checked{background:var(--err)}
+input[type=color]{padding:2px;width:44px;height:34px}
+.err{color:var(--err)}.ok{color:var(--ok)}.notice{color:var(--note)}
+.muted,h3 small{color:var(--muted);font-weight:normal}
+.tech{color:var(--muted);font-size:85%;font-weight:normal;word-break:break-all}
+.hint{display:block;color:var(--muted);font-size:13px;font-weight:normal;margin-top:2px}
+.hint:empty{display:none}
+.fit{display:block;color:var(--note);font-size:13px;margin-top:2px}
+.crumbs{margin:0;color:var(--muted);font-size:14px}
+.banner{padding:10px 14px;border-radius:12px;margin:0 0 12px;background:var(--note-bg);color:var(--note)}
+.banner a{color:inherit;text-decoration:underline}
+.flash{padding:10px 14px;border-radius:12px;margin:10px 0;background:var(--ok-bg);color:var(--ok)}
+.flash.err{background:var(--err-bg);color:var(--err)}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;font-size:13px;font-weight:500;background:var(--surface-2);color:var(--fg);border:1px solid transparent}
+.chip::before{content:"";width:7px;height:7px;border-radius:50%;flex:none;box-shadow:inset 0 0 0 1.5px var(--muted)}
+.chip.run{background:var(--ok-bg);color:var(--ok)}.chip.run::before{background:var(--ok);box-shadow:none}
+.chip.warn{background:var(--note-bg);color:var(--note)}.chip.warn::before{width:9px;height:8px;border-radius:0;background:var(--note);box-shadow:none;clip-path:polygon(50% 0,100% 100%,0 100%)}
+.chip.err{background:var(--err-bg);color:var(--err)}.chip.err::before{width:6px;height:6px;margin:0 1px;border-radius:1px;background:var(--err);box-shadow:none;transform:rotate(45deg)}
+.chip.off{background:transparent;color:var(--muted);border-style:dashed;border-color:var(--muted)}.chip.off::before{box-shadow:none;border:1.5px dashed var(--muted)}
+.state .chip+.chip{margin-left:4px}
+.attention{display:flex;gap:4px 8px;align-items:flex-start;padding:10px 14px;border-radius:12px;margin:0 0 12px;background:var(--note-bg);color:var(--note)}
+.attention>span,.attention>a:only-of-type{flex:1;min-width:0}
+.attention a{color:inherit;text-decoration:underline}
+section.field,details.field{border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;margin:16px 0;background:var(--surface);box-shadow:var(--shadow)}
+details.field>summary{cursor:pointer;list-style:none}
+details.field>summary::-webkit-details-marker{display:none}
+details.field>summary h2{display:inline}
+details.field>summary::before{content:"▸ ";color:var(--muted)}
+details.field[open]>summary::before{content:"▾ "}
+details.field[open]>summary{margin-bottom:8px}
+.dirty{border-color:var(--note)!important}
+.dirty>h2::after,.dirty>h3::after,.dirty>summary h2::after{content:" · не сохранено";color:var(--note);font-size:80%;font-weight:normal}
+.tabs{display:flex;flex-wrap:wrap;gap:4px;margin:14px 0 4px;padding:4px;background:var(--surface-2);border-radius:12px;width:fit-content;max-width:100%}
+.tabs a{padding:7px 14px;border-radius:9px;color:var(--fg);font-weight:500}
+.tabs a:hover{text-decoration:none;background:var(--surface)}
+.tabs a.on{background:var(--surface);color:var(--accent);box-shadow:var(--shadow)}
+fieldset{border:1px solid var(--line);border-radius:12px;margin:12px 0;padding:10px 14px}
+legend{padding:0 6px}
+label{display:block;margin:10px 0}
+label.inline{display:inline-flex;align-items:center;gap:6px;margin:0 0 0 12px}
+form.cmd{margin:10px 0}
+form.login{max-width:360px}form.login input{width:100%}
+code{font-size:90%;word-break:break-all;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+pre{background:var(--surface-2);border-radius:10px;padding:12px;overflow-x:auto}
+[hidden]{display:none!important}
+.room>h2{font-size:13px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin:22px 0 8px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px;margin:6px 0 10px}
+.tile{display:flex;flex-direction:column;gap:12px;padding:14px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);transition:border-color .2s,box-shadow .2s,background .2s}
+.tile.run{border-color:var(--ok);border-color:color-mix(in srgb,var(--ok) 45%,var(--line));background:color-mix(in srgb,var(--ok) 5%,var(--surface));box-shadow:var(--shadow),0 0 0 3px var(--ok-bg)}
+.tile.run .tile-head .icon{background:var(--ok-bg);color:var(--ok)}
+.tile.warn .tile-head .icon{background:var(--note-bg);color:var(--note)}
+.tile.off{border-style:dashed;background:transparent;box-shadow:none}
+.tile.off .tile-head .icon{background:transparent;color:var(--muted);box-shadow:inset 0 0 0 1px var(--line)}
+.room:not(:has(.tile:not([hidden]))){display:none}
+.tile-head{display:flex;gap:12px;align-items:center;color:var(--fg);min-width:0}
+.tile-head:hover{text-decoration:none}
+.tile-head .icon{width:44px;height:44px;padding:10px;border-radius:12px;background:var(--surface-2);color:var(--accent)}
+.tile-name{display:block;font-weight:600;font-size:16px}
+.tile .state{margin:0}
+.tile .flash{margin:0}
+.tile-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:auto}
+.tile-foot form{margin:0}
+.switch.on{background:var(--ok);color:var(--ok-fg);border-color:transparent}
+.switch.on:hover{background:var(--ok);filter:brightness(1.1)}
+.switch.pending::after{content:"";width:12px;height:12px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.attention .icon{flex:none}
+.icon-link{display:inline-flex;padding:8px;border-radius:9px;color:var(--muted);margin-left:auto}
+.icon-link:hover{background:var(--surface-2);color:var(--fg)}
+.empty{padding:28px;text-align:center;color:var(--muted);background:var(--surface);border:1px dashed var(--line);border-radius:var(--radius)}
+.conn-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin:12px 0 18px}
+.card{display:flex;flex-direction:column;gap:6px;padding:14px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
+.card.warn{border-color:var(--note)}
+.card h3{margin:0}.card h3 a{color:var(--fg)}
+.card p{margin:0}
+.card-foot{margin-top:auto;padding-top:6px}
+.card-foot form{margin:0}
+details.step{border-top:1px solid var(--line);padding:10px 0}
+details.step>summary{cursor:pointer;list-style:none;display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;font-weight:600}
+details.step>summary::-webkit-details-marker{display:none}
+details.step[open]>summary{margin-bottom:8px}
+.step-num{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:var(--surface-2);font-size:13px;flex:none}
+details.step.done .step-num{background:var(--ok-bg);color:var(--ok)}
+details.step summary .muted{font-weight:normal}
+@media (max-width:640px){
+main{padding:14px}
+h1{font-size:23px}
+header{padding:8px 14px;padding-top:max(8px,env(safe-area-inset-top))}
+header>nav,header>.me{display:none}
+header .menu{display:block;margin-left:auto}
+header .menu[open]{width:100%}
+header .menu summary{cursor:pointer;font-weight:600;list-style:none;display:flex;align-items:center;gap:6px;justify-content:flex-end}
+header .menu summary::-webkit-details-marker{display:none}
+header .menu nav{flex-direction:column;margin-top:8px}
+header .menu nav a{border-radius:9px;padding:10px 12px}
+header .menu .me{margin:10px 0 4px}
+table.cards,table.cards tbody,table.cards thead,table.cards tr,table.cards td{display:block;width:auto}
+table.cards tr.head{display:none}
+table.cards tr{border:1px solid var(--line);border-radius:12px;margin:8px 0;padding:6px 10px;background:var(--surface)}
+table.cards td{border:none;padding:3px 0}
+table.cards td[data-label]::before{content:attr(data-label) ": ";color:var(--muted)}
+section.field,details.field{padding:12px 14px}
+button,.button,input:not([type=checkbox]),select{min-height:44px}
+.icon-link{padding:13px}
+.tiles{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.tile{padding:12px;gap:8px}
+.tile-head{flex-direction:column;align-items:flex-start;gap:8px}
+.tile-head .icon{width:36px;height:36px;padding:8px}
+.tile-head .tech{display:none}
+.tile-name{font-size:15px;overflow-wrap:anywhere}
+.tile .state{display:flex;flex-wrap:wrap;gap:4px}
+.state .chip+.chip{margin-left:0}
+.tile .chip{font-size:12px;padding:2px 8px}
+.tile-foot .switch{min-width:44px;padding:0;justify-content:center}
+.tile-foot .switch span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.device-head>.icon{width:44px;height:44px;padding:10px}
+}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
+</style></head><body>
+{{template "sprite"}}
+{{if .User}}<header>
+<a class="brand" href="/"><svg class="icon" aria-hidden="true"><use href="#i-home"/></svg>Шлюз</a>
+<nav>{{template "navlinks" .}}</nav>
+<div class="me">{{template "account" .}}</div>
+<details class="menu"><summary><svg class="icon" aria-hidden="true"><use href="#i-menu"/></svg>Меню</summary><nav>{{template "navlinks" .}}</nav><div class="me">{{template "account" .}}</div></details>
+</header>{{end}}
+<main>
+{{range .Notices}}<p class="banner">{{.}}</p>{{end}}
+{{if .Steps}}<p class="banner">Не сделано шагов настройки: {{.Steps}}. <a href="/connections#todo">Что ещё настроить</a></p>{{end}}
+{{with .Flash}}<p class="flash{{if .Error}} err{{end}}" role="status">{{.Text}}</p>{{end}}
+{{template "content" .}}
+</main></body></html>{{end}}
+
+{{define "navlinks"}}<a href="/"{{if eq .Nav "devices"}} class="on"{{end}}>Приборы</a>
+<a href="/profiles"{{if eq .Nav "profiles"}} class="on"{{end}}>Профили типов</a>
+<a href="/connections"{{if eq .Nav "connections"}} class="on"{{end}}>Подключения</a>
+<a href="/logins"{{if eq .Nav "logins"}} class="on"{{end}}>Входы</a>{{end}}
+
+{{define "account"}}<form method="post" action="/theme"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="back" value="{{.Back}}">
+<select name="theme" aria-label="Тема" data-theme-select><option value=""{{if not .Theme}} selected{{end}}>Тема: как в системе</option><option value="light"{{if eq .Theme "light"}} selected{{end}}>Тема: светлая</option><option value="dark"{{if eq .Theme "dark"}} selected{{end}}>Тема: тёмная</option></select>
+<button data-theme-apply>Применить</button></form>
+<form method="post" action="/reload"><input type="hidden" name="csrf" value="{{.CSRF}}"><button>Перечитать файл</button></form>
+<form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button>Выйти: {{.User}}</button></form>{{end}}
+
+{{define "keys"}}<input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="version" value="{{.Version}}">{{end}}
+
+{{define "opts"}}{{range .}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}{{end}}
+
+{{define "sprite"}}<svg class="sprite" aria-hidden="true">
+<symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5M5.5 9.5V20h13V9.5M10 20v-5h4v5"/></symbol>
+<symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+<symbol id="i-power" viewBox="0 0 24 24"><path d="M12 3.5v8M6.6 7a7.5 7.5 0 1 0 10.8 0"/></symbol>
+<symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5.5M12 7.5h.01"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4 2.5 20h19zM12 10v4.5M12 17.5h.01"/></symbol>
+<symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11.5" height="11.5" rx="2"/><path d="M15.5 8.5V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7.5a2 2 0 0 0 2 2h2.5"/></symbol>
+<symbol id="i-oven" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2.5"/><path d="M4 8h16M8 5.5h.01M12 5.5h.01M16 5.5h.01"/><rect x="7" y="11" width="10" height="7" rx="1.5"/></symbol>
+<symbol id="i-dishwasher" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2.5"/><path d="M4 7.5h16M7.5 5.2h.01M15 5.2h2M7.5 12.5h9M7.5 16h9M9 12.5v3.5M15 12.5v3.5"/></symbol>
+<symbol id="i-washer" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2.5"/><path d="M4 7h16M7.5 5h.01M10 5h.01"/><circle cx="12" cy="14" r="4.5"/></symbol>
+<symbol id="i-dryer" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2.5"/><path d="M4 7h16M7.5 5h.01M10 5h.01M9.8 14c.7-.8 1.5-.8 2.2 0s1.5.8 2.2 0"/><circle cx="12" cy="14" r="4.5"/></symbol>
+<symbol id="i-coffee" viewBox="0 0 24 24"><path d="M5 8h11v5.5a5.5 5.5 0 0 1-5.5 5.5A5.5 5.5 0 0 1 5 13.5zM16 10h1.5a2.5 2.5 0 0 1 0 5H16M8 3.5v2M11 3.5v2M14 3.5v2M4 21h13"/></symbol>
+<symbol id="i-hood" viewBox="0 0 24 24"><path d="M9.5 3h5v5l5.5 5.5H4L9.5 8zM4 17h16M9 20.5h6"/></symbol>
+<symbol id="i-fridge" viewBox="0 0 24 24"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M6 9.5h12M9.5 5.5V7M9.5 12.5v3"/></symbol>
+<symbol id="i-robot" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="2.5"/><path d="M8.5 7.5a6 6 0 0 1 7 0"/></symbol>
+<symbol id="i-light" viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.8 10.6c.6.6.8 1.2.8 1.9V16h6v-.5c0-.7.2-1.3.8-1.9A6 6 0 0 0 12 3z"/></symbol>
+<symbol id="i-ac" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="8" rx="2"/><path d="M6.5 9.5h11M8 16v2.5M12 16v4M16 16v2.5"/></symbol>
+<symbol id="i-air" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"/><path d="M12 10c0-3.5 1-6 3.5-6 0 2.7-1.6 4.6-3.5 6zM14 12c3.5 0 6 1 6 3.5-2.7 0-4.6-1.6-6-3.5zM12 14c0 3.5-1 6-3.5 6 0-2.7 1.6-4.6 3.5-6zM10 12c-3.5 0-6-1-6-3.5 2.7 0 4.6 1.6 6 3.5z"/></symbol>
+<symbol id="i-tv" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M8.5 20.5h7M12 16.5v4"/></symbol>
+<symbol id="i-sensor" viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="3"/><circle cx="12" cy="9" r="2"/><path d="M9.5 15.5h5"/></symbol>
+<symbol id="i-socket" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3.5"/><path d="M9.5 10.5v2M14.5 10.5v2M10 16h4"/></symbol>
+<symbol id="i-device" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3.5"/><circle cx="12" cy="12" r="3.5"/></symbol>
+</svg>{{end}}

@@ -1,0 +1,8 @@
+{{define "content"}}{{$p := .}}{{with .Data}}
+<h1>Входы</h1>
+<p>Шлюз видит ваш адрес как <b>{{.Addr}}</b>. Если это адрес сети Docker, Traefik не передаёт адреса клиентов, и первый же бан закроет вход всем.</p>
+<p class="muted">После 4 неудачных входов за час адрес банится на час. IPv6 банится сетью /64. Счётчик общий для интерфейса и страницы привязки Алисы.</p>
+{{if .Bans}}<div class="wrap"><table><tr><th>Адрес</th><th>Бан до</th><th></th></tr>
+{{range .Bans}}<tr><td>{{.Prefix}}</td><td>{{.Until}}</td><td><form method="post" action="/logins/lift"><input type="hidden" name="csrf" value="{{$p.CSRF}}"><input type="hidden" name="prefix" value="{{.Prefix}}"><button>Снять</button></form></td></tr>{{end}}
+</table></div>{{else}}<p>Банов нет.</p>{{end}}
+{{end}}{{end}}

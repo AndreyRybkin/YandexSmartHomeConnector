@@ -1,0 +1,52 @@
+{{define "content"}}{{$p := .}}{{with .Data}}
+<p class="crumbs"><a href="/">Приборы</a>{{with .Room}} · {{.}}{{end}}</p>
+<h1>{{.Name}} <span class="tech">{{.ID}}</span></h1>
+<nav class="tabs">
+<a href="/devices/{{.ID}}#tab-device">Прибор</a>
+<a href="/devices/{{.ID}}#tab-state">Состояние и команды</a>
+<a href="/devices/{{.ID}}#tab-map">Сопоставления</a>
+<a href="/devices/{{.ID}}/info" class="on" aria-current="page">Всё о приборе</a>
+</nav>
+<div data-stream="/devices/{{.ID}}/stream">
+<section class="field"><h2>Прибор</h2>
+<table>
+<tr><th>Состояние</th><td class="state" data-online><span class="chip {{.Live.Tone}}">{{.Live.Summary}}</span>{{with .Live.Notice}}<span class="chip warn">{{.}}</span>{{end}}</td></tr>
+<tr><th>Источник</th><td>{{source .Source}} <span class="tech">{{.Source}}</span></td></tr>
+{{with .Type}}<tr><th>Тип</th><td>{{typeName .}} <code>{{.}}</code></td></tr>{{end}}
+{{with .Manufacturer}}<tr><th>Производитель в Алисе</th><td>{{.}}</td></tr>{{end}}
+{{with .Room}}<tr><th>Комната</th><td>{{.}}</td></tr>{{end}}
+{{range .Fields}}<tr><th>{{.Key}}</th><td><code>{{.Value}}</code></td></tr>{{end}}
+</table>
+</section>
+<section class="field"><h2>Устройства Алисы</h2>
+{{range .Alice}}<h3>{{.Name}} <small>{{yandexType .Type}} · {{.ID}}</small></h3>
+<div class="wrap"><table><tr><th>Умение или свойство</th><th>Значения</th></tr>
+{{range .Items}}<tr><td>{{.Label}} <span class="tech">{{.Tech}}</span></td><td>{{.Value}}</td></tr>{{end}}</table></div>{{end}}
+<h3>Состояние в Алисе</h3>
+<div class="wrap"><table><thead><tr><th>Устройство</th><th>Значения</th></tr></thead><tbody id="alice">
+{{range .Live.Alice}}<tr><td>{{.Name}} <span class="tech">{{.ID}}</span></td><td>{{if .Error}}<span class="err">{{.Error}}</span> <span class="tech">{{.Code}}</span><br>{{end}}{{range .Items}}{{.Label}}: <b>{{.Value}}</b> <span class="tech">{{.Tech}}</span><br>{{end}}</td></tr>{{end}}
+</tbody></table></div>
+</section>
+<section class="field"><h2>Значения прибора</h2>
+<div class="wrap"><table><thead><tr><th>Имя</th><th>Значение</th><th>Кто берёт</th></tr></thead><tbody id="values">
+{{range .Live.Values}}<tr><td><code>{{.Key}}</code></td><td>{{.Value}}</td><td>{{.Mapping}}</td></tr>{{else}}<tr><td colspan="3">Прибор пока ничего не сообщил.</td></tr>{{end}}
+</tbody></table></div>
+</section>
+<section class="field"><h2>Последние изменения</h2>
+<p class="muted">До 50 изменений с запуска шлюза.</p>
+<div class="wrap"><table><thead><tr><th>Время</th><th>Что</th><th>Имя</th><th>Значение</th></tr></thead><tbody id="history">
+{{range .Live.History}}<tr><td>{{.Time}}</td><td>{{.Kind}}</td><td><code>{{.Key}}</code></td><td>{{.Value}}</td></tr>{{else}}<tr><td colspan="4">Изменений пока не было.</td></tr>{{end}}
+</tbody></table></div>
+</section>
+</div>
+{{if or .Programs .Options .Commands .Events}}<section class="field"><h2>Что умеет прибор</h2>
+{{with .Programs}}<h3>Программы</h3><p>{{range $i, $v := .}}{{if $i}}, {{end}}<code>{{$v}}</code>{{end}}</p>{{end}}
+{{with .Options}}<h3>Параметры и настройки</h3><div class="wrap"><table><tr><th>Имя</th><th>Вид</th><th>Пределы</th><th>Значения</th></tr>
+{{range .}}<tr><td><code>{{.Key}}</code></td><td>{{if .Setting}}настройка{{else}}параметр{{end}}</td><td>{{.Limits}}</td><td>{{.Values}}</td></tr>{{end}}</table></div>{{end}}
+{{with .Commands}}<h3>Команды</h3><p>{{range $i, $v := .}}{{if $i}}, {{end}}<code>{{$v}}</code>{{end}}</p>{{end}}
+{{with .Events}}<h3>События</h3><p>{{range $i, $v := .}}{{if $i}}, {{end}}<code>{{$v}}</code>{{end}}</p>{{end}}
+</section>{{end}}
+{{with .Profile}}<section class="field"><h2>Действующий профиль</h2>
+<div class="wrap"><table><tr><th>Поле</th><th>Откуда</th></tr>{{range $p.Data.Origins}}<tr><td><code>{{.Key}}</code></td><td>{{.Value}}</td></tr>{{end}}</table></div>
+<pre><code>{{.}}</code></pre></section>{{end}}
+{{end}}{{end}}

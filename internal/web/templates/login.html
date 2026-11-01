@@ -1,0 +1,9 @@
+{{define "content"}}{{with .Data}}
+<h1>Шлюз умного дома для Алисы</h1>
+{{if .NoUser}}<p class="notice">Пользователь веб-интерфейса не создан. Создайте его командой:<br><code>{{.Command}}</code></p>{{end}}
+{{with .Error}}<p class="err">{{.}}</p>{{end}}
+<form method="post" action="/login" class="login">
+<label>Логин <input name="username" autocomplete="username" required autofocus></label>
+<label>Пароль <input type="password" name="password" autocomplete="current-password" required></label>
+<button class="primary">Войти</button>
+</form>{{end}}{{end}}

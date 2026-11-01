@@ -1,0 +1,129 @@
+{{define "content"}}{{$p := .}}{{with .Data}}
+<p class="crumbs"><a href="/">Приборы</a>{{with .Conf.Room}} · {{.}}{{end}}</p>
+<div class="device-head"><svg class="icon" aria-hidden="true"><use href="#i-{{.Icon}}"/></svg><div>
+<h1>{{.Conf.Name}} <span class="tech">{{.ID}}</span></h1>
+<p class="state" data-online aria-live="polite"><span class="chip {{.Head.Tone}}">{{.Head.Text}}</span>{{with .Head.Notice}}<span class="chip warn">{{.}}</span>{{end}}</p>
+</div></div>
+{{if .Waiting}}{{if eq .Source "thinq"}}<p class="notice">Профиль прибора LG ещё не загружен, поэтому в Алисе прибора пока нет. Шлюз загрузит профиль сам, когда облако LG доступно; загрузить его заново можно кнопкой «Обновить список» на странице «Подключения».</p>{{else if eq .Source "smartthings"}}<p class="notice">SmartThings ещё не описал устройство, поэтому в Алисе его пока нет. Войдите в SmartThings и обновите список устройств на странице «Подключения».</p>{{else}}<p class="notice">Облако Home Connect ещё не сообщило тип прибора, поэтому в Алисе его пока нет. Войдите в Home Connect на странице «Подключения»: прибор появится, когда облако его опишет.</p>{{end}}{{end}}
+<nav class="tabs" data-tabs{{with .Tab}} data-active="{{.}}"{{end}}{{with .Focus}} data-focus="{{.}}"{{end}}>
+<a href="#tab-device">Прибор</a>
+{{if .State}}<a href="#tab-state">Состояние и команды</a>{{end}}
+{{if or .Editor .Strip}}<a href="#tab-map">Сопоставления</a>{{end}}
+{{if .State}}<a href="/devices/{{.ID}}/info">Всё о приборе</a>{{end}}
+</nav>
+
+<div class="tab" id="tab-device">
+<section class="field" id="basic"><h2>Прибор</h2>
+{{with .BasicError}}<p class="err">{{.}}</p>{{end}}
+<form method="post" action="/devices/{{.ID}}" data-names="{{.Names}}" data-self="{{.ID}}">{{template "keys" $p}}
+<datalist id="dl-rooms">{{range .RoomNames}}<option value="{{.}}">{{end}}</datalist>
+<label>Имя <input name="name" value="{{.Conf.Name}}" required maxlength="64"><span class="hint" data-voice>{{.Voice}}</span><span class="fit" data-dupe{{if not .Dupe}} hidden{{end}}>{{.Dupe}}</span></label>
+<label>Комната <input name="room" value="{{.Conf.Room}}" maxlength="64" list="dl-rooms" placeholder="без комнаты"></label>
+<label>Значок <select name="icon">{{template "opts" .Icons}}</select></label>
+<p>Источник: {{source .Source}}{{with .Conf.HaID}}, haId {{.}}{{end}}{{with .Conf.DeviceID}}, deviceId {{.}}{{end}}{{with .Conf.Location}}, {{if eq $p.Data.Source "smartthings"}}компонент{{else}}камера{{end}} {{.}}{{end}}</p>
+{{if eq .Source "demo"}}<label>Тип демо-прибора <select name="demo">{{template "opts" .DemoKinds}}</select> <span class="muted">другой тип сбрасывает состояние прибора</span></label>{{end}}
+{{if eq .Source "thinq"}}<label>Прибор аккаунта LG {{if .ThinQIDs}}<select name="device_id">{{template "opts" .ThinQIDs}}</select>{{else}}<input name="device_id" value="{{.Conf.DeviceID}}" maxlength="128">{{end}}</label>
+<label>Камера <input name="location" value="{{.Conf.Location}}" maxlength="32"> <span class="muted">пусто - прибор целиком</span></label>{{end}}
+{{if eq .Source "wled"}}<label>Адрес ленты в домашней сети <input name="host" value="{{.Conf.Host}}" maxlength="261" required></label>{{end}}
+{{if eq .Source "smartthings"}}<label>Устройство аккаунта SmartThings {{if .STIDs}}<select name="device_id">{{template "opts" .STIDs}}</select>{{else}}<input name="device_id" value="{{.Conf.DeviceID}}" maxlength="64">{{end}}</label>
+<label>Компонент <input name="location" value="{{.Conf.Location}}" maxlength="64" placeholder="main"> <span class="muted">пусто - main</span></label>{{end}}
+{{if or (eq .Source "webos") (eq .Source "samsung-tv")}}<label>IP телевизора в домашней сети <input name="host" value="{{.Conf.Host}}" maxlength="261" required></label>
+<label>MAC телевизора <input name="mac" value="{{.Conf.MAC}}" maxlength="17" placeholder="AA:BB:CC:DD:EE:FF"> <span class="muted">пусто - тот, что сообщил телевизор</span></label>
+<label>Широковещательный адрес для включения <input name="broadcast" value="{{.Conf.Broadcast}}" maxlength="15" placeholder="255.255.255.255"></label>{{end}}
+{{if eq .Source "homeconnect-local"}}<label>Прибор Home Connect {{if .HaIDs}}<select name="ha_id">{{template "opts" .HaIDs}}</select>{{else}}<input name="ha_id" value="{{.Conf.HaID}}" maxlength="64">{{end}} <span class="muted">ключи прибора - в data_dir/appliances/&lt;haId&gt;</span></label>
+<label>Адрес прибора в домашней сети <input name="host" value="{{.Conf.Host}}" maxlength="261" required> <span class="muted">без порта - 443 для TLS-PSK и 80 для AES</span></label>{{end}}
+{{if eq .Source "delonghi"}}{{with .Coffee}}<label>IP кофемашины в домашней сети <input name="host" value="{{$p.Data.Conf.Host}}" maxlength="261" required></label>
+<label>Серийный номер <input name="serial" value="{{$p.Data.Conf.Serial}}" maxlength="64" required></label>
+<label>Профиль пользователя машины <input name="profile_id" value="{{.ProfileID}}" inputmode="numeric" size="3"> <span class="muted">в нём машина хранит настройки напитков</span></label>
+<p>Номер рецепта машины для напитков Алисы <span class="muted">пусто - напитка нет в Алисе</span></p>
+{{range .Recipes}}<label>{{.Label}} <input name="recipe.{{.Drink}}" value="{{.Value}}" inputmode="numeric" size="4" list="dl-recipes"></label>{{end}}
+<datalist id="dl-recipes">{{range .Stats}}<option value="{{.ID}}" label="{{with .Drink}}{{.}}, {{end}}{{.Brew}} варок">{{end}}</datalist>
+<label>Напиток для «включи» включённой машины <select name="default_drink">{{template "opts" .Drinks}}</select></label>{{end}}{{end}}
+{{if eq .Source "homeconnect-cloud"}}<label>Прибор аккаунта Home Connect {{if .HaIDs}}<select name="ha_id">{{template "opts" .HaIDs}}</select>{{else}}<input name="ha_id" value="{{.Conf.HaID}}" maxlength="64">{{end}} <span class="muted">если прибор заменили новым, выберите новый: идентификатор в Алисе не изменится</span></label>{{end}}
+<button class="primary">Сохранить</button>
+</form></section>
+{{with .TV}}<section class="field" id="tv"><h2>Связь с телевизором</h2>
+{{if .Prompt}}<p class="notice">Телевизор спрашивает разрешение: нажмите «Разрешить» на его экране пультом.</p>
+{{else if .Connected}}<p>Телевизор на связи{{with .Model}}, модель {{.}}{{end}}.</p>
+{{else if .Paired}}<p>Телевизор выключен или не отвечает. Шлюз проверяет его раз в 10 с.</p>
+{{else}}<p class="notice">Телевизор ещё не разрешил подключение. Включите его: шлюз подключится сам, а телевизор спросит разрешение на экране.</p>{{end}}
+{{with .Err}}<p class="err">{{.}}</p>{{end}}
+<p>MAC для включения по сети: {{with .MAC}}<code>{{.}}</code>{{else}}ещё не известен - шлюз узнает его у включённого телевизора{{end}}.{{if .Samsung}} Громкость и звук {{if .UPnP}}шлюз меняет по UPnP{{else}}по UPnP недоступны: «громче» и «тише» идут кнопками пульта{{end}}.{{end}}</p>
+<form method="post" action="/devices/{{$p.Data.ID}}/tv/retry" class="cmd"><input type="hidden" name="csrf" value="{{$p.CSRF}}"><button>Подключить заново</button></form>
+</section>{{end}}
+{{with .Coffee}}<section class="field" id="coffee"><h2>Рецепты кофемашины</h2>
+<p class="muted">Номера рецептов и сколько раз каждый сварили - из облака De'Longhi. Сварите напиток из приложения, загрузите список: номер с выросшим числом варок - номер этого напитка.</p>
+{{if .Stats}}<div class="wrap"><table><tr><th>Рецепт</th><th>Варок</th><th>Напиток Алисы</th></tr>
+{{range .Stats}}<tr><td>{{.ID}}</td><td>{{.Brew}}</td><td>{{.Drink}}</td></tr>{{end}}</table></div>{{end}}
+<form method="post" action="/devices/{{$p.Data.ID}}/recipes" class="cmd"><input type="hidden" name="csrf" value="{{$p.CSRF}}"><button>Загрузить рецепты из облака</button></form>
+</section>
+<section class="field" id="pin"><h2>Сертификат кофемашины</h2>
+{{if .Pin}}<p>Подтверждённый отпечаток SHA-256: <code>{{.Pin}}</code>. Токен аккаунта уходит только машине с этим сертификатом.</p>
+{{else if .Observed}}<p class="notice">Шлюз подключится к машине, когда вы подтвердите отпечаток её сертификата. Сверьте его: тот же отпечаток показывает браузер на https://&lt;IP машины&gt;/ в сведениях о сертификате.</p>
+<form method="post" action="/devices/{{$p.Data.ID}}/pin">{{template "keys" $p}}<input type="hidden" name="pin" value="{{.Observed}}">
+<p><code>{{.Observed}}</code></p><button class="primary">Подтвердить отпечаток</button></form>
+{{else}}<p class="notice">Отпечаток сертификата ещё не снят: шлюз не достучался до машины по этому адресу. Страница покажет его, когда машина ответит.</p>{{end}}
+</section>{{end}}
+<section class="field danger" id="danger"><h2>Удаление и сброс</h2>
+{{with .TV}}{{if .Paired}}<p><a class="button" href="/devices/{{$p.Data.ID}}/tv/forget">Забыть ключ телевизора</a> <span class="muted">телевизор снова спросит разрешение на экране</span></p>{{end}}{{end}}
+<p><a class="button" href="/devices/{{.ID}}/delete">Удалить прибор</a> <span class="muted">прибор пропадёт из Алисы, его сопоставления удалятся</span></p>
+</section>
+</div>
+
+{{with .State}}<div class="tab" id="tab-state">
+<section class="field" id="state" data-stream="/devices/{{$p.Data.ID}}/stream"><h2>Состояние</h2>
+<p class="muted" data-offline{{if .Online}} hidden{{end}}>Состояние появится, когда прибор будет на связи.</p>
+<div class="wrap"{{if not .Online}} hidden{{end}}><table><thead><tr><th>Устройство Алисы</th><th>Умения и свойства</th></tr></thead><tbody id="alice" data-compact>
+{{range .Alice}}{{if or .Items (and .Error (ne .Code "DEVICE_UNREACHABLE"))}}<tr><td title="{{.ID}}">{{.Name}}</td><td>{{if and .Error (ne .Code "DEVICE_UNREACHABLE")}}<span class="err" title="{{.Code}}">{{.Error}}</span><br>{{end}}{{range .Items}}<span title="{{.Tech}}">{{.Label}}: <b>{{.Value}}</b></span><br>{{end}}</td></tr>{{end}}{{end}}
+</tbody></table></div>
+</section>
+{{if $p.Data.Commands}}<section class="field" id="commands"><h2>Команды</h2>
+<p class="muted">Те же команды, что отправляет Алиса.</p>
+{{range $p.Data.Commands}}<form method="post" action="/devices/{{$p.Data.ID}}/command" class="cmd"><input type="hidden" name="csrf" value="{{$p.CSRF}}">
+<input type="hidden" name="type" value="{{.Type}}"><input type="hidden" name="instance" value="{{.Instance}}">
+<b>{{.Title}}</b>
+{{if .OnOff}}<button name="value" value="true">Включить</button> <button name="value" value="false">Выключить</button>{{end}}
+{{if .Toggle}}{{if .Pause}}<button name="value" value="true">Пауза</button> <button name="value" value="false">Продолжить</button>{{else}}<button name="value" value="true">Включить</button> <button name="value" value="false">Выключить</button>{{end}}{{end}}
+{{if .Modes}}<select name="value">{{template "opts" .Modes}}</select> <button>Выбрать</button>{{end}}
+{{if .Color}}<input type="color" name="value" value="{{.Value}}"> <button>Задать</button>{{end}}
+{{if .Range}}<input name="value" value="{{.Value}}" inputmode="decimal" size="6"> {{.Unit}} <span class="muted">от {{.Min}} до {{.Max}}, шаг {{.Step}}</span> <button>Задать</button>{{end}}
+</form>{{end}}
+</section>{{end}}
+</div>{{end}}
+
+{{if or .Editor .Strip}}<div class="tab" id="tab-map">
+{{with .Strip}}<section class="field" id="presets"><h2>Лента WLED</h2>
+{{if .Online}}<p>На связи{{with .Name}}: {{.}}{{end}}{{with .Arch}}, {{.}}{{end}}.</p>{{end}}
+<h3>Пресеты и сцены Алисы</h3>
+<p class="muted">Сцена Алисы включает сопоставленный пресет ленты. Одной сцене - один пресет.</p>
+{{with .PresetsError}}<p class="notice">{{.}}</p>{{end}}
+{{with .Error}}<p class="err">{{.}}</p>{{end}}
+<form method="post" action="/devices/{{$p.Data.ID}}/presets">{{template "keys" $p}}
+<div class="wrap"><table><tr><th>Пресет</th><th>Имя на ленте</th><th>Сцена Алисы</th></tr>
+{{range .Presets}}<tr><td>{{if .ID}}{{.ID}}<input type="hidden" name="p.{{.Index}}.id" value="{{.ID}}">{{else}}<input name="p.{{.Index}}.id" inputmode="numeric" size="4" placeholder="номер">{{end}}</td>
+<td>{{.Name}}{{if .Missing}} <span class="muted">нет на ленте</span>{{end}}</td>
+<td><select name="p.{{.Index}}.scene">{{template "opts" .Scenes}}</select></td></tr>{{end}}
+</table></div>
+<p><button class="primary">Сохранить</button></p>
+</form></section>{{end}}
+{{with .Mappings}}<section class="field" id="summary"><h2>Сводка сопоставлений</h2>
+<p class="muted">Откуда Алиса берёт каждое умение и что видит сейчас.</p>
+<div class="wrap"><table><thead><tr><th>Функция прибора</th><th>Сейчас</th><th>Пересчёт</th><th>Умение Алисы</th><th>Алиса видит</th><th></th></tr></thead><tbody id="mappings">
+{{range .}}<tr><td>{{if .Program}}программа прибора{{else}}<code title="{{.Key}}">{{.Label}}</code>{{end}}</td><td>{{or .Now "-"}}</td><td>{{or .Convert "-"}}</td><td>{{.Alice}}</td><td>{{or .Value "-"}}</td><td><a href="#{{.Section}}">Изменить</a></td></tr>{{end}}
+</tbody></table></div></section>{{end}}
+{{with .Unmapped}}<section class="field" id="unmapped"><h2>Не сопоставлено</h2>
+<p class="muted">Эти значения прибор сообщает, но их не берёт ни Алиса, ни сам шлюз.</p>
+<div class="wrap"><table><tr><th>Имя</th><th>Значение</th><th></th></tr>
+{{range .}}<tr><td><code>{{.Key}}</code></td><td>{{.Value}}</td><td><a href="?map={{.Key}}#{{.Section}}">Сопоставить: {{.Label}}</a></td></tr>{{end}}
+</table></div></section>{{end}}
+{{with .Preview}}<section class="field" id="preview"><h2>Предпросмотр устройства Алисы</h2>
+<p class="muted">Так Алиса увидит прибор после сохранения. Пока ничего не сохранено.</p>
+{{range .Devices}}<h3>{{.Name}} <small>{{.Type}}</small>{{with .TypeChange}} <span class="chip warn">тип {{.}}</span>{{end}}</h3>
+<div class="wrap"><table><tr><th>Умение или свойство</th><th>Значения</th><th>После сохранения</th></tr>
+{{range .Items}}<tr><td>{{.Label}} <span class="tech">{{.Tech}}</span></td><td>{{.Value}}</td><td>{{if .Change}}<span class="chip {{.Tone}}">{{.Change}}</span>{{else}}<span class="muted">не изменится</span>{{end}}</td></tr>{{end}}
+</table></div>{{end}}
+<details><summary>JSON для Яндекса</summary><pre><code>{{.JSON}}</code></pre></details></section>{{end}}
+{{with .Editor}}<p class="muted">Каждый раздел сохраняется своей кнопкой и заменяет унаследованное целиком.</p>
+{{template "editor" .}}{{end}}
+</div>{{end}}
+{{end}}{{end}}

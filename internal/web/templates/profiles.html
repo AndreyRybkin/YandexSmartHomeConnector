@@ -1,0 +1,9 @@
+{{define "content"}}{{with .Data}}<h1>Профили типов</h1>
+<p class="muted">Профиль типа действует на все приборы этого типа. Переопределение на странице прибора - поверх него.</p>
+<div class="wrap"><table><tr><th>Тип прибора</th><th>Тип в Алисе</th><th>Переопределено</th><th>Приборы</th></tr>
+{{range .Rows}}<tr><td><a href="/profiles/{{.Type}}">{{.Name}}</a> <span class="tech">{{.Type}}</span>{{if not .Builtin}} <span class="muted">без встроенного профиля</span>{{end}}</td><td>{{yandexType .YandexType}}</td>
+<td>{{range $i, $f := .Overridden}}{{if $i}}, {{end}}{{$f.Value}} <span class="tech">{{$f.Key}}</span>{{else}}<span class="muted">нет</span>{{end}}</td>
+<td>{{range $i, $d := .Devices}}{{if $i}}, {{end}}<a href="/devices/{{$d}}">{{$d}}</a>{{end}}</td></tr>{{else}}<tr><td colspan="4">Ни у одного типа нет приборов и переопределений.</td></tr>{{end}}
+</table></div>
+{{if .All}}<p><a href="/profiles">Только типы с приборами и переопределениями</a></p>{{else if .Hidden}}<p><a href="/profiles?all=1">Показать все типы</a> <span class="muted">ещё {{.Hidden}}: встроенные профили без приборов</span></p>{{end}}
+{{end}}{{end}}

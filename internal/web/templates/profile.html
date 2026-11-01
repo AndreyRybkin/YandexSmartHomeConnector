@@ -1,0 +1,7 @@
+{{define "content"}}{{$p := .}}{{with .Data}}
+<p class="crumbs"><a href="/profiles">Профили типов</a></p>
+<h1>{{.Name}} <span class="tech">{{.Type}}</span></h1>
+<p>Приборы этого типа: {{range $i, $d := .Devices}}{{if $i}}, {{end}}<a href="/devices/{{$d}}">{{$d}}</a>{{else}}<span class="muted">нет; программы и параметры видны только по профилю</span>{{end}}.</p>
+<p class="muted">Изменения действуют на все приборы этого типа.</p>
+{{template "editor" .Editor}}
+{{end}}{{end}}

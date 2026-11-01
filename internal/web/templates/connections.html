@@ -1,0 +1,192 @@
+{{define "step"}}<summary><span class="step-num">{{.N}}</span>{{.Title}}{{if .S.Done}}<span class="chip run">готово</span><span class="muted">Изменить</span>{{end}}{{with .S.Note}}<span class="muted">{{.}}</span>{{end}}</summary>{{end}}
+
+{{define "content"}}{{$p := .}}{{with .Data}}{{$d := .}}
+<h1>Подключения</h1>
+{{with .Steps}}<section class="field" id="todo"><h2>Что ещё настроить</h2>
+<ol>{{range .}}<li>{{.Text}} <a href="{{.Link}}">Перейти</a></li>{{end}}</ol></section>{{end}}
+<div class="conn-grid">{{range .Summary}}{{$c := .}}<article class="card {{.Tone}}">
+<h3><a href="#{{.ID}}">{{.Name}}</a></h3>
+<p class="tech">{{.Where}}</p>
+<p class="state"><span class="chip {{.Tone}}">{{.State}}</span></p>
+{{if .Devices}}<p>Приборов в шлюзе: {{.Devices}}</p>{{end}}
+{{with .Note}}<p class="{{if $c.NoteWarn}}fit{{else}}muted{{end}}">{{.}}</p>{{end}}
+<div class="card-foot">{{if .Post}}<form method="post" action="{{.Post}}"><input type="hidden" name="csrf" value="{{$p.CSRF}}"><button class="primary">{{.Action}}</button></form>{{else}}<a class="button" href="{{.Link}}">{{.Action}}</a>{{end}}</div>
+</article>{{end}}</div>
+
+<section class="field" id="yandex"><h2>Яндекс</h2>{{$f := index .Flow "yandex"}}
+<p>Аккаунт Яндекса: {{if .Linked}}<b>привязан</b>{{else}}<span class="notice">не привязан</span>{{end}}.</p>
+{{with .Error}}<p class="err">{{.}}</p>{{end}}
+<form method="post" action="/connections/yandex">{{template "keys" $p}}
+<details class="step{{if (index $f 0).Done}} done{{end}}" id="yandex-app"{{if (index $f 0).Open}} open{{end}}>{{template "step" (stepOf 1 "Приложение для связки аккаунтов" (index $f 0))}}
+<p class="muted">Консоль Яндекс Диалогов: адрес бэкенда - вкладка «Настройки», раздел Backend; остальные - раздел «Связка аккаунтов». Адреса собраны по адресу, с которого открыта эта страница.</p>
+<div class="wrap"><table>
+<tr><th>Endpoint URL</th><td><code data-copy>{{.Endpoint}}</code></td></tr>
+<tr><th>URL авторизации</th><td><code data-copy>{{.AuthURL}}</code></td></tr>
+<tr><th>URL для получения токена</th><td><code data-copy>{{.TokenURL}}</code></td></tr>
+<tr><th>URL для обновления токена</th><td><code data-copy>{{.TokenURL}}</code></td></tr>
+</table></div>
+<label>Идентификатор приложения <span class="tech">client_id</span> <input name="client_id" value="{{.Yandex.ClientID}}" size="40" maxlength="1024"></label>
+<label>Секрет приложения <span class="tech">client_secret</span>, не меньше 16 символов: {{if .SecretSet}}задан{{else}}не задан{{end}}
+<input type="password" name="client_secret" autocomplete="off" placeholder="новое значение" size="40" maxlength="1024"></label>
+{{if .SecretSet}}<label class="inline"><input type="checkbox" name="client_secret_clear" value="1"> удалить секрет</label>{{end}}
+<p data-generate hidden><button type="button">Создать идентификатор и секрет</button> <span class="muted">впишите их же в консоль навыка и сохраните форму</span></p>
+<label>Адреса возврата <span class="tech">redirect_uris</span>, по одному в строке <textarea name="redirect_uris" rows="2">{{.Redirects}}</textarea></label>
+</details>
+<details class="step{{if (index $f 1).Done}} done{{end}}" id="yandex-skill"{{if (index $f 1).Open}} open{{end}}>{{template "step" (stepOf 2 "Навык и уведомления" (index $f 1))}}
+<label>Идентификатор навыка <span class="tech">skill_id</span> <input name="skill_id" value="{{.Yandex.SkillID}}" size="40" maxlength="1024"></label>
+<label>Токен для уведомлений <span class="tech">callback_token</span>: {{if .TokenSet}}задан{{else}}не задан{{end}}
+<input type="password" name="callback_token" autocomplete="off" placeholder="новое значение" size="40" maxlength="1024"></label>
+{{if .TokenSet}}<label class="inline"><input type="checkbox" name="callback_token_clear" value="1"> удалить токен</label>{{end}}
+<p class="muted">Идентификатор навыка виден в консоли навыка, вкладка «Общие сведения». Токен выдаёт Яндекс: войдите под аккаунтом владельца навыка по ссылке <a href="{{.TokenLink}}" rel="noreferrer">oauth.yandex.ru</a> и скопируйте токен.</p>
+</details>
+<p><button class="primary">Сохранить</button></p>
+</form>
+<details class="step{{if (index $f 2).Done}} done{{end}}" id="yandex-link"{{if (index $f 2).Open}} open{{end}}>{{template "step" (stepOf 3 "Привязка аккаунта" (index $f 2))}}
+<p>В приложении «Дом с Алисой» привяжите навык. Страница шлюза спросит логин и пароль пользователя интерфейса, после этого Алиса покажет приборы.</p>
+{{if .Linked}}<form method="get" action="/connections/yandex/unlink" class="cmd"><button>Отвязать аккаунт</button></form>{{end}}
+</details>
+</section>
+
+<details class="field" id="homeconnect"{{if .Open.homeconnect}} open{{end}}><summary><h2>Home Connect</h2></summary>{{$f := index .Flow "homeconnect"}}{{with .HC}}
+<p>Облако Home Connect управляет приборами Bosch и Siemens без ключей. Нужно приложение с Device Flow на портале разработчика Home Connect.</p>
+<details class="step{{if (index $f 0).Done}} done{{end}}" id="homeconnect-app"{{if (index $f 0).Open}} open{{end}}>{{template "step" (stepOf 1 "Приложение на портале Home Connect" (index $f 0))}}
+<form method="post" action="/connections/homeconnect">{{template "keys" $p}}
+<label>Идентификатор приложения <span class="tech">client_id</span> <input name="client_id" value="{{.Config.ClientID}}" size="40" maxlength="1024"></label>
+<label>Секрет приложения <span class="tech">client_secret</span>, нужен для обновления токена: {{if .SecretSet}}задан{{else}}не задан{{end}}
+<input type="password" name="client_secret" autocomplete="off" placeholder="новое значение" size="40" maxlength="1024"></label>
+{{if .SecretSet}}<label class="inline"><input type="checkbox" name="client_secret_clear" value="1"> удалить секрет</label>{{end}}
+<label>Адрес облака <input name="api_url" value="{{.Config.APIURL}}" size="40" maxlength="1024"> <span class="muted">для проверки без приборов - https://simulator.home-connect.com</span></label>
+<button class="primary">Сохранить</button>
+</form></details>
+<details class="step{{if (index $f 1).Done}} done{{end}}" id="homeconnect-login"{{if (index $f 1).Open}} open{{end}}>{{template "step" (stepOf 2 "Вход по коду" (index $f 1))}}
+{{if .Pending}}<p class="notice">Откройте <a href="{{if .Login.VerificationURIComplete}}{{.Login.VerificationURIComplete}}{{else}}{{.Login.VerificationURI}}{{end}}" rel="noreferrer">{{.Login.VerificationURI}}</a> и введите код <b>{{.Login.UserCode}}</b>. Код действует до {{.Expires}}, страница обновится сама.</p>
+{{else if .LoggedIn}}<p>Вход выполнен. Поток событий {{if .Connected}}подключён{{else}}<span class="notice">не подключён</span>{{end}}.</p>
+{{else}}<p>Вход не выполнен.{{with .Login.Error}} <span class="err">{{.}}</span>{{end}}</p>{{end}}
+{{if .Ready}}<form method="post" action="/connections/homeconnect/login" class="cmd"><input type="hidden" name="csrf" value="{{$p.CSRF}}"><button>{{if .LoggedIn}}Войти заново{{else}}Войти{{end}}</button></form>
+{{else}}<p class="muted">Чтобы войти, сохраните идентификатор и секрет приложения.</p>{{end}}
+{{if .LoggedIn}}<form method="get" action="/connections/homeconnect/logout" class="cmd"><button>Выйти и удалить токены</button></form>{{end}}
+</details>
+<details class="step{{if (index $f 2).Done}} done{{end}}" id="homeconnect-devices"{{if (index $f 2).Open}} open{{end}}>{{template "step" (stepOf 3 "Приборы аккаунта" (index $f 2))}}
+{{if .LoggedIn}}{{if .Account}}<div class="wrap"><table><tr><th>Прибор</th><th>Тип</th><th>haId</th><th>Связь</th><th></th></tr>
+{{range .Account}}<tr><td>{{.Name}} <span class="muted">{{.Brand}}</span></td><td>{{typeName .Type}}</td><td>{{.HaID}}</td><td>{{if .Connected}}на связи{{else}}<span class="err">нет связи</span>{{end}}</td>
+<td>{{if .Device}}<a href="/devices/{{.Device}}">{{.Device}}</a>{{else}}<a href="/?ha_id={{.HaID}}#add">Добавить</a>{{end}}</td></tr>{{end}}
+</table></div>{{else}}<p>Список пуст или ещё не загружен.</p>{{end}}
+<form method="post" action="/connections/homeconnect/appliances" class="cmd"><input type="hidden" name="csrf" value="{{$p.CSRF}}"><button>Обновить список</button> <span class="muted">это запрос из суточного лимита облака</span></form>
+{{else}}<p class="muted">Список появится после входа.</p>{{end}}
+</details>
+{{end}}</details>
+
+<details class="field" id="local"{{if .Open.local}} open{{end}}><summary><h2>Home Connect в домашней сети</h2></summary>
+<p>Прибор Home Connect в домашней сети работает без облака: по TLS-PSK на порту 443 или с шифрованием AES на порту 80. Ключи и описания приборов загружает команда <code>hcgateway fetch-keys</code> в каталог data_dir/appliances.</p>
+{{if .Local}}<div class="wrap"><table><tr><th>Прибор</th><th>haId</th><th>Связь</th><th></th></tr>
+{{range .Local}}<tr><td>{{.Brand}} {{typeName .HaType}}</td><td><code>{{.HaID}}</code></td><td>{{if eq .Mode "aes"}}AES, порт 80{{else}}TLS-PSK, порт 443{{end}}</td>
+<td>{{if .Device}}<a href="/devices/{{.Device}}">{{.Device}}</a>{{else}}<a href="/?local_id={{.HaID}}#add">Добавить</a>{{end}}</td></tr>{{end}}
+</table></div>{{else}}<p>Ключей пока нет.</p>{{end}}
+</details>
+
+<details class="field" id="thinq"{{if .Open.thinq}} open{{end}}><summary><h2>LG ThinQ</h2></summary>{{$f := index .Flow "thinq"}}{{with .LG}}
+<p>Приборы LG управляются через облако ThinQ Connect по личному токену доступа. Токен создаётся на connect-pat.lgthinq.com.</p>
+<details class="step{{if (index $f 0).Done}} done{{end}}" id="thinq-token"{{if (index $f 0).Open}} open{{end}}>{{template "step" (stepOf 1 "Личный токен и страна" (index $f 0))}}
+<form method="post" action="/connections/thinq">{{template "keys" $p}}
+<label>Личный токен доступа <span class="tech">PAT</span>: {{if .PATSet}}задан{{else}}не задан{{end}}
+<input type="password" name="pat" autocomplete="off" placeholder="новое значение" size="40" maxlength="1024"></label>
+{{if .PATSet}}<label class="inline"><input type="checkbox" name="pat_clear" value="1"> удалить токен</label>{{end}}
+<label>Страна аккаунта LG <input name="country" value="{{.Country}}" size="4" maxlength="2" placeholder="NL"> <span class="muted">по ней шлюз выбирает регион облака</span></label>
+<label>Адрес облака <input name="api_url" value="{{.APIURL}}" size="40" maxlength="1024" placeholder="по стране"></label>
+<button class="primary">Сохранить</button>
+</form></details>
+<details class="step{{if (index $f 1).Done}} done{{end}}" id="thinq-devices"{{if (index $f 1).Open}} open{{end}}>{{template "step" (stepOf 2 "Приборы аккаунта LG" (index $f 1))}}
+{{if .Ready}}<p>События по MQTT: {{if .Connected}}подключены{{else}}<span class="notice">не подключены</span>{{end}}.</p>
+{{if .Account}}<div class="wrap"><table><tr><th>Прибор</th><th>Тип</th><th>deviceId</th><th>Камера</th><th></th></tr>
+{{range .Account}}<tr><td>{{.Alias}} <span class="muted">{{.Model}}</span></td><td>{{typeName .Type}}</td><td><code>{{.ID}}</code></td><td>{{if .Location}}{{.LocationLabel}}{{end}}</td>
+<td>{{if .Device}}<a href="/devices/{{.Device}}">{{.Device}}</a>{{else}}<a href="/?thinq_id={{.ID}}{{with .Location}}&amp;location={{.}}{{end}}#add">Добавить</a>{{end}}</td></tr>{{end}}
+</table></div>{{else}}<p>Список пуст или ещё не загружен.</p>{{end}}
+<form method="post" action="/connections/thinq/devices" class="cmd"><input type="hidden" name="csrf" value="{{$p.CSRF}}"><button>Обновить список</button></form>
+{{else}}<p class="muted">Список появится, когда заданы токен и страна.</p>{{end}}
+</details>
+{{end}}</details>
+
+<details class="field" id="delonghi"{{if .Open.delonghi}} open{{end}}><summary><h2>De'Longhi</h2></summary>{{$f := index .Flow "delonghi"}}{{with .Coffee}}
+<p>Кофемашины De'Longhi с приложением My Coffee Lounge. Шлюз входит в аккаунт De'Longhi и хранит только сессию: пароль не сохраняется.</p>
+<details class="step{{if (index $f 0).Done}} done{{end}}" id="delonghi-login"{{if (index $f 0).Open}} open{{end}}>{{template "step" (stepOf 1 "Вход в аккаунт De'Longhi" (index $f 0))}}
+{{if .LoggedIn}}<p>Вход выполнен{{with .Pool}}, пул {{.}}{{end}}{{with .Expires}}; токен действует до {{.}}{{end}}.</p>
+{{if .LoginRequired}}<p class="err">Токен не продлевается: войдите в аккаунт De'Longhi заново.</p>{{end}}
+{{else}}<p class="notice">Вход в аккаунт De'Longhi не выполнен.</p>{{end}}
+<form method="post" action="/connections/delonghi/login"><input type="hidden" name="csrf" value="{{$p.CSRF}}">
+<label>Почта аккаунта De'Longhi <input type="email" name="email" autocomplete="off" size="40" maxlength="254" required></label>
+<label>Пароль <input type="password" name="password" autocomplete="off" size="40" maxlength="256" required></label>
+<button class="primary">{{if .LoggedIn}}Войти заново{{else}}Войти{{end}}</button>
+</form>
+{{if .LoggedIn}}<form method="get" action="/connections/delonghi/logout" class="cmd"><button>Выйти</button></form>{{end}}
+</details>
+<details class="step{{if (index $f 1).Done}} done{{end}}" id="delonghi-devices"{{if (index $f 1).Open}} open{{end}}>{{template "step" (stepOf 2 "Кофемашины аккаунта" (index $f 1))}}
+{{if .LoggedIn}}{{if .Machines}}<div class="wrap"><table><tr><th>Модель</th><th>Серийный номер</th><th>Облако</th><th></th></tr>
+{{range .Machines}}<tr><td>{{.Model}}{{if .Shared}} <span class="muted">чужая</span>{{end}}</td><td><code>{{.Serial}}</code></td><td>{{.Status}}</td>
+<td>{{if .Device}}<a href="/devices/{{.Device}}">{{.Device}}</a>{{else}}<a href="/?delonghi_serial={{.Serial}}#add">Добавить</a>{{end}}</td></tr>{{end}}
+</table></div>{{else}}<p>Список пуст или ещё не загружен.</p>{{end}}
+<form method="post" action="/connections/delonghi/devices" class="cmd"><input type="hidden" name="csrf" value="{{$p.CSRF}}"><button>Обновить список</button></form>
+{{else}}<p class="muted">Список появится после входа.</p>{{end}}
+</details>
+{{end}}</details>
+
+<details class="field" id="smartthings"{{if .Open.smartthings}} open{{end}}><summary><h2>SmartThings</h2></summary>{{$f := index .Flow "smartthings"}}{{with .ST}}
+<p>Устройства Samsung и другие устройства аккаунта SmartThings. Для входа нужно приложение API Access: его создают утилитой SmartThings CLI командой <code>smartthings smartapps:create</code>, а API SmartThings - по платному плану разработчика Samsung.</p>
+<details class="step{{if (index $f 0).Done}} done{{end}}" id="smartthings-app"{{if (index $f 0).Open}} open{{end}}>{{template "step" (stepOf 1 "Приложение API Access" (index $f 0))}}
+<p>Адрес возврата для приложения: <code data-copy>{{.Redirect}}</code><br>
+Области доступа: <code>r:devices:* x:devices:* r:locations:* sse</code></p>
+<form method="post" action="/connections/smartthings">{{template "keys" $p}}
+<label>Идентификатор приложения <span class="tech">smartthings.client_id</span> <input name="client_id" value="{{.ClientID}}" size="40" maxlength="1024"></label>
+<label>Секрет приложения <span class="tech">smartthings.client_secret</span>: {{if .SecretSet}}задан{{else}}не задан{{end}}
+<input type="password" name="client_secret" autocomplete="off" placeholder="новое значение" size="40" maxlength="1024"></label>
+{{if .SecretSet}}<label class="inline"><input type="checkbox" name="client_secret_clear" value="1"> удалить секрет</label>{{end}}
+<button class="primary">Сохранить</button>
+</form></details>
+<details class="step{{if (index $f 1).Done}} done{{end}}" id="smartthings-login"{{if (index $f 1).Open}} open{{end}}>{{template "step" (stepOf 2 "Вход в SmartThings" (index $f 1))}}
+{{if .LoggedIn}}<p>Вход выполнен; {{if .Connected}}события приходят{{else}}поток событий не подключён{{with .Err}}: {{.}}{{end}}{{end}}.</p>
+<form method="get" action="/connections/smartthings/logout" class="cmd"><button>Выйти и удалить токены</button></form>
+{{else if .Configured}}<p class="notice">Вход в SmartThings не выполнен.</p>
+{{if .LoginURL}}<p><a class="button primary" href="{{.LoginURL}}" rel="noreferrer">Открыть страницу входа SmartThings</a> <span class="muted">ссылка действует 10 минут; после входа SmartThings вернёт на шлюз</span></p>{{end}}
+<form method="post" action="/connections/smartthings/login" class="cmd"><input type="hidden" name="csrf" value="{{$p.CSRF}}"><button{{if not .LoginURL}} class="primary"{{end}}>Войти</button></form>
+{{else}}<p class="notice">Задайте идентификатор и секрет приложения API Access.</p>{{end}}
+</details>
+<details class="step{{if (index $f 2).Done}} done{{end}}" id="smartthings-devices"{{if (index $f 2).Open}} open{{end}}>{{template "step" (stepOf 3 "Устройства аккаунта" (index $f 2))}}
+{{if .LoggedIn}}<p{{if .Warn}} class="err"{{end}}>Запросов к SmartThings: {{stUsage .Usage}}.{{if .Warn}} Квота плана близка к концу.{{end}}</p>
+{{if .Devices}}<div class="wrap"><table><tr><th>Устройство</th><th>Тип</th><th>Компонент</th><th></th></tr>
+{{range .Devices}}<tr><td>{{.Name}}</td><td>{{.Type}}</td><td><code>{{.Component}}</code></td>
+<td>{{if .Device}}<a href="/devices/{{.Device}}">{{.Device}}</a>{{else}}<a href="/?st_id={{.ID}}&amp;component={{.Component}}#add">Добавить</a>{{end}}</td></tr>{{end}}
+</table></div>{{else}}<p>Список пуст или ещё не загружен.</p>{{end}}
+<form method="post" action="/connections/smartthings/devices" class="cmd"><input type="hidden" name="csrf" value="{{$p.CSRF}}"><button>Обновить список</button></form>
+{{else}}<p class="muted">Список появится после входа.</p>{{end}}
+</details>
+{{end}}</details>
+
+<details class="field" id="tv"{{if .TVs}} open{{end}}><summary><h2>Телевизоры в домашней сети</h2></summary>
+<p>Телевизоры LG webOS и Samsung на Tizen шлюз видит без облака: добавьте прибор с источником «Телевизор LG webOS» или «Телевизор Samsung» и его IP. При первом подключении телевизор спросит разрешение на экране. Включает выключенный телевизор пакет Wake-on-LAN. Из обычной сети Docker он доходит до телевизора только после настройки сервера: постоянной записи ARP телевизора, второй сети macvlan или пересылки широковещательных пакетов.</p>
+</details>
+
+<details class="field" id="discovery"{{if or .Discovery.Searched .Discovery.Running}} open{{end}}><summary><h2>Поиск в домашней сети</h2></summary>{{with .Discovery}}
+<p>Шлюз спрашивает каждый адрес сети напрямую и находит ленты WLED, телевизоры LG webOS и Samsung, приборы Home Connect, которые работают по TLS-PSK, и кофемашины De'Longhi. Так поиск работает и из обычной сети Docker. Поиск ничего не меняет в приборах: телевизор не спрашивает разрешение, прибору не уходят ключи.</p>
+<form method="post" action="/connections/discovery">{{template "keys" $p}}
+<label>Сеть <input name="network" value="{{.Network}}" size="20" maxlength="18" placeholder="192.168.1.0/24" required> <span class="muted">частная сеть, не больше 1024 адресов (/22)</span></label>
+<button class="primary"{{if .Running}} disabled{{end}}>Найти</button>
+</form>
+{{if .Running}}<p class="notice" role="status">Идёт поиск в сети {{.Searching}}: проверено {{.Checked}} из {{.Total}} адресов, найдено {{len .Rows}}. Страница обновится сама.</p>
+{{else if .Searched}}<p>Поиск в сети {{.Searching}}: проверено {{.Checked}} из {{.Total}} адресов{{if .Partial}}, остальные не проверены за минуту{{end}}.</p>{{end}}
+{{if .Rows}}<div class="wrap"><table><tr><th>Что</th><th>Имя или модель</th><th>IP</th><th>MAC</th><th></th></tr>
+{{range .Rows}}<tr><td>{{.Kind}}</td><td>{{.Name}}</td><td><code>{{.Host}}</code></td><td>{{with .MAC}}<code>{{.}}</code>{{end}}</td>
+<td>{{if .Device}}уже добавлен: <a href="/devices/{{.Device}}">{{.DeviceName}}</a>{{else if .Moved}}адрес изменился у <a href="/devices/{{.Moved}}">{{.MovedName}}</a>: был <code>{{.OldHost}}</code>
+<form method="post" action="/connections/discovery/move" class="cmd">{{template "keys" $p}}<input type="hidden" name="found" value="{{.Index}}"><button>Обновить адрес</button></form>{{else}}<a href="/?found={{.Index}}#add">Добавить</a>{{end}}</td></tr>{{end}}
+</table></div>{{else if and .Searched (not .Running)}}<p>Ничего не найдено.</p>{{end}}
+{{end}}</details>
+
+<details class="field" id="metrics"{{if .Open.metrics}} open{{end}}><summary><h2>Метрики</h2></summary>
+<p>Порт метрик {{if .MetricsOpen}}открыт: {{.MetricsListen}}{{else}}закрыт: при запуске шлюза не был задан токен метрик{{end}}. Prometheus забирает метрики с /metrics по сети Docker с заголовком Authorization: Bearer &lt;metrics.token&gt;.</p>
+{{with .MetricsError}}<p class="err">{{.}}</p>{{end}}
+<form method="post" action="/connections/metrics">{{template "keys" $p}}
+<label>Токен Prometheus <span class="tech">metrics.token</span>, не меньше 32 символов: {{if .MetricsTokenSet}}задан{{else}}не задан{{end}}
+<input type="password" name="metrics_token" autocomplete="off" placeholder="новое значение" size="40" maxlength="1024"></label>
+{{if .MetricsTokenSet}}<label class="inline"><input type="checkbox" name="metrics_token_clear" value="1"> удалить токен</label>{{end}}
+<p class="muted">Токен можно получить командой openssl rand -hex 32. Новый токен действует сразу, а закрытый порт откроется после перезапуска шлюза.</p>
+<button class="primary">Сохранить</button>
+</form></details>
+{{end}}{{end}}

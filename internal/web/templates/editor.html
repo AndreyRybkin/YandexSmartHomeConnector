@@ -1,0 +1,130 @@
+{{define "head"}}<h3>{{.Title}}{{with .Origin}} <small>{{.}}</small>{{end}}</h3>{{with .Error}}<p class="err">{{.}}</p>{{end}}{{end}}
+
+{{define "buttons"}}<p><button class="primary" name="op" value="save">Сохранить</button>{{if .Preview}} <button name="op" value="preview">Предпросмотр</button>{{end}}{{if .Overridden}} <button name="op" value="reset">{{.ResetLabel}}</button>{{end}}</p>{{end}}
+
+{{define "editor"}}{{$e := .}}
+<datalist id="dl-programs" data-keys>{{range .Programs}}<option value="{{.Value}}"{{with .Label}} label="{{.}}"{{end}}{{with .Now}} data-now="{{.}}"{{end}}>{{end}}</datalist>
+<datalist id="dl-numeric" data-keys>{{range .NumericOptions}}<option value="{{.Value}}"{{with .Label}} label="{{.}}"{{end}}{{with .Now}} data-now="{{.}}"{{end}}>{{end}}</datalist>
+<datalist id="dl-settings" data-keys>{{range .Settings}}<option value="{{.Value}}"{{with .Label}} label="{{.}}"{{end}}{{with .Now}} data-now="{{.}}"{{end}}>{{end}}</datalist>
+<datalist id="dl-statuses" data-keys>{{range .Statuses}}<option value="{{.Value}}"{{with .Label}} label="{{.}}"{{end}}{{with .Now}} data-now="{{.}}"{{end}}>{{end}}</datalist>
+<datalist id="dl-events" data-keys>{{range .Events}}<option value="{{.Value}}"{{with .Label}} label="{{.}}"{{end}}{{with .Now}} data-now="{{.}}"{{end}}>{{end}}</datalist>
+<datalist id="dl-units">{{range .Units}}<option value="{{.Value}}" label="{{.Label}}">{{end}}</datalist>
+
+{{with .Sections.yandex_type}}<section class="field" id="yandex_type">{{template "head" .}}
+<form method="post" action="{{.Action}}">{{template "keys" $e}}
+<select name="yandex_type">{{template "opts" $e.YandexTypes}}</select>
+{{template "buttons" .}}</form></section>{{end}}
+
+{{with .Sections.on_off}}<section class="field" id="on_off">{{template "head" .}}
+<form method="post" action="{{.Action}}">{{template "keys" $e}}
+<select name="on_off">{{template "opts" $e.OnOff}}</select>
+{{with $e.Power}}<fieldset><legend>Питание через свойство прибора</legend>
+<p class="muted">{{if $e.LG}}«Включи» и «выключи» записывают в свойство значения «включить» и «выключить». {{else if $e.HomeConnect}}Без свойства питание - BSH.Common.Setting.PowerState. {{end}}Если задано состояние, прибор включён, пока его значение не из списка «не работает». Если флаг разрешения равен false, «включи» получает REMOTE_CONTROL_DISABLED.</p>
+<label>Свойство <input name="power_setting" value="{{.Setting}}" list="dl-settings" size="40"><span class="hint" data-hint>{{.SettingHint}}</span>{{with .Warn}}<span class="fit">{{.}}</span>{{end}}</label>
+<label>Включить <input name="power_on" value="{{.On}}" size="14"></label>
+<label>Выключить <input name="power_off" value="{{.Off}}" size="14"></label>
+<label>Состояние <input name="power_state" value="{{.State}}" list="dl-statuses" size="40"><span class="hint" data-hint>{{.StateHint}}</span></label>
+<label>Не работает, через запятую <input name="power_idle" value="{{.Idle}}" size="50"></label>
+<label>Флаг разрешения <input name="power_allowed" value="{{.Allowed}}" list="dl-statuses" size="40"><span class="hint" data-hint>{{.AllowedHint}}</span></label>
+</fieldset>{{end}}
+{{template "buttons" .}}</form></section>{{end}}
+
+{{with .Sections.default_program}}<section class="field" id="default_program">{{template "head" .}}
+<p class="muted">Её запускает «включи», если программа не выбрана.</p>
+<form method="post" action="{{.Action}}">{{template "keys" $e}}
+<select name="default_program">{{range $e.DefaultProgram}}<option value="{{.Value}}"{{with .Value}} title="{{.}}"{{end}}{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
+{{template "buttons" .}}</form></section>{{end}}
+
+{{with .Sections.default_options}}<section class="field" id="default_options">{{template "head" .}}
+<p class="muted">Если их не задали голосом. Пусто - параметр не задан.</p>
+<form method="post" action="{{.Action}}">{{template "keys" $e}}
+<div class="wrap"><table><tr><th>Параметр прибора</th><th>Значение</th></tr>
+{{range $e.Options}}<tr><td>{{if .Key}}<code>{{.Key}}</code>{{if .Missing}} <span class="muted">нет у прибора</span>{{end}}{{with .Hint}}<span class="hint">{{.}}</span>{{end}}<input type="hidden" name="o.{{.Index}}.k" value="{{.Key}}">{{else}}<input name="o.{{.Index}}.k" list="dl-numeric" placeholder="другой параметр" data-map><span class="hint" data-hint></span>{{end}}</td>
+<td>{{if .Choices}}<select name="o.{{.Index}}.v">{{template "opts" .Choices}}</select>{{else}}<input name="o.{{.Index}}.v" value="{{.Value}}" placeholder="не задан">{{end}}</td></tr>{{end}}
+</table></div>
+{{template "buttons" .}}</form></section>{{end}}
+
+{{with .Sections.modes}}<section class="field" id="modes">{{template "head" .}}
+<p class="muted">Один режим Алисы - одному варианту; «-» - Алиса его не видит.</p>
+<form method="post" action="{{.Action}}">{{template "keys" $e}}
+{{range $e.Modes}}{{$m := .}}<fieldset><legend>Режим Алисы <select name="m.{{.Index}}.instance">{{template "opts" .Instances}}</select> выбирает {{.SourceLabel}}
+<input type="hidden" name="m.{{.Index}}.source" value="{{.Source}}"><label class="inline"><input type="checkbox" name="m.{{.Index}}.delete" value="1"> удалить режим</label></legend>
+<div class="wrap"><table><tr><th>Программа или значение прибора</th><th>Режим Алисы</th></tr>
+{{range .Rows}}<tr><td>{{if .Key}}<span title="{{.Key}}">{{.Label}}</span>{{if .Now}} <span class="chip run">сейчас</span>{{end}}{{if .Missing}} <span class="muted">нет у прибора</span>{{end}}<input type="hidden" name="m.{{$m.Index}}.k.{{.Index}}" value="{{.Key}}">{{else}}<input name="m.{{$m.Index}}.k.{{.Index}}"{{if eq $m.Source "programs"}} list="dl-programs"{{end}} placeholder="другое значение" data-map>{{end}}</td>
+<td><select name="m.{{$m.Index}}.v.{{.Index}}">{{template "opts" .Choices}}</select>{{if and $e.ProbeAction .Probe $m.Instance}} <button formaction="{{$e.ProbeAction}}" name="probe" value="{{$m.Instance}}|{{.Probe}}" title="Отправить прибору ту же команду, что Алиса">Проверить</button>{{end}}</td></tr>{{end}}
+</table></div></fieldset>{{end}}
+<p>Новый режим Алисы: <select name="m.new.instance">{{template "opts" $e.NewModeInstances}}</select> выбирает <select name="m.new.source">{{template "opts" $e.NewModeSources}}</select></p>
+{{template "buttons" .}}</form></section>{{end}}
+
+{{with .Sections.ranges}}<section class="field" id="ranges">{{template "head" .}}
+<p class="muted">Пустые «от», «до» и шаг берутся из описания прибора.</p>
+<form method="post" action="{{.Action}}">{{template "keys" $e}}
+<div class="wrap"><table><tr><th>Число Алисы</th><th>Параметр прибора</th><th>Единица</th><th>От</th><th>До</th><th>Шаг</th><th></th></tr>
+{{range $e.Ranges}}<tr><td><select name="r.{{.Index}}.instance">{{template "opts" .Instances}}</select></td>
+<td><input name="r.{{.Index}}.option" value="{{.Option}}" list="dl-numeric" data-map><span class="hint" data-hint>{{.Hint}}</span>{{with .Warn}}<span class="fit">{{.}}</span>{{end}}</td>
+<td><select name="r.{{.Index}}.unit">{{template "opts" .Units}}</select></td>
+<td><input name="r.{{.Index}}.min" value="{{.Min}}" inputmode="decimal" size="6"></td>
+<td><input name="r.{{.Index}}.max" value="{{.Max}}" inputmode="decimal" size="6"></td>
+<td><input name="r.{{.Index}}.precision" value="{{.Precision}}" inputmode="decimal" size="4"></td>
+<td>{{if .New}}<span class="muted">новый</span>{{else}}<label><input type="checkbox" name="r.{{.Index}}.delete" value="1"> удалить</label>{{end}}</td></tr>{{end}}
+</table></div>
+{{template "buttons" .}}</form></section>{{end}}
+
+{{with .Sections.toggles}}<section class="field" id="toggles">{{template "head" .}}
+<p class="muted">Паузе настройка прибора не нужна, остальным - флаг или свойство со значениями «включено» и «выключено».</p>
+<form method="post" action="{{.Action}}">{{template "keys" $e}}
+<div class="wrap"><table><tr><th>Переключатель Алисы</th><th>Настройка прибора</th><th>Включено</th><th>Выключено</th><th></th></tr>
+{{range $e.Toggles}}<tr><td><select name="t.{{.Index}}.instance">{{template "opts" .Instances}}</select></td>
+<td><input name="t.{{.Index}}.setting" value="{{.Setting}}" list="dl-settings" placeholder="не нужна для pause" data-map><span class="hint" data-hint>{{.Hint}}</span>{{with .Warn}}<span class="fit">{{.}}</span>{{end}}</td>
+<td><input name="t.{{.Index}}.on" value="{{.On}}" size="10" placeholder="true"></td>
+<td><input name="t.{{.Index}}.off" value="{{.Off}}" size="10" placeholder="false"></td>
+<td>{{if .New}}<span class="muted">новый</span>{{else}}<label><input type="checkbox" name="t.{{.Index}}.delete" value="1"> удалить</label>{{end}}</td></tr>{{end}}
+</table></div>
+{{template "buttons" .}}</form></section>{{end}}
+
+{{with .Sections.color}}<section class="field" id="color">{{template "head" .}}
+<p class="muted">Цвет лампы: оттенок и насыщенность, цветовая температура или оба. Пустые поля - умения «цвет» нет.</p>
+<form method="post" action="{{.Action}}">{{template "keys" $e}}
+<label>Команда цвета <input name="color_setting" value="{{$e.Color.Setting}}" list="dl-settings" placeholder="colorControl.setColor" data-map> <span class="muted">получает оттенок и насыщенность</span><span class="hint" data-hint>{{$e.Color.SettingHint}}</span></label>
+<label>Оттенок <input name="color_hue" value="{{$e.Color.Hue}}" list="dl-statuses" placeholder="colorControl.hue" data-map><span class="hint" data-hint>{{$e.Color.HueHint}}</span></label>
+<label>Насыщенность <input name="color_saturation" value="{{$e.Color.Saturation}}" list="dl-statuses" placeholder="colorControl.saturation" data-map><span class="hint" data-hint>{{$e.Color.SaturationHint}}</span></label>
+<label>Верх шкалы оттенка у прибора <input name="color_hue_max" value="{{$e.Color.HueMax}}" inputmode="decimal" size="6" placeholder="360"> <span class="muted">у SmartThings - 100</span></label>
+<label>Цветовая температура <input name="color_temperature" value="{{$e.Color.Temperature}}" list="dl-settings" placeholder="colorTemperature.colorTemperature" data-map><span class="hint" data-hint>{{$e.Color.TemperatureHint}}</span></label>
+<label>От, K <input name="color_min_k" value="{{$e.Color.MinK}}" inputmode="numeric" size="6"></label>
+<label>До, K <input name="color_max_k" value="{{$e.Color.MaxK}}" inputmode="numeric" size="6"> <span class="muted">пусто - из описания прибора</span></label>
+{{template "buttons" .}}</form></section>{{end}}
+
+{{with .Sections.properties}}<section class="field" id="properties">{{template "head" .}}
+<p class="muted">Что прибор сообщает Алисе: событие или число.</p>
+<form method="post" action="{{.Action}}">{{template "keys" $e}}
+{{range $e.Properties}}{{$pr := .}}<fieldset><legend><select name="p.{{.Index}}.kind">{{template "opts" .Kinds}}</select>
+{{if .New}}<span class="muted">новое свойство</span>{{else}}<label class="inline"><input type="checkbox" name="p.{{.Index}}.delete" value="1"> удалить</label>{{end}}</legend>
+{{with .Warn}}<p class="notice">{{.}}</p>{{end}}
+<div data-when="p.{{.Index}}.kind" data-is="float/* event/*"><label>Instance своего свойства <input name="p.{{.Index}}.instance" value="{{.Instance}}" maxlength="64" placeholder="например remaining_time"> <span class="muted">латинские строчные буквы, цифры, _ и .</span></label></div>
+<label>Состояние прибора <input name="p.{{.Index}}.status" value="{{.Status}}" list="dl-statuses" size="50" data-map><span class="hint" data-hint>{{.Hint}}</span></label>
+{{with .Fit}}<p class="fit">{{.}}</p>{{end}}
+<div data-when="p.{{.Index}}.kind" data-prefix="float/">
+<label>Единица показания <input name="p.{{.Index}}.unit" value="{{.Unit}}" list="dl-units" maxlength="64" placeholder="без единицы"></label>
+<label>Пересчёт <select name="p.{{.Index}}.convert">{{template "opts" .Convert}}</select></label>
+<div data-when="p.{{.Index}}.convert" data-is="custom"><label class="inline">Множитель <input name="p.{{.Index}}.scale" value="{{.Scale}}" inputmode="decimal" size="8" placeholder="1"></label>
+<label class="inline">Слагаемое <input name="p.{{.Index}}.offset" value="{{.Offset}}" inputmode="decimal" size="8" placeholder="0"></label>
+<span class="muted">значение прибора × множитель + слагаемое, результат - до сотых</span></div>
+<p class="hint" data-result data-raw="{{.Raw}}">{{.Result}}</p>
+</div>
+<div data-when="p.{{.Index}}.kind" data-prefix="event/">
+<datalist id="dl-ev-{{.Index}}">{{range .Events}}<option value="{{.Value}}" label="{{.Label}}">{{end}}</datalist>
+<div class="wrap"><table><tr><th>Значение прибора</th><th>Значение события Алисы</th></tr>
+{{range .Rows}}<tr><td><input name="p.{{$pr.Index}}.k.{{.Index}}" value="{{.Key}}" size="40"></td><td><input name="p.{{$pr.Index}}.v.{{.Index}}" value="{{.Value}}" list="dl-ev-{{$pr.Index}}" maxlength="64" placeholder="-"></td></tr>{{end}}
+</table></div></div></fieldset>{{end}}
+{{template "buttons" .}}</form></section>{{end}}
+
+{{with .Sections.events}}<section class="field" id="events">{{template "head" .}}
+<p class="muted">Отдельное устройство Алисы: сообщает о событиях прибора нажатием кнопки. Событие - имя, шаблон с * или переход состояние=значение.</p>
+<form method="post" action="{{.Action}}">{{template "keys" $e}}
+<div class="wrap"><table><tr><th>Событие прибора</th><th>Нажатие кнопки</th></tr>
+{{range $e.Buttons}}<tr><td><input name="b.{{.Index}}.k" value="{{.Key}}" list="dl-events" size="50" data-map></td><td><select name="b.{{.Index}}.v">{{template "opts" .Choices}}</select></td></tr>{{end}}
+</table></div>
+<p>События «заканчивается»: если есть хотя бы одно, «Уровень корма» (food_level) датчика - «низкий».</p>
+{{range $e.FoodLevel}}<input name="f.{{.Index}}" value="{{.Key}}" list="dl-events" size="50" data-map><br>{{end}}
+{{template "buttons" .}}</form></section>{{end}}
+{{end}}
