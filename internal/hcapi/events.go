@@ -46,17 +46,29 @@ type Event struct {
 // Events открывает поток событий всех приборов аккаунта и вызывает handle на каждое событие,
 // пока поток не оборвётся или ctx не отменён. connected вызывается, когда поток открыт.
 // Открытие потока - запрос из лимитов облака.
-func (c *Client) Events(ctx context.Context, connected func(), handle func(Event)) error {
-	token, err := c.access(ctx)
+func (c *Client) Events(ctx context.Context, connected func(), handle func(Event)) (err error) {
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	// Смена входа закрывает поток: со старым токеном он остался бы на старом аккаунте и адресе.
+	c.mu.Lock()
+	c.stopStream = cancel
+	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		c.stopStream = nil
+		c.mu.Unlock()
+		if errors.Is(context.Cause(ctx), ErrLoginChanged) {
+			err = ErrLoginChanged
+		}
+	}()
+	token, base, err := c.access(ctx)
 	if err != nil {
 		return err
 	}
 	if err := c.lim.wait(ctx); err != nil {
 		return err
 	}
-	ctx, cancel := context.WithCancelCause(ctx)
-	defer cancel(nil)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.config().BaseURL+"/api/homeappliances/events", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/homeappliances/events", nil)
 	if err != nil {
 		return err
 	}

@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -21,7 +22,7 @@ func fakeJWT(payload string) string {
 }
 
 func TestLoginURL(t *testing.T) {
-	l, err := NewLogin()
+	l, err := NewLogin(Global, ScopeKeys)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,6 +39,9 @@ func TestLoginURL(t *testing.T) {
 	if q.Get("code_challenge") != base64.RawURLEncoding.EncodeToString(sum[:]) || q.Get("code_challenge_method") != "S256" {
 		t.Fatalf("PKCE: %v", q)
 	}
+	if q.Get("scope") != ScopeKeys {
+		t.Fatalf("область: %v", q.Get("scope"))
+	}
 	if q.Get("client_id") != appClientID || q.Get("redirect_uri") != redirectURI || q.Get("state") != l.state {
 		t.Fatalf("параметры: %v", q)
 	}
@@ -51,19 +55,19 @@ func TestExchange(t *testing.T) {
 		w.Write([]byte(`{"access_token":"` + fakeJWT(`{"sub":"user-1"}`) + `"}`))
 	}))
 	defer srv.Close()
-	l, _ := NewLogin()
+	l, _ := NewLogin(Global, ScopeKeys)
 	l.authBase = srv.URL + "/"
-	token, sub, err := l.Exchange(context.Background(), " hcauth://auth/prod?code=CODE&state="+l.state+"\n")
+	g, err := l.Exchange(context.Background(), " hcauth://auth/prod?code=CODE&state="+l.state+"\n")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sub != "user-1" || token == "" {
-		t.Fatalf("sub %q", sub)
+	if g.Subject != "user-1" || g.Access == "" {
+		t.Fatalf("вход: %+v", g)
 	}
 }
 
 func TestParseRedirectErrors(t *testing.T) {
-	l, _ := NewLogin()
+	l, _ := NewLogin(Global, ScopeKeys)
 	cases := map[string]string{
 		"чужой state":  "hcauth://auth/prod?code=C&state=other",
 		"нет code":     "hcauth://auth/prod?state=" + l.state,
@@ -195,5 +199,54 @@ func TestUnpackDescription(t *testing.T) {
 	}
 	if _, err := unpackDescription([]byte("not zip"), "H1"); err == nil {
 		t.Fatal("ожидалась ошибка: не архив")
+	}
+}
+
+func TestRegions(t *testing.T) {
+	for name, want := range map[string]Region{"": Global, "global": Global, "eu": EU, "na": NA, "cn": China} {
+		if r, ok := RegionByName(name); !ok || r.Name != want.Name {
+			t.Errorf("%q: %+v %v", name, r, ok)
+		}
+	}
+	if _, ok := RegionByName("mars"); ok {
+		t.Fatal("чужой регион принят")
+	}
+	l, err := NewLogin(China, ScopeFull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	link, err := l.URL()
+	if err != nil || !strings.HasPrefix(link, "https://api.home-connect.cn/security/oauth/authorize?") ||
+		!strings.Contains(link, "scope=Control+DeleteAppliance") {
+		t.Fatalf("адрес входа: %s %v", link, err)
+	}
+}
+
+// Данные токена - строгий JSON, вид из консоли браузера или сам токен.
+func TestParseToken(t *testing.T) {
+	now := time.Unix(1000, 0)
+	jwt := fakeJWT(`{"sub":"user-1","exp":2000}`)
+	for name, data := range map[string]string{
+		"JSON":    `{"access_token":"` + jwt + `","expires_in":86400}`,
+		"консоль": "{\n  access_token: '" + jwt + "',\n  expires_in: 86400,\n  id_token: 'x'\n}\n",
+		"токен":   " " + jwt + "\n",
+	} {
+		if g, err := ParseToken(data, now); err != nil || g.Access != jwt || g.Subject != "user-1" || g.Expires.Unix() != 2000 {
+			t.Errorf("%s: %+v %v", name, g, err)
+		}
+	}
+	if g, err := ParseToken("{\n  access_token: '"+jwt+"',\n  refresh_token: 'rt',\n  scope: 'A B'\n}", now); err != nil || g.Refresh != "rt" || g.Scope != "A B" {
+		t.Errorf("поля: %+v %v", g, err)
+	}
+	if g, err := ParseToken(fakeJWT(`{"sub":"user-1","exp":2000,"azp":"app","region":"CN"}`), now); err != nil || g.ClientID != "app" || g.Region != "CN" {
+		t.Errorf("приложение и регион: %+v %v", g, err)
+	}
+	if _, err := ParseToken(jwt, time.Unix(2000, 0)); !errors.Is(err, ErrTokenExpired) {
+		t.Errorf("истёкший токен: %v", err)
+	}
+	for _, data := range []string{"", "{ access_token: '<token>' }", fakeJWT(`{"sub":"a/b"}`), strings.Repeat("a", maxTokenData+1)} {
+		if _, err := ParseToken(data, now); !errors.Is(err, ErrBadToken) {
+			t.Errorf("%.40q: %v", data, err)
+		}
 	}
 }

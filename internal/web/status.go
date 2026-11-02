@@ -64,6 +64,9 @@ func (s *Server) status(id string, d config.Device) status {
 		st.Switch, st.On = power(dev, id)
 	}
 	switch {
+	case !st.Online && d.Source == config.SourceHomeConnectCloud && !s.gw.Cloud.API.LoggedIn():
+		// Без входа прибор облака не появится на связи сам: причину надо назвать.
+		st.Text = "нет входа в Home Connect"
 	case st.Waiting:
 	case !st.Online:
 		st.Text = s.offlineText(id)

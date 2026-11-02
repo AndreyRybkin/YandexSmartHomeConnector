@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
@@ -25,6 +26,10 @@ const (
 	// loginInterval - самый частый опрос при входе; slowDown - на сколько реже после slow_down.
 	loginInterval = 5 * time.Second
 	slowDown      = 5 * time.Second
+	// keepCheck - как часто шлюз проверяет срок токена в фоне; keepMaxPause - самая длинная пауза
+	// после сбоев продления.
+	keepCheck    = time.Minute
+	keepMaxPause = time.Hour
 )
 
 // Состояния входа.
@@ -129,6 +134,9 @@ func (c *Client) poll(clientID, deviceCode string, l Login, interval time.Durati
 			c.mu.Lock()
 			err = c.saveTokensLocked(&Tokens{Access: tok.Access, Refresh: tok.Refresh, Scope: tok.Scope,
 				Expires: c.now().Add(time.Duration(tok.ExpiresIn) * time.Second)})
+			if err == nil {
+				c.loginChangedLocked()
+			}
 			c.mu.Unlock()
 			if err != nil {
 				c.log.Error("вход в Home Connect: токены не сохранены", "err", err)
@@ -160,8 +168,23 @@ func (c *Client) poll(clientID, deviceCode string, l Login, interval time.Durati
 }
 
 // refresh обновляет токены, если они всё ещё old: другая горутина могла обновить их раньше.
-// Облако требует для обновления client_secret. Если облако отвергло refresh token, нужен новый вход.
+// Запрос к облаку не зависит от ctx и доходит до конца без вызывающего: облако могло уже заменить
+// refresh token, и без его ответа следующее продление получит отказ.
 func (c *Client) refresh(ctx context.Context, old *Tokens) error {
+	done := make(chan error, 1)
+	go func() { done <- c.refreshOnce(old) }()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// refreshOnce отправляет запрос продления. Облако требует для обновления client_secret, а токен
+// приложения Home Connect - client_id. Если облако отвергло refresh token, нужен новый вход.
+// Если за время запроса вход сменился или удалён, ответ облака уже ничего не меняет.
+func (c *Client) refreshOnce(old *Tokens) error {
 	c.refreshMu.Lock()
 	defer c.refreshMu.Unlock()
 	c.mu.Lock()
@@ -187,42 +210,192 @@ func (c *Client) refresh(ctx context.Context, old *Tokens) error {
 		return ErrBusy
 	}
 	c.refreshes = append(c.refreshes, now)
-	secret := c.cfg.ClientSecret
+	form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {cur.Refresh}}
+	if cur.ClientID != "" {
+		form.Set("client_id", cur.ClientID)
+	} else {
+		form.Set("client_secret", c.cfg.ClientSecret)
+	}
+	base := cur.BaseURL
+	if base == "" {
+		base = c.cfg.BaseURL
+	}
 	c.mu.Unlock()
 
 	var tok tokenResponse
-	status, code, err := c.oauth(ctx, "/security/oauth/token", url.Values{"grant_type": {"refresh_token"},
-		"refresh_token": {cur.Refresh}, "client_secret": {secret}}, &tok)
-	if err != nil {
+	status, code, err := c.oauthAt(context.Background(), base, "/security/oauth/token", form, &tok)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	replaced := c.tokens != cur
+	switch {
+	case err != nil:
+		metrics.TokenRefresh(SourceName, metrics.RefreshError)
+		if !replaced {
+			c.refreshFailed = c.now()
+		}
 		return err
-	}
-	if status != http.StatusOK || tok.Access == "" {
+	case status != http.StatusOK || tok.Access == "":
 		if status == http.StatusBadRequest || status == http.StatusUnauthorized {
+			metrics.TokenRefresh(SourceName, metrics.RefreshRejected)
 			c.log.Error("облако Home Connect не обновило токен, нужен новый вход", "status", status, "error", code)
-			c.mu.Lock()
+			if replaced {
+				return nil
+			}
 			c.tokens = nil
-			c.login = Login{Status: LoginFailed, Error: "Облако не обновило токен: проверьте client_secret и войдите заново."}
-			c.mu.Unlock()
-			os.Remove(c.path)
+			c.loginChangedLocked()
+			c.login = Login{Status: LoginFailed, Error: rejectedText(cur)}
+			c.rejected = cur.ClientID != ""
+			if err := os.Remove(c.path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				c.log.Error("файл токенов Home Connect не удалён", "err", err)
+			}
 			return ErrNotLoggedIn
+		}
+		metrics.TokenRefresh(SourceName, metrics.RefreshError)
+		if !replaced {
+			c.refreshFailed = c.now()
 		}
 		return &APIError{Status: status, Key: code}
 	}
+	metrics.TokenRefresh(SourceName, metrics.RefreshOK)
+	if replaced {
+		return nil
+	}
 	t := &Tokens{Access: tok.Access, Refresh: tok.Refresh, Scope: tok.Scope,
-		Expires: c.now().Add(time.Duration(tok.ExpiresIn) * time.Second)}
+		Expires: c.now().Add(time.Duration(tok.ExpiresIn) * time.Second), ClientID: cur.ClientID, BaseURL: cur.BaseURL,
+		Region: cur.Region, Refreshed: c.now()}
 	if t.Refresh == "" {
 		t.Refresh = cur.Refresh
 	}
+	if t.Scope == "" {
+		t.Scope = cur.Scope
+	}
+	c.refreshFailed, c.nextRefresh = time.Time{}, time.Time{}
+	// Новые токены нужны и без записи в файл: прежний refresh token облако могло уже отозвать.
+	c.tokens = t
+	if err := c.saveTokensLocked(t); err != nil {
+		c.log.Error("токен Home Connect продлён, но не записан: после перезапуска может понадобиться новый вход", "err", err)
+	}
+	return nil
+}
+
+// rejectedText - что писать на странице, когда облако отвергло refresh token.
+func rejectedText(t *Tokens) string {
+	if t.ClientID != "" {
+		return "Облако не продлило токен приложения Home Connect: нужен новый вход или новый токен."
+	}
+	return "Облако не обновило токен: проверьте client_secret и войдите заново."
+}
+
+// UseTokens сохраняет токен приложения Home Connect: он заменяет прежний вход.
+func (c *Client) UseTokens(t Tokens) error {
+	if t.Access == "" || t.Refresh == "" || t.ClientID == "" {
+		return errors.New("неполный токен")
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.saveTokensLocked(t)
+	if err := c.saveTokensLocked(&t); err != nil {
+		return err
+	}
+	c.login = Login{}
+	c.loginChangedLocked()
+	return nil
+}
+
+// AppTokens - сведения о токене приложения Home Connect, без значений токенов; нет такого - false.
+func (c *Client) AppTokens() (Tokens, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.tokens == nil || c.tokens.ClientID == "" {
+		return Tokens{}, false
+	}
+	t := *c.tokens
+	t.Access, t.Refresh = "", ""
+	return t, true
+}
+
+// AppAccess - действующий access token приложения Home Connect, при нужде продлённый.
+func (c *Client) AppAccess(ctx context.Context) (string, error) {
+	if _, ok := c.AppTokens(); !ok {
+		return "", ErrNotLoggedIn
+	}
+	token, _, err := c.access(ctx)
+	return token, err
+}
+
+// Expires - когда истекает access token; входа нет - false.
+func (c *Client) Expires() (time.Time, bool) {
+	t, _ := c.current()
+	if t == nil {
+		return time.Time{}, false
+	}
+	return t.Expires, true
+}
+
+// RefreshState - как идёт продление токена, для страницы.
+type RefreshState struct {
+	// Failed - когда не удалось последнее продление; Next - когда шлюз повторит его в фоне.
+	Failed, Next time.Time
+	// Rejected - облако отвергло токен приложения Home Connect: нужен новый вход или новый токен.
+	Rejected bool
+}
+
+// RefreshState - как идёт продление токена.
+func (c *Client) RefreshState() RefreshState {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return RefreshState{Failed: c.refreshFailed, Next: c.nextRefresh, Rejected: c.rejected}
+}
+
+// RefreshNow продлевает токен сейчас, не дожидаясь срока.
+func (c *Client) RefreshNow(ctx context.Context) error {
+	c.mu.Lock()
+	t := c.tokens
+	c.mu.Unlock()
+	if t == nil {
+		return ErrNotLoggedIn
+	}
+	return c.refresh(ctx, t)
+}
+
+// KeepFresh продлевает токен в фоне, пока ctx жив: иначе без потока событий и запросов
+// истечёт и он, и со временем refresh token. После сбоя пауза растёт до keepMaxPause.
+func (c *Client) KeepFresh(ctx context.Context) {
+	pause := c.keepCheck
+	for c.lim.sleep(ctx, pause) == nil {
+		c.mu.Lock()
+		t := c.tokens
+		c.mu.Unlock()
+		if t == nil || c.now().Add(refreshBefore).Before(t.Expires) {
+			pause = c.keepCheck
+			continue
+		}
+		// При остановке шлюза идущее продление доходит до конца: новый refresh token не пропадёт.
+		err := c.refresh(context.WithoutCancel(ctx), t)
+		if err == nil || errors.Is(err, ErrNotLoggedIn) {
+			pause = c.keepCheck
+			continue
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		pause = min(pause*2, keepMaxPause)
+		c.log.Warn("токен Home Connect не продлён, шлюз повторит позже", "err", err, "after", pause)
+		c.mu.Lock()
+		c.nextRefresh = c.now().Add(pause)
+		c.mu.Unlock()
+	}
 }
 
 // oauth отправляет форму на адрес входа облака. Возвращает код ответа и код ошибки OAuth.
 func (c *Client) oauth(ctx context.Context, path string, form url.Values, out any) (int, string, error) {
+	return c.oauthAt(ctx, c.config().BaseURL, path, form, out)
+}
+
+// oauthAt - то же на адресе base.
+func (c *Client) oauthAt(ctx context.Context, base, path string, form url.Values, out any) (int, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.config().BaseURL+path, strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+path, strings.NewReader(form.Encode()))
 	if err != nil {
 		return 0, "", err
 	}

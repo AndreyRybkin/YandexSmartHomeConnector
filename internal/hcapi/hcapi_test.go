@@ -4,10 +4,14 @@ import (
 	"context"
 	"errors"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -262,4 +266,331 @@ func TestParseItems(t *testing.T) {
 	if items := parseItems("не json"); items != nil {
 		t.Fatal("не JSON")
 	}
+}
+
+// tokenServer - облако для токена приложения Home Connect: refused - отвергнуть продление.
+func tokenServer(t *testing.T, refused *atomic.Bool, refreshes *atomic.Int32) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/security/oauth/token":
+			r.ParseForm()
+			if r.Form.Get("client_id") != "app" || r.Form.Has("client_secret") || r.Form.Get("refresh_token") == "" {
+				t.Errorf("продление: %v", r.Form)
+			}
+			if refused.Load() {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			refreshes.Add(1)
+			w.Write([]byte(`{"access_token":"new","refresh_token":"r2","expires_in":86400}`))
+		case "/api/homeappliances":
+			if r.Header.Get("Authorization") != "Bearer new" && r.Header.Get("Authorization") != "Bearer old" {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			w.Header().Set("Content-Type", "application/vnd.bsh.sdk.v1+json")
+			w.Write([]byte(`{"data":{"homeappliances":[]}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// Токен приложения Home Connect ходит на свой адрес, продлевается без секрета, переживает
+// перезапуск и удаляется, когда облако отвергло refresh token.
+func TestAppTokens(t *testing.T) {
+	var refused atomic.Bool
+	var refreshes atomic.Int32
+	srv := tokenServer(t, &refused, &refreshes)
+	path := filepath.Join(t.TempDir(), "tokens.json")
+	log := slog.New(slog.DiscardHandler)
+	c, err := New(path, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Configure(Config{ClientID: "portal", ClientSecret: "secret", BaseURL: "http://127.0.0.1:9"})
+	if err := c.UseTokens(Tokens{Access: "old"}); err == nil {
+		t.Fatal("неполный токен принят")
+	}
+	if err := c.UseTokens(Tokens{Access: "old", Refresh: "r1", ClientID: "app", BaseURL: srv.URL, Region: "cn",
+		Expires: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Appliances(context.Background()); err != nil {
+		t.Fatalf("запрос на адрес токена: %v", err)
+	}
+	if err := c.RefreshNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	c, err = New(path, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, ok := c.AppTokens()
+	if !ok || info.Access != "" || info.Refresh != "" || info.Region != "cn" || info.Refreshed.IsZero() {
+		t.Fatalf("после перезапуска: %+v %v", info, ok)
+	}
+	if token, err := c.AppAccess(context.Background()); err != nil || token != "new" {
+		t.Fatalf("access: %q %v", token, err)
+	}
+	refused.Store(true)
+	if err := c.RefreshNow(context.Background()); !errors.Is(err, ErrNotLoggedIn) {
+		t.Fatalf("отказ в продлении: %v", err)
+	}
+	if c.LoggedIn() || !strings.Contains(c.LoginState().Error, "нужен новый вход") {
+		t.Fatalf("после отказа: %+v", c.LoginState())
+	}
+	if _, err := os.Stat(path); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("файл токенов остался: %v", err)
+	}
+}
+
+// Фоновое продление: токен обновляется до конца срока без единого запроса к API.
+func TestKeepFresh(t *testing.T) {
+	var refused atomic.Bool
+	var refreshes atomic.Int32
+	srv := tokenServer(t, &refused, &refreshes)
+	c, err := New(filepath.Join(t.TempDir(), "tokens.json"), slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.keepCheck = time.Millisecond
+	if err := c.UseTokens(Tokens{Access: "old", Refresh: "r1", ClientID: "app", BaseURL: srv.URL, Expires: time.Now().Add(time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		c.KeepFresh(ctx)
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for refreshes.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	<-done
+	if n := refreshes.Load(); n != 1 {
+		t.Fatalf("продлений: %d, новый токен действует сутки", n)
+	}
+}
+
+// blockingToken - облако, которое отвечает на продление только после release.
+func blockingToken(t *testing.T, status int, body string) (*httptest.Server, chan struct{}, chan struct{}) {
+	t.Helper()
+	entered, release := make(chan struct{}, 1), make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		entered <- struct{}{}
+		<-release
+		w.WriteHeader(status)
+		io.WriteString(w, body)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, entered, release
+}
+
+func appClient(t *testing.T, base string) *Client {
+	t.Helper()
+	c, err := New(filepath.Join(t.TempDir(), "tokens.json"), slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.UseTokens(Tokens{Access: "old", Refresh: "r1", ClientID: "app", BaseURL: base, Region: "cn",
+		Expires: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+const rotated = `{"access_token":"new","refresh_token":"r2","expires_in":86400}`
+
+// Выход, пока идёт продление: ответ облака не возвращает токены.
+func TestRefreshAfterLogout(t *testing.T) {
+	srv, entered, release := blockingToken(t, http.StatusOK, rotated)
+	c := appClient(t, srv.URL)
+	done := make(chan error, 1)
+	go func() { done <- c.RefreshNow(context.Background()) }()
+	<-entered
+	if err := c.Logout(); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	<-done
+	if c.LoggedIn() {
+		t.Fatal("токены вернулись после выхода")
+	}
+	if _, err := os.Stat(c.path); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("файл токенов вернулся: %v", err)
+	}
+}
+
+// Новый токен, пока идёт продление старого: ни ответ, ни отказ облака его не трогают.
+func TestRefreshAfterReplace(t *testing.T) {
+	for name, status := range map[string]int{"ответ": http.StatusOK, "отказ": http.StatusBadRequest} {
+		t.Run(name, func(t *testing.T) {
+			srv, entered, release := blockingToken(t, status, rotated)
+			c := appClient(t, srv.URL)
+			done := make(chan error, 1)
+			go func() { done <- c.RefreshNow(context.Background()) }()
+			<-entered
+			if err := c.UseTokens(Tokens{Access: "pasted", Refresh: "r9", ClientID: "app", BaseURL: srv.URL,
+				Expires: time.Now().Add(time.Hour)}); err != nil {
+				t.Fatal(err)
+			}
+			close(release)
+			<-done
+			if token, err := c.AppAccess(context.Background()); err != nil || token != "pasted" {
+				t.Fatalf("токен: %q %v", token, err)
+			}
+			if st := c.RefreshState(); st.Rejected || c.LoginState().Status == LoginFailed {
+				t.Fatalf("отказ старому токену: %+v", st)
+			}
+			if _, err := os.Stat(c.path); err != nil {
+				t.Fatalf("файл токенов: %v", err)
+			}
+		})
+	}
+}
+
+// Вызывающий ушёл, пока идёт продление: новый refresh token всё равно сохраняется.
+func TestRefreshOutlivesCaller(t *testing.T) {
+	srv, entered, release := blockingToken(t, http.StatusOK, rotated)
+	c := appClient(t, srv.URL)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- c.RefreshNow(ctx) }()
+	<-entered
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("вызывающий: %v", err)
+	}
+	close(release)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if t2, _ := c.current(); t2 != nil && t2.Refresh == "r2" {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("новый refresh token потерян")
+}
+
+// Запись в файл не удалась: новый refresh token остаётся в памяти, запросы идут дальше.
+func TestRefreshSaveFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, rotated) }))
+	defer srv.Close()
+	c := appClient(t, srv.URL)
+	blocker := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(blocker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c.path = filepath.Join(blocker, "tokens.json")
+	if err := c.RefreshNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if t2, _ := c.current(); t2.Refresh != "r2" || t2.Access != "new" {
+		t.Fatalf("токены: %+v", t2)
+	}
+}
+
+// Сбой продления виден в состоянии до следующего успеха, отказ облака - до нового входа.
+func TestRefreshState(t *testing.T) {
+	var status atomic.Int32
+	status.Store(http.StatusInternalServerError)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(int(status.Load()))
+		if status.Load() == http.StatusOK {
+			io.WriteString(w, rotated)
+		}
+	}))
+	defer srv.Close()
+	c := appClient(t, srv.URL)
+	if err := c.RefreshNow(context.Background()); err == nil {
+		t.Fatal("нет ошибки")
+	}
+	if st := c.RefreshState(); st.Failed.IsZero() || st.Rejected {
+		t.Fatalf("после сбоя: %+v", st)
+	}
+	if !c.LoggedIn() {
+		t.Fatal("сбой удалил токены")
+	}
+	status.Store(http.StatusOK)
+	if err := c.RefreshNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if st := c.RefreshState(); !st.Failed.IsZero() {
+		t.Fatalf("после успеха: %+v", st)
+	}
+	status.Store(http.StatusBadRequest)
+	if err := c.RefreshNow(context.Background()); !errors.Is(err, ErrNotLoggedIn) {
+		t.Fatalf("отказ: %v", err)
+	}
+	if st := c.RefreshState(); !st.Rejected {
+		t.Fatalf("после отказа: %+v", st)
+	}
+	if err := c.UseTokens(Tokens{Access: "a", Refresh: "b", ClientID: "app", BaseURL: srv.URL, Expires: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if st := c.RefreshState(); st.Rejected || c.LoginState().Status != "" {
+		t.Fatalf("после нового входа: %+v %+v", st, c.LoginState())
+	}
+	if exp, ok := c.Expires(); !ok || exp.IsZero() {
+		t.Fatalf("срок: %v %v", exp, ok)
+	}
+}
+
+// Смена входа и выход закрывают открытый поток, а продление токена - нет.
+func TestEventsLoginChanged(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/security/oauth/token" {
+			io.WriteString(w, rotated)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+	open := func(c *Client) chan error {
+		ended, up := make(chan error, 1), make(chan struct{}, 1)
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		go func() { ended <- c.Events(ctx, func() { up <- struct{}{} }, func(Event) {}) }()
+		<-up
+		return ended
+	}
+	wait := func(ended chan error) {
+		t.Helper()
+		select {
+		case err := <-ended:
+			if !errors.Is(err, ErrLoginChanged) {
+				t.Fatalf("поток: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("поток не закрылся")
+		}
+	}
+	c := appClient(t, srv.URL)
+	ended := open(c)
+	if err := c.RefreshNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-ended:
+		t.Fatalf("продление закрыло поток: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := c.UseTokens(Tokens{Access: "cn", Refresh: "r9", ClientID: "app", BaseURL: srv.URL, Expires: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	wait(ended)
+	ended = open(c)
+	if err := c.Logout(); err != nil {
+		t.Fatal(err)
+	}
+	wait(ended)
 }

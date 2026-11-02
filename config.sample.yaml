@@ -38,7 +38,8 @@ metrics:
 #   client_id: ""
 #   # Секрет приложения, нужен для обновления токена.
 #   client_secret: ""
-#   # Адрес облака; для проверки без приборов - https://simulator.home-connect.com
+#   # Адрес облака; для приборов из Китая - https://api.home-connect.cn, в настройках аккаунта на
+#   # портале нужно включить «Sync to China»; для проверки без приборов - https://simulator.home-connect.com
 #   api_url: https://api.home-connect.com
 
 # Облако LG ThinQ Connect: приборы LG. PAT создаётся на https://connect-pat.lgthinq.com
@@ -87,7 +88,7 @@ devices:
   #   room: Кухня
   #   source: homeconnect-cloud
   #   ha_id: BOSCH-HCS01OVN1-000000000000
-  # Прибор Home Connect в домашней сети, без облака: ключи загружает команда hcgateway fetch-keys.
+  # Прибор Home Connect в домашней сети, без облака: ключи загружаются на странице «Подключения» или командой hcgateway fetch-keys.
   # Порт по умолчанию - 443 для TLS-PSK и 80 для AES, режим записан в ключах прибора.
   # dishwasher:
   #   name: Посудомойка

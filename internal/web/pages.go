@@ -691,7 +691,7 @@ type deviceView struct {
 // deviceTabs - вкладка страницы прибора каждого раздела, кроме разделов редактора: они все
 // на вкладке «Сопоставления».
 var deviceTabs = map[string]string{"basic": "tab-device", "coffee": "tab-device", "pin": "tab-device", "tv": "tab-device",
-	"danger": "tab-device", "state": "tab-state", "commands": "tab-state"}
+	"danger": "tab-device", "move": "tab-device", "state": "tab-state", "commands": "tab-state"}
 
 func tabOf(section string) string {
 	if t, ok := deviceTabs[section]; ok {
@@ -1041,9 +1041,14 @@ var confirms = map[string]confirmView{
 			"в приложении «Дом с Алисой».",
 		Button: "Отвязать аккаунт", Back: "/connections#yandex"},
 	"homeconnect/logout": {Title: "Выйти из Home Connect?",
-		Text: "Шлюз удалит токены Home Connect: приборы облака будут не на связи, пока не выполнен новый вход " +
-			"с кодом на сайте Home Connect.",
+		Text: "Шлюз удалит токены Home Connect: приборы облака будут не на связи, пока не выполнен новый вход. " +
+			"Загруженные ключи останутся, приборы в домашней сети продолжат работать.",
 		Button: "Выйти и удалить токены", Back: "/connections#homeconnect"},
+	"local/logout": {Title: "Удалить сохранённый токен?",
+		Text: "Шлюз удалит токен Home Connect: приборы облака будут не на связи, а обновить ключи можно будет только " +
+			"после нового входа или с новым токеном. Загруженные ключи останутся, приборы в домашней сети продолжат " +
+			"работать. В облаке токен не отзывается и действует до конца срока.",
+		Button: "Выйти и удалить токены", Back: "/connections#local"},
 	"delonghi/logout": {Title: "Выйти из De'Longhi?",
 		Text: "Шлюз удалит сессию De'Longhi: кофемашины будут не на связи, пока не выполнен новый вход с почтой " +
 			"и паролем аккаунта.",
@@ -1324,7 +1329,9 @@ func hasDevices(c *config.Config, types map[string]string, haType string) bool {
 type connectionsView struct {
 	// Summary - сводка вверху страницы: карточка на каждое подключение.
 	Summary []connRow
-	// Flow - шаги подключения в разделах по разделу: yandex, homeconnect, thinq, delonghi,
+	// Keys - загрузка ключей приборов Home Connect для домашней сети.
+	Keys keysView
+	// Flow - шаги подключения в разделах по разделу: yandex, homeconnect, local, thinq, delonghi,
 	// smartthings.
 	Flow map[string][]stepState
 	// Steps - шаги настройки, которые ещё не сделаны.
@@ -1361,6 +1368,8 @@ type connectionsView struct {
 type localRow struct {
 	hclocal.Info
 	Device string
+	// Twin - похоже, та же техника уже есть в шлюзе с другим источником.
+	Twin string
 }
 
 // lgView - аккаунт LG ThinQ на странице «Подключения».
@@ -1380,6 +1389,8 @@ type lgRow struct {
 
 // hcView - облако Home Connect на странице «Подключения».
 type hcView struct {
+	// Saved - вход по токену приложения Home Connect.
+	Saved     *savedToken
 	Config    config.HomeConnect
 	SecretSet bool
 	Ready     bool
@@ -1395,6 +1406,8 @@ type hcView struct {
 type accountRow struct {
 	HaID, Name, Type, Brand, Device string
 	Connected                       bool
+	// Twin - похоже, та же техника уже есть в шлюзе с другим источником.
+	Twin string
 }
 
 func (s *Server) connectionsPage(w http.ResponseWriter, r *http.Request, sess *session) {
@@ -1451,7 +1464,7 @@ func (s *Server) renderConnections(w http.ResponseWriter, r *http.Request, sess 
 		Error:           yandexErr,
 		TokenLink:       "https://oauth.yandex.ru/authorize?response_type=token&client_id=c473ca268cd749d3a8371351a8f2bcbd",
 		MetricsTokenSet: cfg.Metrics.Token != "", MetricsOpen: s.start.Metrics.Token != "", MetricsListen: s.start.Metrics.Listen,
-		MetricsError: metricsErr, HC: s.hcView(cfg), LG: s.lgView(cfg), Local: s.localRows(cfg), Coffee: s.coffeeAccount(cfg),
+		MetricsError: metricsErr, HC: s.hcView(cfg), LG: s.lgView(cfg), Local: s.localRows(cfg), Keys: s.keysView(), Coffee: s.coffeeAccount(cfg),
 		ST: s.stView(cfg, r, sess), Steps: s.steps(cfg), Discovery: s.discoveryView(cfg)}
 	base := "https://" + gatewayHost(r)
 	v.Endpoint, v.AuthURL, v.TokenURL = base, base+"/auth/authorize", base+"/auth/token"
@@ -1470,6 +1483,10 @@ func (s *Server) renderConnections(w http.ResponseWriter, r *http.Request, sess 
 	if v.Discovery.Running {
 		// Пока идёт поиск, страница обновляется сама и показывает находки.
 		p.Refresh, p.RefreshTo = discoveryRefresh, refreshTo("/connections", "discovery")
+	}
+	if v.Keys.Running {
+		// Пока идёт загрузка ключей, страница обновляется сама и показывает итог.
+		p.Refresh, p.RefreshTo = keysRefresh, refreshTo("/connections", "local")
 	}
 	s.render(w, status, "connections", p)
 }
@@ -1518,6 +1535,12 @@ func (s *Server) connSummary(cfg *config.Config, v *connectionsView) {
 		Tone: "idle", Devices: used[config.SourceHomeConnectLocal], Action: "Открыть", Link: "#local"}
 	if len(v.Local) > 0 {
 		local.State, local.Tone = "ключи приборов: "+strconv.Itoa(len(v.Local)), "run"
+	}
+	switch {
+	case v.Keys.Running:
+		local.State, local.Tone = "идёт загрузка ключей", "run"
+	case v.Keys.Waiting:
+		local.State, local.Tone = "ждёт адрес hcauth://", "warn"
 	}
 	lg := connRow{ID: "thinq", Name: "LG ThinQ", Where: "облако", State: "не настроено", Tone: "idle",
 		Devices: used[config.SourceThinQ], Action: "Настроить", Link: "#thinq"}
@@ -1569,7 +1592,7 @@ func (s *Server) connSummary(cfg *config.Config, v *connectionsView) {
 	v.Summary = []connRow{y, hc, local, lg, dl, st, tv, dv, m}
 	v.Open = map[string]bool{
 		"homeconnect": v.HC.Ready || v.HC.LoggedIn || used[config.SourceHomeConnectCloud] > 0,
-		"local":       len(v.Local) > 0 || used[config.SourceHomeConnectLocal] > 0,
+		"local":       len(v.Local) > 0 || used[config.SourceHomeConnectLocal] > 0 || v.Keys.Active(),
 		"thinq":       v.LG.PATSet || used[config.SourceThinQ] > 0,
 		"delonghi":    v.Coffee.LoggedIn || used[config.SourceDeLonghi] > 0,
 		"smartthings": v.ST.Configured || v.ST.LoggedIn || used[config.SourceSmartThings] > 0,
@@ -1590,7 +1613,7 @@ func (s *Server) connSummary(cfg *config.Config, v *connectionsView) {
 		yf[0].Open, yf[1].Open = true, true
 	}
 	hcDone, hcNote := added(tally(len(v.HC.Account), func(i int) bool { return v.HC.Account[i].Device != "" }))
-	hcf := flow(v.HC.Ready, v.HC.LoggedIn, hcDone)
+	hcf := flow(v.HC.Ready || v.HC.Saved != nil, v.HC.LoggedIn, hcDone)
 	hcf[2].Note = hcNote
 	lgDone, lgNote := added(tally(len(v.LG.Account), func(i int) bool { return v.LG.Account[i].Device != "" }))
 	lgf := flow(v.LG.PATSet && v.LG.Country != "", lgDone)
@@ -1601,7 +1624,10 @@ func (s *Server) connSummary(cfg *config.Config, v *connectionsView) {
 	stDone, stNote := added(tally(len(v.ST.Devices), func(i int) bool { return v.ST.Devices[i].Device != "" }))
 	stf := flow(v.ST.Configured, v.ST.LoggedIn, stDone)
 	stf[2].Note = stNote
-	v.Flow = map[string][]stepState{"yandex": yf, "homeconnect": hcf, "thinq": lgf, "delonghi": dlf, "smartthings": stf}
+	localDone, localNote := added(tally(len(v.Local), func(i int) bool { return v.Local[i].Device != "" }))
+	localf := flow(len(v.Local) > 0 && !v.Keys.Active(), localDone)
+	localf[1].Note = localNote
+	v.Flow = map[string][]stepState{"yandex": yf, "homeconnect": hcf, "local": localf, "thinq": lgf, "delonghi": dlf, "smartthings": stf}
 }
 
 // refreshTo - адрес самообновления страницы path у раздела section: с новой меткой r, иначе
@@ -1618,6 +1644,7 @@ func (s *Server) hcView(cfg *config.Config) hcView {
 	v := hcView{Config: cfg.HomeConnect, SecretSet: cfg.HomeConnect.ClientSecret != "", Ready: cfg.HomeConnect.Ready(),
 		LoggedIn: cloud.API.LoggedIn(), Connected: cloud.Connected(), Login: cloud.API.LoginState()}
 	v.Config.ClientSecret = ""
+	v.Saved = s.savedView()
 	v.Pending = v.Login.Status == hcapi.LoginPending
 	if v.Pending {
 		v.Expires = v.Login.Expires.Local().Format(time.TimeOnly)
@@ -1630,7 +1657,7 @@ func (s *Server) hcView(cfg *config.Config) hcView {
 	}
 	for _, h := range cloud.Account() {
 		v.Account = append(v.Account, accountRow{HaID: h.HaID, Name: h.Name, Type: h.Type, Brand: h.Brand,
-			Connected: h.Connected, Device: devices[h.HaID]})
+			Connected: h.Connected, Device: devices[h.HaID], Twin: twinDevice(cfg, h.HaID, config.SourceHomeConnectCloud)})
 	}
 	return v
 }
@@ -1644,7 +1671,7 @@ func (s *Server) localRows(cfg *config.Config) []localRow {
 	}
 	var rows []localRow
 	for _, info := range s.gw.LocalAppliances() {
-		rows = append(rows, localRow{Info: info, Device: devices[info.HaID]})
+		rows = append(rows, localRow{Info: info, Device: devices[info.HaID], Twin: twinDevice(cfg, info.HaID, config.SourceHomeConnectLocal)})
 	}
 	return rows
 }
@@ -1732,13 +1759,18 @@ func (s *Server) homeConnectLogin(w http.ResponseWriter, r *http.Request, sess *
 }
 
 func (s *Server) homeConnectLogout(w http.ResponseWriter, r *http.Request, sess *session) {
+	s.logoutHomeConnect(w, r, sess, "/connections#homeconnect")
+}
+
+// logoutHomeConnect удаляет токены и возвращает на страницу to.
+func (s *Server) logoutHomeConnect(w http.ResponseWriter, r *http.Request, sess *session, to string) {
 	if err := s.gw.Cloud.API.Logout(); err != nil {
 		s.log.Error("выход из Home Connect", "err", err)
-		s.failed(w, r, sess, "/connections#homeconnect", "Не удалось удалить токены, подробности в журнале шлюза.")
+		s.failed(w, r, sess, to, "Не удалось удалить токены, подробности в журнале шлюза.")
 		return
 	}
 	s.log.Info("выход из Home Connect из интерфейса")
-	s.done(w, r, sess, "/connections#homeconnect", "Выход из Home Connect выполнен.")
+	s.done(w, r, sess, to, "Выход из Home Connect выполнен.")
 }
 
 // homeConnectAppliances загружает список приборов аккаунта: это запрос из суточного лимита облака.

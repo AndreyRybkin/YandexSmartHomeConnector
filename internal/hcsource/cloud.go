@@ -4,6 +4,7 @@ package hcsource
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"path/filepath"
 	"slices"
@@ -79,6 +80,14 @@ func (c *Cloud) Appliance(haID string) *Appliance {
 	return a
 }
 
+// Forget забывает объект прибора, которым шлюз больше не управляет через облако: поток событий не
+// будет тратить на него запросы. Описание прибора остаётся на диске.
+func (c *Cloud) Forget(haID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.appliances, haID)
+}
+
 // Account - приборы аккаунта, как их последний раз сообщило облако.
 func (c *Cloud) Account() []hcapi.HomeAppliance {
 	c.mu.Lock()
@@ -140,6 +149,11 @@ func (c *Cloud) Run(ctx context.Context) {
 		c.setConnected(false)
 		if ctx.Err() != nil {
 			return
+		}
+		if errors.Is(err, hcapi.ErrLoginChanged) {
+			// Новый вход подключается сразу, без паузы; после выхода цикл ждёт нового входа.
+			pause = reconnectMin
+			continue
 		}
 		if time.Since(started) >= stableStream {
 			pause = reconnectMin

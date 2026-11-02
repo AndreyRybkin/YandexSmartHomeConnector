@@ -1,5 +1,7 @@
 {{define "step"}}<summary><span class="step-num">{{.N}}</span>{{.Title}}{{if .S.Done}}<span class="chip run">готово</span><span class="muted">Изменить</span>{{end}}{{with .S.Note}}<span class="muted">{{.}}</span>{{end}}</summary>{{end}}
 
+{{define "regions"}}<label>Регион аккаунта <select name="region">{{range .}}<option value="{{.Name}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select></label>{{end}}
+
 {{define "content"}}{{$p := .}}{{with .Data}}{{$d := .}}
 <h1>Подключения</h1>
 {{with .Steps}}<section class="field" id="todo"><h2>Что ещё настроить</h2>
@@ -48,14 +50,15 @@
 </section>
 
 <details class="field" id="homeconnect"{{if .Open.homeconnect}} open{{end}}><summary><h2>Home Connect</h2></summary>{{$f := index .Flow "homeconnect"}}{{with .HC}}
-<p>Облако Home Connect управляет приборами Bosch и Siemens без ключей. Нужно приложение с Device Flow на портале разработчика Home Connect.</p>
+<p>Облако Home Connect управляет приборами Bosch и Siemens без ключей. Нужно приложение с Device Flow на портале разработчика Home Connect или токен приложения Home Connect из раздела «Home Connect в домашней сети».</p>
+{{with .Saved}}<p class="notice">Вход по токену приложения Home Connect: регион {{.Region}}. Адрес облака и приложение ниже для него не используются.</p>{{end}}
 <details class="step{{if (index $f 0).Done}} done{{end}}" id="homeconnect-app"{{if (index $f 0).Open}} open{{end}}>{{template "step" (stepOf 1 "Приложение на портале Home Connect" (index $f 0))}}
 <form method="post" action="/connections/homeconnect">{{template "keys" $p}}
 <label>Идентификатор приложения <span class="tech">client_id</span> <input name="client_id" value="{{.Config.ClientID}}" size="40" maxlength="1024"></label>
 <label>Секрет приложения <span class="tech">client_secret</span>, нужен для обновления токена: {{if .SecretSet}}задан{{else}}не задан{{end}}
 <input type="password" name="client_secret" autocomplete="off" placeholder="новое значение" size="40" maxlength="1024"></label>
 {{if .SecretSet}}<label class="inline"><input type="checkbox" name="client_secret_clear" value="1"> удалить секрет</label>{{end}}
-<label>Адрес облака <input name="api_url" value="{{.Config.APIURL}}" size="40" maxlength="1024"> <span class="muted">для проверки без приборов - https://simulator.home-connect.com</span></label>
+<label>Адрес облака <input name="api_url" value="{{.Config.APIURL}}" size="40" maxlength="1024"> <span class="muted">для приборов из Китая - https://api.home-connect.cn, для проверки без приборов - https://simulator.home-connect.com</span></label>
 <button class="primary">Сохранить</button>
 </form></details>
 <details class="step{{if (index $f 1).Done}} done{{end}}" id="homeconnect-login"{{if (index $f 1).Open}} open{{end}}>{{template "step" (stepOf 2 "Вход по коду" (index $f 1))}}
@@ -63,25 +66,61 @@
 {{else if .LoggedIn}}<p>Вход выполнен. Поток событий {{if .Connected}}подключён{{else}}<span class="notice">не подключён</span>{{end}}.</p>
 {{else}}<p>Вход не выполнен.{{with .Login.Error}} <span class="err">{{.}}</span>{{end}}</p>{{end}}
 {{if .Ready}}<form method="post" action="/connections/homeconnect/login" class="cmd"><input type="hidden" name="csrf" value="{{$p.CSRF}}"><button>{{if .LoggedIn}}Войти заново{{else}}Войти{{end}}</button></form>
-{{else}}<p class="muted">Чтобы войти, сохраните идентификатор и секрет приложения.</p>{{end}}
+{{else if not .LoggedIn}}<p class="muted">Чтобы войти, сохраните идентификатор и секрет приложения.</p>{{end}}
 {{if .LoggedIn}}<form method="get" action="/connections/homeconnect/logout" class="cmd"><button>Выйти и удалить токены</button></form>{{end}}
 </details>
 <details class="step{{if (index $f 2).Done}} done{{end}}" id="homeconnect-devices"{{if (index $f 2).Open}} open{{end}}>{{template "step" (stepOf 3 "Приборы аккаунта" (index $f 2))}}
 {{if .LoggedIn}}{{if .Account}}<div class="wrap"><table><tr><th>Прибор</th><th>Тип</th><th>haId</th><th>Связь</th><th></th></tr>
 {{range .Account}}<tr><td>{{.Name}} <span class="muted">{{.Brand}}</span></td><td>{{typeName .Type}}</td><td>{{.HaID}}</td><td>{{if .Connected}}на связи{{else}}<span class="err">нет связи</span>{{end}}</td>
-<td>{{if .Device}}<a href="/devices/{{.Device}}">{{.Device}}</a>{{else}}<a href="/?ha_id={{.HaID}}#add">Добавить</a>{{end}}</td></tr>{{end}}
+<td>{{if .Device}}<a href="/devices/{{.Device}}">{{.Device}}</a>{{else}}<a href="/?ha_id={{.HaID}}#add">Добавить</a>{{with .Twin}} <span class="notice">похоже, этот прибор уже есть: <a href="/devices/{{.}}">{{.}}</a></span>{{end}}{{end}}</td></tr>{{end}}
 </table></div>{{else}}<p>Список пуст или ещё не загружен.</p>{{end}}
 <form method="post" action="/connections/homeconnect/appliances" class="cmd"><input type="hidden" name="csrf" value="{{$p.CSRF}}"><button>Обновить список</button> <span class="muted">это запрос из суточного лимита облака</span></form>
 {{else}}<p class="muted">Список появится после входа.</p>{{end}}
 </details>
 {{end}}</details>
 
-<details class="field" id="local"{{if .Open.local}} open{{end}}><summary><h2>Home Connect в домашней сети</h2></summary>
-<p>Прибор Home Connect в домашней сети работает без облака: по TLS-PSK на порту 443 или с шифрованием AES на порту 80. Ключи и описания приборов загружает команда <code>hcgateway fetch-keys</code> в каталог data_dir/appliances.</p>
+<details class="field" id="local"{{if .Open.local}} open{{end}}><summary><h2>Home Connect в домашней сети</h2></summary>{{$f := index .Flow "local"}}
+<p>Прибор Home Connect в домашней сети работает без облака: по TLS-PSK на порту 443 или с шифрованием AES на порту 80. Ключи и описания приборов шлюз загружает из аккаунта Home Connect один раз и хранит в каталоге data_dir/appliances. То же делает команда <code>hcgateway fetch-keys</code>.</p>
+{{with .Keys}}{{if .Rejected}}<p class="err">Облако не продлило токен приложения Home Connect: нужен новый вход или новый токен.</p>{{end}}
+{{if .Expired}}<p class="notice">Срок входа истёк: получите новую ссылку.</p>{{end}}
+{{with .UnknownRegion}}<p class="notice">Шлюз не знает регион токена «{{.}}» и использовал выбранный. Если ключи не загрузятся, выберите другой регион.</p>{{end}}
+{{if .NoRefresh}}<p class="notice">В данных нет refresh_token: токен использован один раз и не сохранён.</p>{{end}}
+{{if .Done}}{{if .Empty}}<p class="err">В аккаунте нет приборов.</p>{{else if and .Failed (not .Results)}}<p class="err">Ключи не загружены: облако отвергло вход или токен, либо аккаунта нет в этом регионе. Подробности - в журнале шлюза.</p>{{else if .Failed}}<p class="err">Загрузка оборвалась. Подробности - в журнале шлюза.</p>{{end}}
+{{if .Results}}<div class="wrap"><table><tr><th>Прибор</th><th>haId</th><th>Итог</th></tr>
+{{range .Results}}<tr><td>{{.Brand}} {{typeName .HaType}}</td><td><code>{{.HaID}}</code></td><td>{{if .OK}}<span class="ok">загружен</span>{{else}}<span class="err">не загружен, подробности в журнале шлюза</span>{{end}}</td></tr>{{end}}
+</table></div>{{end}}{{end}}{{end}}
+<details class="step{{if (index $f 0).Done}} done{{end}}" id="local-login"{{if (index $f 0).Open}} open{{end}}>{{template "step" (stepOf 1 "Загрузка ключей из облака" (index $f 0))}}
+{{with .Keys}}{{if .Running}}<p class="notice">Шлюз загружает ключи и описания приборов. Страница обновится сама.</p>
+{{else}}{{with .Saved}}<p>Токен сохранён: регион {{.Region}}, {{if .Expired}}<span class="err">срок истёк</span>{{else}}действует ещё {{.Left}}{{end}}{{if .Refreshed}}, получен или продлён {{.Refreshed}}{{end}}. Шлюз продлевает его сам. По этому же токену работает раздел «Home Connect».</p>
+{{if .RefreshFailed}}<p class="notice">Последнее продление не удалось {{.RefreshFailed}}{{if .NextRefresh}}, шлюз повторит через {{.NextRefresh}}{{end}}. Подробности - в журнале шлюза.</p>{{end}}
+<form method="post" action="/connections/local/update" class="cmd"><input type="hidden" name="csrf" value="{{$p.CSRF}}"><button class="primary">Обновить ключи</button></form>
+<form method="post" action="/connections/local/refresh" class="cmd"><input type="hidden" name="csrf" value="{{$p.CSRF}}"><button>Продлить сейчас</button></form>
+<form method="get" action="/connections/local/logout" class="cmd"><button>Выйти и удалить токены</button></form>{{end}}
+<h3>По данным токена</h3>
+<form method="post" action="/connections/local/token"><input type="hidden" name="csrf" value="{{$p.CSRF}}">
+{{template "regions" .TokenRegions}}
+<label>Данные токена <input type="password" name="token" required autocomplete="off" spellcheck="false" size="40" maxlength="32768"></label>
+<p class="muted">JSON с полями access_token и refresh_token. Шлюз проверит приложение и регион токена, а после ответа облака сохранит токены в data_dir и будет продлевать их сам. Токен даёт управление приборами аккаунта и заменит прежний вход в разделе «Home Connect». Без refresh_token токен используется один раз.</p>
+<button class="primary">Загрузить ключи</button></form>
+<h3>По ссылке на вход</h3>
+<form method="post" action="/connections/local/login" class="cmd"><input type="hidden" name="csrf" value="{{$p.CSRF}}">
+{{template "regions" .Regions}}
+<button>{{if .Waiting}}Получить новую ссылку{{else}}Получить ссылку на вход{{end}}</button></form>
+{{if .Waiting}}<ol>
+<li><a href="{{.Link}}" target="_blank" rel="noreferrer">Откройте страницу входа</a> в новой вкладке. Ссылка действует 10 минут.</li>
+<li>На этой вкладке нажмите F12 и откройте вкладку Network, затем обновите страницу и войдите в аккаунт. Логин и пароль шлюз не видит.</li>
+<li>После входа браузер не сможет открыть адрес <code>hcauth://auth/prod?...</code>. Скопируйте его целиком с вкладки Network или из консоли.</li>
+<li>Сразу вставьте адрес ниже: срок кода короткий, советуют уложиться примерно в минуту.</li></ol>
+<form method="post" action="/connections/local/keys"><input type="hidden" name="csrf" value="{{$p.CSRF}}">
+<label>Адрес <span class="tech">hcauth://</span> <input name="redirect" required autocomplete="off" spellcheck="false" size="40" maxlength="4096"></label>
+<button class="primary">Загрузить ключи</button></form>{{end}}{{end}}{{end}}
+</details>
+<details class="step{{if (index $f 1).Done}} done{{end}}" id="local-devices"{{if (index $f 1).Open}} open{{end}}>{{template "step" (stepOf 2 "Приборы с ключами" (index $f 1))}}
 {{if .Local}}<div class="wrap"><table><tr><th>Прибор</th><th>haId</th><th>Связь</th><th></th></tr>
 {{range .Local}}<tr><td>{{.Brand}} {{typeName .HaType}}</td><td><code>{{.HaID}}</code></td><td>{{if eq .Mode "aes"}}AES, порт 80{{else}}TLS-PSK, порт 443{{end}}</td>
-<td>{{if .Device}}<a href="/devices/{{.Device}}">{{.Device}}</a>{{else}}<a href="/?local_id={{.HaID}}#add">Добавить</a>{{end}}</td></tr>{{end}}
+<td>{{if .Device}}<a href="/devices/{{.Device}}">{{.Device}}</a>{{else}}<a href="/?local_id={{.HaID}}#add">Добавить</a>{{with .Twin}} <span class="notice">похоже, этот прибор уже есть: <a href="/devices/{{.}}">{{.}}</a></span>{{end}}{{end}}</td></tr>{{end}}
 </table></div>{{else}}<p>Ключей пока нет.</p>{{end}}
+</details>
 </details>
 
 <details class="field" id="thinq"{{if .Open.thinq}} open{{end}}><summary><h2>LG ThinQ</h2></summary>{{$f := index .Flow "thinq"}}{{with .LG}}

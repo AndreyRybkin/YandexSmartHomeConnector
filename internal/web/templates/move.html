@@ -1,0 +1,15 @@
+{{define "content"}}{{$p := .}}{{with .Data}}
+<p class="crumbs"><a href="/">Приборы</a> · <a href="/devices/{{.ID}}">{{.Name}}</a></p>
+<h1>{{.Title}}</h1>
+<p>Изменится только способ связи. Идентификатор прибора, имя, комната, значок и сопоставления останутся, поэтому сценарии Алисы продолжат работать. Яндекс получит обновлённый список устройств. Шлюз сначала проверит связь и изменит настройки, только если она есть.</p>
+{{with .Err}}<p class="err" role="alert">{{.}}</p>{{end}}
+{{if .Twin}}<p class="notice">Этот прибор уже есть в шлюзе отдельно: <a href="/devices/{{.Twin}}">{{.Twin}}</a>. Оставьте один из них и повторите перевод.</p>
+{{else if .NoKeys}}<p class="notice">Ключей этого прибора нет. <a href="/connections#local-login">Загрузите ключи</a> и повторите перевод.</p>
+{{else if .NoLogin}}<p class="notice">Нет входа в Home Connect. <a href="/connections#homeconnect">Войдите</a> и повторите перевод.</p>
+{{else}}<form method="post" action="/devices/{{.ID}}/move">{{template "keys" $p}}
+{{if gt (len .Candidates) 1}}<label>Прибор <select name="ha_id">{{template "opts" .Candidates}}</select></label>
+{{else}}{{range .Candidates}}<p>Прибор: <code>{{.Label}}</code></p><input type="hidden" name="ha_id" value="{{.Value}}">{{else}}<p class="muted">Шлюз запросит список приборов аккаунта: это запрос из суточного лимита облака.</p>{{end}}{{end}}
+{{if .ToLocal}}<label>Адрес прибора в домашней сети <input name="host" value="{{.Host}}" maxlength="261" required list="dl-found" autocomplete="off" spellcheck="false"> <span class="muted">без порта - 443 для TLS-PSK и 80 для AES. <a href="/connections#discovery">Найти в сети</a></span></label>
+{{with .Found}}<datalist id="dl-found">{{range .}}<option value="{{.}}"></option>{{end}}</datalist>{{end}}{{end}}
+<button class="primary">Проверить связь и перевести</button> <a href="/devices/{{.ID}}">Отмена</a></form>{{end}}
+{{end}}{{end}}

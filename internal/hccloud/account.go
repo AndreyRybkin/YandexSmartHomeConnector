@@ -25,11 +25,8 @@ const (
 	maxRetries = 2
 )
 
-// defaultAssetHosts - серверы аккаунтов по регионам, перебираются по порядку.
-var defaultAssetHosts = []string{
-	"https://eu.services.home-connect.com",
-	"https://na.services.home-connect.com",
-}
+// ErrUnauthorized - облако не приняло токен.
+var ErrUnauthorized = errors.New("облако Home Connect не приняло токен")
 
 // haIDRe - допустимый haId: он попадает в путь запроса и в имя каталога.
 var haIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
@@ -77,9 +74,9 @@ type Paired struct {
 	Raw []byte
 }
 
-// Discover находит регион аккаунта и возвращает его приборы.
-func Discover(ctx context.Context, token, subject string) (*Account, *Paired, error) {
-	return discover(ctx, defaultAssetHosts, token, subject)
+// Discover находит сервер аккаунта в регионе region и возвращает его приборы.
+func Discover(ctx context.Context, region Region, token, subject string) (*Account, *Paired, error) {
+	return discover(ctx, region.Hosts, token, subject)
 }
 
 func discover(ctx context.Context, hosts []string, token, subject string) (*Account, *Paired, error) {
@@ -104,7 +101,7 @@ func discover(ctx context.Context, hosts []string, token, subject string) (*Acco
 		}
 		lastErr = err
 	}
-	return nil, nil, fmt.Errorf("аккаунт не найден ни в одном регионе: %w", lastErr)
+	return nil, nil, fmt.Errorf("аккаунт не найден в этом регионе: %w", lastErr)
 }
 
 // Encryption возвращает ключи прибора.
@@ -201,6 +198,9 @@ func (a *Account) get(ctx context.Context, path string, limit int64) ([]byte, er
 	for attempt := 0; ; attempt++ {
 		data, status, err := a.getOnce(ctx, path, limit)
 		retry := err != nil || status >= 500
+		if !retry && status == http.StatusUnauthorized {
+			return nil, ErrUnauthorized
+		}
 		if !retry && status != http.StatusOK {
 			return nil, fmt.Errorf("облако Home Connect: HTTP %d", status)
 		}

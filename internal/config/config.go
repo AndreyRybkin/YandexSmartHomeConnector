@@ -383,6 +383,7 @@ func (c *Config) validate() error {
 			return fmt.Errorf("%s: больше %d байт", name, maxValueLen)
 		}
 	}
+	h.APIURL = withHTTPS(h.APIURL)
 	if err := checkAPIURL(h.APIURL); err != nil {
 		return fmt.Errorf("homeconnect.api_url: %w", err)
 	}
@@ -686,11 +687,24 @@ func checkIoTURL(s string) error {
 	return errors.New("нужен wss: токен аккаунта не должен идти по сети открытым текстом")
 }
 
+// withHTTPS дополняет адрес без схемы, например api.home-connect.cn, схемой https.
+func withHTTPS(s string) string {
+	if s == "" || strings.Contains(s, "://") {
+		return s
+	}
+	return "https://" + s
+}
+
+// ValidHost сообщает, годится ли адрес прибора в домашней сети: имя или IP, порт по желанию.
+func ValidHost(host string) bool {
+	return hostRe.MatchString(host)
+}
+
 // checkAPIURL проверяет адрес облака: https, а http - только к своему компьютеру, для проверки.
 func checkAPIURL(s string) error {
 	u, err := url.Parse(s)
 	if err != nil || u.Host == "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
-		return errors.New("нужен адрес вида https://api.home-connect.com")
+		return errors.New("нужен адрес вида https://сервер")
 	}
 	if u.Scheme == "https" {
 		return nil
@@ -748,9 +762,7 @@ func (c *Config) ValidateServe() error {
 		switch d := c.Devices[id]; d.Source {
 		case SourceDemo:
 		case SourceHomeConnectCloud:
-			if !c.HomeConnect.Ready() {
-				return fmt.Errorf("devices.%s: источнику %s нужны homeconnect.client_id и client_secret", id, d.Source)
-			}
+			// Приложение с портала не обязательно: вход может быть по токену приложения Home Connect.
 		case SourceWLED:
 		case SourceHomeConnectLocal:
 			// Ключи прибора шлюз проверяет, когда собирает прибор.

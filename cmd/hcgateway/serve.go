@@ -11,6 +11,7 @@ import (
 	"hcgateway/internal/auth"
 	"hcgateway/internal/config"
 	"hcgateway/internal/gateway"
+	"hcgateway/internal/hcapi"
 	"hcgateway/internal/linking"
 	"hcgateway/internal/metrics"
 	"hcgateway/internal/web"
@@ -92,6 +93,12 @@ type metricsState struct {
 func (m metricsState) Linked() bool              { return m.gw.Tokens.Linked() }
 func (m metricsState) Banned() int               { return m.bans.Active() }
 func (m metricsState) Devices() []metrics.Device { return m.gw.Status() }
+func (m metricsState) TokenExpires() map[string]time.Time {
+	if t, ok := m.gw.Cloud.API.Expires(); ok {
+		return map[string]time.Time{hcapi.SourceName: t}
+	}
+	return nil
+}
 
 func newServer(addr string, h http.Handler) *http.Server {
 	return &http.Server{

@@ -23,6 +23,7 @@ import (
 	"hcgateway/internal/delonghi"
 	"hcgateway/internal/discovery"
 	"hcgateway/internal/hcapi"
+	"hcgateway/internal/hccloud"
 	"hcgateway/internal/hcdevice"
 	"hcgateway/internal/hclocal"
 	"hcgateway/internal/hcsource"
@@ -56,6 +57,10 @@ type Gateway struct {
 	SmartThings *smartthings.Cloud
 	// Discovery - поиск приборов в домашней сети.
 	Discovery *discovery.Search
+	// Keys - загрузка ключей приборов Home Connect со страницы интерфейса.
+	Keys *hccloud.Flow
+	// CheckLocal проверяет связь с прибором Home Connect в домашней сети его ключами.
+	CheckLocal func(ctx context.Context, haID, host string) error
 	// appliances - ключи и описания приборов Home Connect для домашней сети, по каталогу на haId.
 	appliances string
 	// dataDir - каталог данных: в нём файлы телевизоров.
@@ -112,18 +117,23 @@ func New(dataDir string, tokens *linking.Store, login linking.Login, log *slog.L
 		return nil, err
 	}
 	n := yandex.NewNotifier(yandex.DefaultNotifyBase, "", "", yandex.UserID, log)
+	cloud := hcsource.New(api, filepath.Join(dataDir, "homeconnect"), log)
 	return &Gateway{
-		ThinQ:        lg,
-		DeLonghi:     dl,
-		SmartThings:  st,
-		Discovery:    discovery.New(nil),
+		ThinQ:       lg,
+		DeLonghi:    dl,
+		SmartThings: st,
+		Discovery:   discovery.New(nil),
+		Keys:        hccloud.NewFlow(dataDir, cloud.API, cloud.LoggedIn, log, hccloud.EU, hccloud.NA, hccloud.China),
+		CheckLocal: func(ctx context.Context, haID, host string) error {
+			return hclocal.Check(ctx, filepath.Join(dataDir, "appliances", haID), haID, host)
+		},
 		dataDir:      dataDir,
 		tvChanges:    make(chan struct{}, 1),
 		Service:      yandex.NewService(nil, tokens, n, log),
 		Notifier:     n,
 		Linking:      linking.NewServer(linking.Config{}, login, tokens, log),
 		Tokens:       tokens,
-		Cloud:        hcsource.New(api, filepath.Join(dataDir, "homeconnect"), log),
+		Cloud:        cloud,
 		appliances:   filepath.Join(dataDir, "appliances"),
 		log:          log,
 		demoDuration: DemoDuration,
@@ -135,10 +145,18 @@ func New(dataDir string, tokens *linking.Store, login linking.Login, log *slog.L
 // Run держит связь с приборами и облаком и отправляет уведомления, пока ctx не отменён.
 func (g *Gateway) Run(ctx context.Context) {
 	var wg sync.WaitGroup
-	wg.Add(6)
+	wg.Add(8)
 	go func() {
 		defer wg.Done()
 		g.Cloud.Run(ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		g.Cloud.API.KeepFresh(ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		g.Keys.Run(ctx)
 	}()
 	go func() {
 		defer wg.Done()
@@ -468,7 +486,8 @@ func (g *Gateway) Strip(id string) (*wled.Device, bool) {
 	return s, ok
 }
 
-// LocalAppliances - приборы, чьи ключи для домашней сети загрузила команда fetch-keys.
+// LocalAppliances - приборы, чьи ключи для домашней сети загружены на странице «Подключения» или
+// командой fetch-keys.
 func (g *Gateway) LocalAppliances() []hclocal.Info {
 	return hclocal.List(g.appliances)
 }

@@ -61,6 +61,9 @@ type Server struct {
 	// mu - правки настроек по одной: проверка, сохранение и применение не перемешиваются.
 	mu sync.Mutex
 
+	// moving - переводы приборов по одному: у прибора и облака есть пределы соединений и запросов.
+	moving sync.Mutex
+
 	// statsMu и stats - рецепты кофемашин из облака по идентификатору прибора; в памяти.
 	statsMu sync.Mutex
 	stats   map[string][]delonghi.RecipeStat
@@ -83,6 +86,8 @@ func New(a *auth.Auth, gw *gateway.Gateway, file *config.File, start *config.Con
 	mux.HandleFunc("POST /devices/{id}/command", s.authed(s.command))
 	mux.HandleFunc("POST /devices/{id}/profile/{field}", s.authed(s.saveDeviceProfile))
 	mux.HandleFunc("POST /devices/{id}/presets", s.authed(s.saveStripPresets))
+	mux.HandleFunc("GET /devices/{id}/move", s.authed(s.movePage))
+	mux.HandleFunc("POST /devices/{id}/move", s.authed(s.moveDevice))
 	mux.HandleFunc("GET /profiles", s.authed(s.profilesPage))
 	mux.HandleFunc("GET /profiles/{type}", s.authed(s.typePage))
 	mux.HandleFunc("POST /profiles/{type}/{field}", s.authed(s.saveTypeProfile))
@@ -98,6 +103,13 @@ func New(a *auth.Auth, gw *gateway.Gateway, file *config.File, start *config.Con
 	mux.HandleFunc("GET /connections/homeconnect/logout", s.authed(s.confirmPage("homeconnect/logout")))
 	mux.HandleFunc("POST /connections/homeconnect/logout", s.authed(s.homeConnectLogout))
 	mux.HandleFunc("POST /connections/homeconnect/appliances", s.authed(s.homeConnectAppliances))
+	mux.HandleFunc("POST /connections/local/token", s.authed(s.keysToken))
+	mux.HandleFunc("POST /connections/local/update", s.authed(s.keysUpdate))
+	mux.HandleFunc("POST /connections/local/refresh", s.authed(s.keysRefreshNow))
+	mux.HandleFunc("GET /connections/local/logout", s.authed(s.confirmPage("local/logout")))
+	mux.HandleFunc("POST /connections/local/logout", s.authed(s.keysLogout))
+	mux.HandleFunc("POST /connections/local/login", s.authed(s.keysLogin))
+	mux.HandleFunc("POST /connections/local/keys", s.authed(s.keysFinish))
 	mux.HandleFunc("POST /connections/thinq", s.authed(s.saveThinQ))
 	mux.HandleFunc("POST /connections/thinq/devices", s.authed(s.thinqDevices))
 	mux.HandleFunc("POST /connections/delonghi/login", s.authed(s.coffeeLogin))
@@ -338,7 +350,24 @@ func (s *Server) steps(cfg *config.Config) []step {
 	if len(cfg.Devices) == 0 {
 		out = append(out, step{"Нет ни одного прибора.", "/#add"})
 	}
+	api := s.gw.Cloud.API
+	switch {
+	case api.RefreshState().Rejected:
+		out = append(out, step{"Облако не продлило токен Home Connect: нужен новый вход или новый токен.", "/connections#local"})
+	case !api.LoggedIn() && usesSource(cfg, config.SourceHomeConnectCloud):
+		out = append(out, step{"Нет входа в Home Connect: приборы облака не на связи.", "/connections#homeconnect"})
+	}
 	return out
+}
+
+// usesSource - есть ли в настройках прибор этого источника.
+func usesSource(cfg *config.Config, source string) bool {
+	for _, d := range cfg.Devices {
+		if d.Source == source {
+			return true
+		}
+	}
+	return false
 }
 
 // notices - что в файле настроек ещё не действует.
@@ -514,7 +543,7 @@ func (s *Server) reloadLocked() error {
 func parsePages() map[string]*template.Template {
 	base := template.Must(template.New("").Funcs(funcs).ParseFS(templateFiles, "templates/layout.html", "templates/editor.html"))
 	pages := map[string]*template.Template{}
-	for _, name := range []string{"login", "notfound", "devices", "device", "confirm", "profiles", "profile", "connections", "logins", "info"} {
+	for _, name := range []string{"login", "notfound", "devices", "device", "confirm", "profiles", "profile", "connections", "logins", "info", "move"} {
 		pages[name] = template.Must(template.Must(base.Clone()).ParseFS(templateFiles, "templates/"+name+".html"))
 	}
 	return pages

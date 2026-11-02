@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	// Файлы прибора в data_dir/appliances/<haId>: их пишет команда fetch-keys.
+	// Файлы прибора в data_dir/appliances/<haId>: их пишет hccloud.Download.
 	keyFileName     = "appliance.json"
 	mappingFile     = "FeatureMapping.xml"
 	descriptionFile = "DeviceDescription.xml"
@@ -150,4 +150,4 @@ func List(appliances string) []Info {
 }
 
 // errNoKeys - у прибора нет ключей: их загружает команда fetch-keys.
-var errNoKeys = errors.New("нет ключей прибора: загрузите их командой hcgateway fetch-keys")
+var errNoKeys = errors.New("нет ключей прибора: загрузите их на странице «Подключения» или командой hcgateway fetch-keys")

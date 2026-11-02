@@ -64,6 +64,11 @@
 <p><code>{{.Observed}}</code></p><button class="primary">Подтвердить отпечаток</button></form>
 {{else}}<p class="notice">Отпечаток сертификата ещё не снят: шлюз не достучался до машины по этому адресу. Страница покажет его, когда машина ответит.</p>{{end}}
 </section>{{end}}
+{{if eq .Source "homeconnect-cloud"}}<section class="field" id="move"><h2>Связь</h2>
+<p>Прибор работает через облако Home Connect. <a class="button" href="/devices/{{.ID}}/move">Перевести на локальную связь</a> <span class="muted">без облака, сценарии Алисы продолжат работать</span></p>
+</section>{{else if eq .Source "homeconnect-local"}}<section class="field" id="move"><h2>Связь</h2>
+<p>Прибор работает по домашней сети, без облака. <a class="button" href="/devices/{{.ID}}/move">Перевести в облако</a> <span class="muted">нужен вход в Home Connect, сценарии Алисы продолжат работать</span></p>
+</section>{{end}}
 <section class="field danger" id="danger"><h2>Удаление и сброс</h2>
 {{with .TV}}{{if .Paired}}<p><a class="button" href="/devices/{{$p.Data.ID}}/tv/forget">Забыть ключ телевизора</a> <span class="muted">телевизор снова спросит разрешение на экране</span></p>{{end}}{{end}}
 <p><a class="button" href="/devices/{{.ID}}/delete">Удалить прибор</a> <span class="muted">прибор пропадёт из Алисы, его сопоставления удалятся</span></p>

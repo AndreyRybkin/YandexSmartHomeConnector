@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -20,6 +21,9 @@ type fakeState struct{}
 
 func (fakeState) Linked() bool { return true }
 func (fakeState) Banned() int  { return 2 }
+func (fakeState) TokenExpires() map[string]time.Time {
+	return map[string]time.Time{"cloud": time.Now().Add(time.Hour)}
+}
 func (fakeState) Devices() []Device {
 	return []Device{
 		{ID: "oven", Source: "demo", Online: true, Operation: "Run"},
@@ -51,6 +55,8 @@ func TestHandler(t *testing.T) {
 	Watch(fakeState{})
 	SetBuildInfo("test")
 	Login(true, LoginWrong)
+	TokenRefreshSource("cloud")
+	TokenRefresh("cloud", RefreshOK)
 	status, body := scrape(t, h, "Bearer "+testToken)
 	if status != http.StatusOK {
 		t.Fatalf("с токеном: %d", status)
@@ -63,6 +69,9 @@ func TestHandler(t *testing.T) {
 		`hcgateway_device_online{device="dish",source="demo"} 0`,
 		`hcgateway_device_operation_state{device="oven",state="Run"} 1`,
 		`hcgateway_linking_logins_total{result="banned"} 0`,
+		`hcgateway_source_token_expires_seconds{source="cloud"} 3`,
+		`hcgateway_source_token_refreshes_total{result="ok",source="cloud"} 1`,
+		`hcgateway_source_token_refreshes_total{result="rejected",source="cloud"} 0`,
 		`go_goroutines`,
 	} {
 		if !strings.Contains(body, want) {

@@ -31,7 +31,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 	configPath := fs.String("config", "/config/config.yaml", "путь к файлу настроек")
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "использование: hcgateway [-config путь] serve | fetch-keys | web-user [-password-stdin] [имя]")
+		fmt.Fprintln(stderr, "использование: hcgateway [-config путь] serve | fetch-keys [-region eu|na|cn|global] | web-user [-password-stdin] [имя]")
 		fmt.Fprintln(stderr, "  serve      - принимать запросы умного дома Яндекса, управлять приборами и показывать веб-интерфейс")
 		fmt.Fprintln(stderr, "  fetch-keys - войти в аккаунт Home Connect и сохранить ключи и описания приборов в data_dir/appliances")
 		fmt.Fprintln(stderr, "  web-user   - создать пользователя веб-интерфейса или сменить его пароль")
@@ -45,7 +45,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		return errors.New("не указана команда")
 	}
 	cmd, rest := fs.Arg(0), fs.Args()[1:]
-	if cmd != "web-user" && len(rest) > 0 {
+	if cmd != "web-user" && cmd != "fetch-keys" && len(rest) > 0 {
 		fs.Usage()
 		return errors.New("лишние аргументы")
 	}
@@ -64,7 +64,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		if cmd == "web-user" {
 			return webUser(cfg.DataDir, rest, stdin, stdout, stderr)
 		}
-		return fetchKeys(ctx, cfg.DataDir, stdin, stdout, stderr)
+		return fetchKeys(ctx, cfg.DataDir, rest, stdin, stdout, stderr)
 	default:
 		fs.Usage()
 		return fmt.Errorf("неизвестная команда %q", cmd)

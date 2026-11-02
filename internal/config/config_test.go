@@ -439,3 +439,20 @@ func TestParseNetwork(t *testing.T) {
 		t.Fatal("чужая сеть в настройках принята")
 	}
 }
+
+// Адрес облака Home Connect без схемы шлюз дополняет https, а http к чужому серверу не принимает.
+func TestHomeConnectAddress(t *testing.T) {
+	for in, want := range map[string]string{"api.home-connect.cn": "https://api.home-connect.cn",
+		"api.home-connect.cn/": "https://api.home-connect.cn", "https://api.home-connect.cn/": "https://api.home-connect.cn",
+		"http://localhost:8080": "http://localhost:8080"} {
+		cfg, err := parse([]byte("homeconnect:\n  api_url: " + in + "\n"))
+		if err != nil || cfg.HomeConnect.APIURL != want {
+			t.Errorf("%s: %+v %v, нужно %s", in, cfg, err, want)
+		}
+	}
+	for _, in := range []string{"http://api.home-connect.cn", "ftp://api.home-connect.cn", "/api"} {
+		if _, err := parse([]byte("homeconnect:\n  api_url: " + in + "\n")); err == nil {
+			t.Errorf("%s: адрес принят", in)
+		}
+	}
+}

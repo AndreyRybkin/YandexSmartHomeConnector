@@ -47,6 +47,8 @@ var (
 	ErrNotLoggedIn = errors.New("нет входа в Home Connect")
 	// ErrBusy - лимит запросов облака: запрос не отправлен.
 	ErrBusy = errors.New("лимит запросов облака Home Connect")
+	// ErrLoginChanged - вход сменился или удалён: поток событий старого входа закрыт.
+	ErrLoginChanged = errors.New("вход в Home Connect сменился")
 	// ErrPaused - пауза после ошибок подряд: запрос не отправлен.
 	ErrPaused = errors.New("пауза после ошибок облака Home Connect")
 )
@@ -78,6 +80,15 @@ type Tokens struct {
 	Refresh string    `json:"refresh_token"`
 	Expires time.Time `json:"expires"`
 	Scope   string    `json:"scope,omitempty"`
+	// ClientID - приложение Home Connect, которому выдан токен: токен продлевается с ним, без
+	// секрета. Пусто - токен выдан приложению с портала разработчика через Device Flow.
+	ClientID string `json:"client_id,omitempty"`
+	// BaseURL - адрес облака токена; пусто - homeconnect.api_url.
+	BaseURL string `json:"base_url,omitempty"`
+	// Region - регион токена приложения Home Connect.
+	Region string `json:"region,omitempty"`
+	// Refreshed - когда токен продлён в последний раз.
+	Refreshed time.Time `json:"refreshed,omitzero"`
 }
 
 // Client - клиент облака. Методы можно вызывать из разных горутин.
@@ -99,12 +110,21 @@ type Client struct {
 	pausedUntil time.Time
 	refreshes   []time.Time
 	login       Login
+	// keepCheck - как часто KeepFresh проверяет срок токена.
+	keepCheck time.Duration
+	// refreshFailed - когда не удалось последнее продление, nextRefresh - когда KeepFresh повторит.
+	refreshFailed, nextRefresh time.Time
+	// rejected - облако отвергло токен приложения Home Connect: нужен новый вход.
+	rejected bool
+	// stopStream закрывает открытый поток событий; nil - потока нет.
+	stopStream context.CancelCauseFunc
 }
 
 // New создаёт клиента. path - файл токенов; если он есть, вход уже выполнен.
 func New(path string, log *slog.Logger) (*Client, error) {
+	metrics.TokenRefreshSource(SourceName)
 	c := &Client{path: path, log: log, http: &http.Client{Timeout: requestTimeout}, stream: &http.Client{},
-		now: time.Now, lim: newLimiter(), cfg: Config{BaseURL: DefaultBaseURL}}
+		now: time.Now, lim: newLimiter(), cfg: Config{BaseURL: DefaultBaseURL}, keepCheck: keepCheck}
 	data, err := os.ReadFile(path)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
@@ -140,6 +160,16 @@ func (c *Client) config() Config {
 	return c.cfg
 }
 
+// current - текущие токены и адрес их облака: у токена приложения Home Connect он свой.
+func (c *Client) current() (*Tokens, string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.tokens != nil && c.tokens.BaseURL != "" {
+		return c.tokens, c.tokens.BaseURL
+	}
+	return c.tokens, c.cfg.BaseURL
+}
+
 // LoggedIn сообщает, есть ли токены.
 func (c *Client) LoggedIn() bool {
 	c.mu.Lock()
@@ -152,10 +182,19 @@ func (c *Client) Logout() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.tokens = nil
+	c.loginChangedLocked()
 	if err := os.Remove(c.path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	return nil
+}
+
+// loginChangedLocked сбрасывает всё, что относилось к прежнему входу, и закрывает его поток событий.
+func (c *Client) loginChangedLocked() {
+	c.refreshFailed, c.nextRefresh, c.rejected = time.Time{}, time.Time{}, false
+	if c.stopStream != nil {
+		c.stopStream(ErrLoginChanged)
+	}
 }
 
 func (c *Client) saveTokensLocked(t *Tokens) error {
@@ -170,26 +209,23 @@ func (c *Client) saveTokensLocked(t *Tokens) error {
 	return nil
 }
 
-// access - действующий access token; если он скоро истечёт, сначала обновляется.
-func (c *Client) access(ctx context.Context) (string, error) {
-	c.mu.Lock()
-	t := c.tokens
-	c.mu.Unlock()
+// access - действующий access token и адрес его облака; если токен скоро истечёт, сначала
+// обновляется. Токен и адрес берутся вместе: токен не уйдёт на адрес нового входа.
+func (c *Client) access(ctx context.Context) (token, base string, err error) {
+	t, base := c.current()
 	if t == nil {
-		return "", ErrNotLoggedIn
+		return "", "", ErrNotLoggedIn
 	}
 	if c.now().Add(refreshBefore).Before(t.Expires) {
-		return t.Access, nil
+		return t.Access, base, nil
 	}
 	if err := c.refresh(ctx, t); err != nil {
-		return "", err
+		return "", "", err
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.tokens == nil {
-		return "", ErrNotLoggedIn
+	if t, base = c.current(); t == nil {
+		return "", "", ErrNotLoggedIn
 	}
-	return c.tokens.Access, nil
+	return t.Access, base, nil
 }
 
 // call - запрос к API: очередь лимитов, токен, разбор ошибки, учёт в метриках.
@@ -240,7 +276,7 @@ func (c *Client) once(ctx context.Context, method, path string, payload []byte) 
 	if paused {
 		return 0, nil, ErrPaused
 	}
-	token, err := c.access(ctx)
+	token, base, err := c.access(ctx)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -251,7 +287,7 @@ func (c *Client) once(ctx context.Context, method, path string, payload []byte) 
 	if payload != nil {
 		rd = bytes.NewReader(payload)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.config().BaseURL+path, rd)
+	req, err := http.NewRequestWithContext(ctx, method, base+path, rd)
 	if err != nil {
 		return 0, nil, err
 	}

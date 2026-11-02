@@ -3,28 +3,31 @@ package main
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 
-	"hcgateway/internal/atomicfile"
 	"hcgateway/internal/hccloud"
-	"hcgateway/internal/hcdesc"
 )
 
-// applianceFile - ключи прибора и сведения о нём, data_dir/appliances/<haId>/appliance.json.
-type applianceFile struct {
-	HaID   string `json:"haId"`
-	Brand  string `json:"brand"`
-	HaType string `json:"haType"`
-	hccloud.Encryption
-}
-
-func fetchKeys(ctx context.Context, dataDir string, stdin io.Reader, stdout, stderr io.Writer) error {
-	login, err := hccloud.NewLogin()
+func fetchKeys(ctx context.Context, dataDir string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("fetch-keys", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	name := fs.String("region", hccloud.Global.Name, "регион аккаунта: eu - Европа, na - Северная Америка, cn - Китай, global - Европа или Северная Америка через общий адрес входа")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return errors.New("лишние аргументы")
+	}
+	region, ok := hccloud.RegionByName(*name)
+	if !ok {
+		return fmt.Errorf("неизвестный регион %q: нужен eu, na, cn или global", *name)
+	}
+	// Токен нужен только на эту загрузку, поэтому и права - только на ключи.
+	login, err := hccloud.NewLogin(region, hccloud.ScopeKeys)
 	if err != nil {
 		return err
 	}
@@ -46,100 +49,31 @@ func fetchKeys(ctx context.Context, dataDir string, stdin io.Reader, stdout, std
 	if err != nil {
 		return err
 	}
-	token, subject, err := login.Exchange(ctx, redirect)
+	grant, err := login.Exchange(ctx, redirect)
 	if err != nil {
 		return err
 	}
-	account, paired, err := hccloud.Discover(ctx, token, subject)
+	account, paired, err := hccloud.Discover(ctx, region, grant.Access, grant.Subject)
 	if err != nil {
 		return err
 	}
-	appliances := paired.Appliances
-	fmt.Fprintf(stdout, "Регион аккаунта: %s. Приборов в аккаунте: %d.\n", paired.Host, len(appliances))
-	if len(appliances) == 0 {
-		// Ответ сохраняется как есть: по нему видно, пуст ли список или облако поменяло формат.
-		path := filepath.Join(dataDir, "paired-appliances.json")
-		if err := os.MkdirAll(dataDir, 0o700); err != nil {
-			return err
+	fmt.Fprintf(stdout, "Регион аккаунта: %s. Приборов в аккаунте: %d.\n", paired.Host, len(paired.Appliances))
+	failed, err := hccloud.Download(ctx, dataDir, account, paired, func(r hccloud.Saved) {
+		a := r.Appliance
+		if r.Err != nil {
+			fmt.Fprintf(stdout, "! %s %s %s: %v\n", a.Brand, a.HaType, a.HaID, r.Err)
+			return
 		}
-		if err := atomicfile.Write(path, paired.Raw); err != nil {
-			return err
-		}
-		return fmt.Errorf("облако не вернуло ни одного прибора, ответ сохранён в %s", path)
-	}
-
-	var failed int
-	for _, a := range appliances {
-		if !hccloud.ValidHaID(a.HaID) {
-			fmt.Fprintf(stdout, "! %s %s: недопустимый haId, пропущен\n", a.Brand, a.HaType)
-			failed++
-			continue
-		}
-		features, err := saveAppliance(ctx, account, filepath.Join(dataDir, "appliances", a.HaID), a)
-		if err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			fmt.Fprintf(stdout, "! %s %s %s: %v\n", a.Brand, a.HaType, a.HaID, err)
-			failed++
-			continue
-		}
-		fmt.Fprintf(stdout, "  %s %s %s: связь %s, функций %d\n", a.Brand, a.HaType, a.HaID, features.mode, features.count)
+		fmt.Fprintf(stdout, "  %s %s %s: связь %s, функций %d\n", a.Brand, a.HaType, a.HaID, r.Mode, r.Features)
+	})
+	if err != nil {
+		return err
 	}
 	fmt.Fprintf(stdout, "Ключи и описания: %s.\n", filepath.Join(dataDir, "appliances"))
 	if failed > 0 {
 		return fmt.Errorf("не загружено приборов: %d", failed)
 	}
 	return nil
-}
-
-type savedInfo struct {
-	mode  string
-	count int
-}
-
-// saveAppliance загружает ключи и описание прибора и сохраняет их в dir.
-// Сначала загружается всё, потом пишутся файлы: сбой посреди загрузки не оставит неполный каталог.
-func saveAppliance(ctx context.Context, account *hccloud.Account, dir string, a hccloud.PairedAppliance) (savedInfo, error) {
-	enc, err := account.Encryption(ctx, a.HaID)
-	if err != nil {
-		return savedInfo{}, fmt.Errorf("ключи: %w", err)
-	}
-	raw, err := account.Description(ctx, a.HaID)
-	if err != nil {
-		return savedInfo{}, fmt.Errorf("описание: %w", err)
-	}
-	desc, err := hcdesc.Parse(raw.FeatureMapping, raw.DeviceDescription)
-	if err != nil {
-		return savedInfo{}, fmt.Errorf("описание: %w", err)
-	}
-	descJSON, err := json.MarshalIndent(desc, "", "  ")
-	if err != nil {
-		return savedInfo{}, err
-	}
-	keyJSON, err := json.MarshalIndent(applianceFile{HaID: a.HaID, Brand: a.Brand, HaType: a.HaType, Encryption: *enc}, "", "  ")
-	if err != nil {
-		return savedInfo{}, err
-	}
-
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return savedInfo{}, err
-	}
-	files := []struct {
-		name string
-		data []byte
-	}{
-		{"appliance.json", keyJSON},
-		{"description.json", descJSON},
-		{"FeatureMapping.xml", raw.FeatureMapping},
-		{"DeviceDescription.xml", raw.DeviceDescription},
-	}
-	for _, f := range files {
-		if err := atomicfile.Write(filepath.Join(dir, f.name), f.data); err != nil {
-			return savedInfo{}, err
-		}
-	}
-	return savedInfo{mode: enc.Mode, count: len(desc.Features)}, nil
 }
 
 // readLine читает одну строку не длиннее 8 КБ.

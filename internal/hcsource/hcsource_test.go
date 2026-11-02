@@ -5,8 +5,11 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -177,5 +180,86 @@ func TestMapErr(t *testing.T) {
 	}
 	if mapErr(nil) != nil {
 		t.Error("nil")
+	}
+}
+
+// Смена токена переключает поток событий на облако нового токена сразу, без паузы.
+func TestRunSwitchesLogin(t *testing.T) {
+	var second atomic.Bool
+	sse := func(onOpen func()) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/homeappliances/events" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			if onOpen != nil {
+				onOpen()
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.(http.Flusher).Flush()
+			<-r.Context().Done()
+		}))
+	}
+	first := sse(nil)
+	defer first.Close()
+	next := sse(func() { second.Store(true) })
+	defer next.Close()
+	log := slog.New(slog.DiscardHandler)
+	dir := t.TempDir()
+	api, err := hcapi.New(filepath.Join(dir, "tokens.json"), log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokens := func(base string) hcapi.Tokens {
+		return hcapi.Tokens{Access: "a", Refresh: "r", ClientID: "app", BaseURL: base, Expires: time.Now().Add(time.Hour)}
+	}
+	if err := api.UseTokens(tokens(first.URL)); err != nil {
+		t.Fatal(err)
+	}
+	c := New(api, filepath.Join(dir, "homeconnect"), log)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		c.Run(ctx)
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for !c.Connected() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !c.Connected() {
+		t.Fatal("поток не открылся")
+	}
+	if err := api.UseTokens(tokens(next.URL)); err != nil {
+		t.Fatal(err)
+	}
+	for !second.Load() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !second.Load() {
+		t.Fatal("поток не перешёл на новый токен")
+	}
+}
+
+// Forget забывает объект прибора: следующий вызов создаёт новый.
+func TestForget(t *testing.T) {
+	log := slog.New(slog.DiscardHandler)
+	dir := t.TempDir()
+	api, err := hcapi.New(filepath.Join(dir, "tokens.json"), log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := New(api, filepath.Join(dir, "homeconnect"), log)
+	a := c.Appliance(haID)
+	if c.Appliance(haID) != a {
+		t.Fatal("новый объект без Forget")
+	}
+	c.Forget(haID)
+	if c.Appliance(haID) == a {
+		t.Fatal("объект не забыт")
 	}
 }

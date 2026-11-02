@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -33,6 +34,13 @@ const (
 	SaveInvalid  = "invalid"
 	SaveConflict = "conflict"
 	SaveError    = "error"
+)
+
+// Итоги продления токена облака: продлён, сбой сети или ответа, облако отвергло токен.
+const (
+	RefreshOK       = "ok"
+	RefreshError    = "error"
+	RefreshRejected = "rejected"
 )
 
 // Итоги уведомления Яндексу: принято, отклонено ответом 4xx, не отправлено после повторов,
@@ -95,6 +103,10 @@ var (
 		Name: "hcgateway_source_reconnects_total",
 		Help: "Переподключения потоков событий источников.",
 	}, []string{"source", "device"})
+	tokenRefreshes = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "hcgateway_source_token_refreshes_total",
+		Help: "Продления токена облака по итогу.",
+	}, []string{"source", "result"})
 	buildInfo = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "hcgateway_build_info",
 		Help: "Версия шлюза.",
@@ -103,7 +115,7 @@ var (
 
 	// own - свои метрики шлюза, без метрик Go и процесса.
 	own = []prometheus.Collector{yandexRequests, yandexDuration, actions, notifications, deviceEvents,
-		webLogins, linkingLogins, bans, configSaves, sourceRequests, sourceConnected, sourceReconnects, buildInfo, state}
+		webLogins, linkingLogins, bans, configSaves, sourceRequests, sourceConnected, sourceReconnects, tokenRefreshes, buildInfo, state}
 )
 
 func init() {
@@ -176,6 +188,18 @@ func SourceReconnect(source, device string) {
 	sourceReconnects.WithLabelValues(source, device).Inc()
 }
 
+// TokenRefreshSource заводит счётчики продлений источника с нуля.
+func TokenRefreshSource(source string) {
+	for _, r := range []string{RefreshOK, RefreshError, RefreshRejected} {
+		tokenRefreshes.WithLabelValues(source, r)
+	}
+}
+
+// TokenRefresh считает продление токена облака.
+func TokenRefresh(source, result string) {
+	tokenRefreshes.WithLabelValues(source, result).Inc()
+}
+
 // SetBuildInfo задаёт версию шлюза.
 func SetBuildInfo(version string) {
 	buildInfo.Reset()
@@ -196,6 +220,8 @@ type State interface {
 	Linked() bool
 	Banned() int
 	Devices() []Device
+	// TokenExpires - когда истекает токен облака, по источникам; нет входа - источника нет.
+	TokenExpires() map[string]time.Time
 }
 
 // Watch задаёт, у кого метрики спрашивают состояние шлюза.
@@ -206,9 +232,11 @@ func Watch(s State) {
 }
 
 var (
-	linkedDesc    = prometheus.NewDesc("hcgateway_yandex_linked", "1, если аккаунт Яндекса привязан.", nil, nil)
-	bannedDesc    = prometheus.NewDesc("hcgateway_auth_banned", "Адреса в бане сейчас.", nil, nil)
-	onlineDesc    = prometheus.NewDesc("hcgateway_device_online", "1, если прибор на связи.", []string{"device", "source"}, nil)
+	linkedDesc = prometheus.NewDesc("hcgateway_yandex_linked", "1, если аккаунт Яндекса привязан.", nil, nil)
+	bannedDesc = prometheus.NewDesc("hcgateway_auth_banned", "Адреса в бане сейчас.", nil, nil)
+	onlineDesc = prometheus.NewDesc("hcgateway_device_online", "1, если прибор на связи.", []string{"device", "source"}, nil)
+	tokenDesc  = prometheus.NewDesc("hcgateway_source_token_expires_seconds", "Сколько секунд осталось до конца срока токена облака.",
+		[]string{"source"}, nil)
 	operationDesc = prometheus.NewDesc("hcgateway_device_operation_state", "1 у текущего состояния программы прибора.",
 		[]string{"device", "state"}, nil)
 )
@@ -225,6 +253,7 @@ func (c *stateCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- bannedDesc
 	ch <- onlineDesc
 	ch <- operationDesc
+	ch <- tokenDesc
 }
 
 func (c *stateCollector) Collect(ch chan<- prometheus.Metric) {
@@ -236,6 +265,9 @@ func (c *stateCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 	ch <- prometheus.MustNewConstMetric(linkedDesc, prometheus.GaugeValue, flag(src.Linked()))
 	ch <- prometheus.MustNewConstMetric(bannedDesc, prometheus.GaugeValue, float64(src.Banned()))
+	for source, expires := range src.TokenExpires() {
+		ch <- prometheus.MustNewConstMetric(tokenDesc, prometheus.GaugeValue, time.Until(expires).Seconds(), source)
+	}
 	for _, d := range src.Devices() {
 		ch <- prometheus.MustNewConstMetric(onlineDesc, prometheus.GaugeValue, flag(d.Online), d.ID, d.Source)
 		if d.Online && d.Operation != "" {
