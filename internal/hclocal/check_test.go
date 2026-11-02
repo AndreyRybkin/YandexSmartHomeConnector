@@ -7,7 +7,24 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"hcgateway/internal/hcdesc"
 )
+
+// Описание помечает настройку только для чтения и перечисляет события прибора.
+func TestDescribeReadOnly(t *testing.T) {
+	d := describe("Oven", map[string]*hcdesc.Feature{
+		"a.Setting.Read":  {Kind: "setting", Attrs: map[string]string{"access": "read"}},
+		"a.Setting.Write": {Kind: "setting", Attrs: map[string]string{"access": "readWrite"}},
+		"a.Event.Done":    {Kind: "event"},
+	})
+	if !d.Options["a.Setting.Read"].ReadOnly || d.Options["a.Setting.Write"].ReadOnly {
+		t.Fatalf("описание: %+v", d.Options)
+	}
+	if len(d.Events) != 1 || d.Events[0] != "a.Event.Done" {
+		t.Fatalf("события: %v", d.Events)
+	}
+}
 
 func TestCheck(t *testing.T) {
 	for _, mode := range []string{ModeTLS, ModeAES} {

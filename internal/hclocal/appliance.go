@@ -124,8 +124,11 @@ func describe(haType string, byName map[string]*hcdesc.Feature) appliance.Descri
 			d.Programs = append(d.Programs, name)
 		case "command":
 			d.Commands = append(d.Commands, name)
+		case "event":
+			d.Events = append(d.Events, name)
 		case "option", "setting":
-			o := appliance.Option{Key: name, Min: attr(f, "min"), Max: attr(f, "max"), Step: attr(f, "stepSize")}
+			o := appliance.Option{Key: name, Min: attr(f, "min"), Max: attr(f, "max"), Step: attr(f, "stepSize"),
+				ReadOnly: strings.EqualFold(f.Attrs["access"], "read")}
 			for _, n := range slices.Sorted(maps.Keys(f.Values)) {
 				o.Values = append(o.Values, f.EnumValue(f.Values[n]))
 			}

@@ -122,7 +122,7 @@ func TestMarshalYAML(t *testing.T) {
 func TestMerge(t *testing.T) {
 	base := BuiltinProfile("Oven")
 	m := Merge(base, &Profile{Toggles: []Toggle{}})
-	if len(m.Toggles) != 0 || len(m.Modes) != 1 || len(base.Toggles) != 1 {
+	if len(m.Toggles) != 0 || len(m.Modes) != 1 || len(base.Toggles) != 2 {
 		t.Fatalf("Merge: %+v", m)
 	}
 	if BuiltinProfile("Kettle") != nil || !slices.Contains(BuiltinTypes(), "Dishwasher") {
@@ -246,6 +246,65 @@ func TestTVNames(t *testing.T) {
 	for _, in := range samsungtv.Inputs {
 		if _, ok := BuiltinProfile(SamsungTVType).Modes[0].Values[in]; !ok {
 			t.Errorf("вход Samsung %s без режима", in)
+		}
+	}
+}
+
+// Значение с другим именем находится по основному; основное имя важнее.
+func TestStatusNames(t *testing.T) {
+	const status, other = "Cooking.Oven.Status.CurrentCavityTemperature", "Cooking.Oven.Status.Cavity.001.CurrentTemperature"
+	if v, ok := StatusValue(map[string]any{other: 91.0}, status); !ok || v != 91.0 {
+		t.Fatalf("другое имя: %v %v", v, ok)
+	}
+	if v, ok := StatusValue(map[string]any{other: 91.0, status: 22.0}, status); !ok || v != 22.0 {
+		t.Fatalf("оба имени: %v %v", v, ok)
+	}
+	if _, ok := StatusValue(map[string]any{"x": 1.0}, status); ok {
+		t.Fatal("значения нет")
+	}
+	if v, ok := StatusValue(map[string]any{other: 91.0}, other); !ok || v != 91.0 {
+		t.Fatalf("само другое имя: %v %v", v, ok)
+	}
+	if got := StatusNames(status); !slices.Equal(got, []string{status, other}) {
+		t.Fatalf("имена: %v", got)
+	}
+	if got := StatusNames("x"); !slices.Equal(got, []string{"x"}) {
+		t.Fatalf("имя без других: %v", got)
+	}
+	values := map[string]any{other: 91.0}
+	if got := WithStatusNames(values); got[status] != 91.0 || got[other] != 91.0 {
+		t.Fatalf("значения: %v", got)
+	}
+	if _, ok := values[status]; ok {
+		t.Fatal("исходные значения изменились")
+	}
+	if got := WithStatusNames(map[string]any{status: 22.0, other: 91.0}); got[status] != 22.0 {
+		t.Fatalf("основное имя заменено: %v", got)
+	}
+}
+
+// Встроенные профили понимают имена событий, которые приборы сообщают в домашней сети.
+func TestBuiltinEventNames(t *testing.T) {
+	oven := BuiltinProfile("Oven").Events
+	for event, want := range map[string]string{
+		"BSH.Common.Event.ProgramFinished":                     "click",
+		"Cooking.Oven.Event.Cavity.001.ProgramFinished":        "click",
+		"Cooking.Oven.Event.PreheatFinished":                   "double_click",
+		"Cooking.Oven.Event.Cavity.001.RegularPreheatFinished": "double_click",
+		"Cooking.Oven.Event.Cavity.001.FastPreheatFinished":    "double_click",
+	} {
+		if got, ok := oven.Match(event); !ok || got != want {
+			t.Errorf("%s: %q", event, got)
+		}
+	}
+	if !slices.Contains(oven.FoodLevelIfKnown, "Cooking.Oven.Event.Cavity.001.FillWaterContainer") ||
+		!slices.Contains(oven.FoodLevelIfKnown, "Cooking.Oven.Event.Cavity.001.EmptyWaterContainer") || len(oven.FoodLevel) != 0 {
+		t.Errorf("вода духовки: %+v", oven)
+	}
+	food := BuiltinProfile("Dishwasher").Events.FoodLevel
+	for _, event := range []string{"SaltNearlyEmpty", "RinseAidNearlyEmpty", "SaltLack", "RinseAidLack"} {
+		if !slices.Contains(food, "Dishcare.Dishwasher.Event."+event) {
+			t.Errorf("нет %s", event)
 		}
 	}
 }

@@ -59,13 +59,20 @@ var builtin = map[string]*Profile{
 			"PreHeating": "preheat", "SlowCook": "slow_cook", "GrillLargeArea": "frying", "Defrost": "one",
 		})}},
 		Ranges:  []Range{{Instance: "temperature", Option: "Cooking.Oven.Option.SetpointTemperature", Unit: celsius}},
-		Toggles: []Toggle{pause},
+		Toggles: []Toggle{pause, {Instance: "backlight", Setting: "Cooking.Oven.Setting.Light.Cavity.001.Power", Optional: true}},
 		Properties: []Property{doorOpen,
 			{Type: "float", Instance: "temperature", Status: "Cooking.Oven.Status.CurrentCavityTemperature", Unit: celsius}},
 		Events: &Events{Button: map[string]string{
 			"BSH.Common.Event.ProgramFinished":   "click",
 			"Cooking.Oven.Event.PreheatFinished": "double_click",
-		}},
+			// Те же события у духовки с номером камеры в именах.
+			"Cooking.Oven.Event.Cavity.001.ProgramFinished":        "click",
+			"Cooking.Oven.Event.Cavity.001.RegularPreheatFinished": "double_click",
+			"Cooking.Oven.Event.Cavity.001.FastPreheatFinished":    "double_click",
+		},
+			// Ёмкость для воды у духовки с паром.
+			FoodLevelIfKnown: []string{"Cooking.Oven.Event.Cavity.001.FillWaterContainer", "Cooking.Oven.Event.Cavity.001.EmptyWaterContainer"},
+		},
 	},
 	"Dishwasher": {
 		YandexType:     "dishwasher",
@@ -78,8 +85,10 @@ var builtin = map[string]*Profile{
 		Toggles:    []Toggle{pause},
 		Properties: []Property{doorOpen},
 		Events: &Events{
-			Button:    finished,
-			FoodLevel: []string{"Dishcare.Dishwasher.Event.SaltNearlyEmpty", "Dishcare.Dishwasher.Event.RinseAidNearlyEmpty"},
+			Button: finished,
+			// NearlyEmpty - скоро закончится, Lack - уже нет: прибор сообщает их по отдельности.
+			FoodLevel: []string{"Dishcare.Dishwasher.Event.SaltNearlyEmpty", "Dishcare.Dishwasher.Event.RinseAidNearlyEmpty",
+				"Dishcare.Dishwasher.Event.SaltLack", "Dishcare.Dishwasher.Event.RinseAidLack"},
 		},
 	},
 	"Washer":      washer,

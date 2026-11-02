@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"regexp"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -73,10 +74,12 @@ type snapshot struct {
 	Tone   string `json:"tone"`
 	Notice string `json:"notice"`
 	// Mappings - сводка сопоставлений для вкладки «Сопоставления» страницы прибора.
-	Mappings []mapRow     `json:"mappings"`
-	Values   []valueRow   `json:"values"`
-	Alice    []aliceState `json:"alice"`
-	History  []historyRow `json:"history"`
+	Mappings []mapRow   `json:"mappings"`
+	Values   []valueRow `json:"values"`
+	// EmptyFavorites - значения незанятых избранных: их десятки, и страница их сворачивает.
+	EmptyFavorites []valueRow   `json:"emptyFavorites"`
+	Alice          []aliceState `json:"alice"`
+	History        []historyRow `json:"history"`
 }
 
 type valueRow struct {
@@ -192,12 +195,29 @@ func (s *Server) snapshot(id string) snapshot {
 		sn.Values = append(sn.Values, valueRow{"выбранная программа", ast.SelectedProgram, mapping[ast.SelectedProgram]})
 	}
 	for _, k := range slices.Sorted(maps.Keys(ast.Values)) {
-		sn.Values = append(sn.Values, valueRow{k, formatValue(ast.Values[k]), mapping[k]})
+		row := valueRow{k, formatValue(ast.Values[k]), mapping[k]}
+		if row.Mapping == "" && emptyFavorite(ast.Values, k) {
+			sn.EmptyFavorites = append(sn.EmptyFavorites, row)
+			continue
+		}
+		sn.Values = append(sn.Values, row)
 	}
 	for _, c := range hc.History() {
 		sn.History = append(sn.History, historyRow{Time: c.Time.Local().Format("15:04:05"), Kind: kindLabels[c.Kind], Key: c.Key, Value: c.Value})
 	}
 	return sn
+}
+
+// favoriteRe - значение избранного прибора Home Connect и номер избранного.
+var favoriteRe = regexp.MustCompile(`^BSH\.Common\.Setting\.Favorite\.([0-9]+)\.`)
+
+// favoriteOff - значение Functionality незанятого избранного.
+const favoriteOff = "BSH.Common.EnumType.Favorite.Functionality.Off"
+
+// emptyFavorite сообщает, что key - значение незанятого избранного.
+func emptyFavorite(values map[string]any, key string) bool {
+	m := favoriteRe.FindStringSubmatch(key)
+	return m != nil && values["BSH.Common.Setting.Favorite."+m[1]+".Functionality"] == favoriteOff
 }
 
 // implicit - значения Home Connect, которые шлюз читает сам, без полей профиля: идёт ли
@@ -256,10 +276,12 @@ func mappings(p *profile.Profile) map[string]string {
 		if c := conversionLabel(&pr); c != "" {
 			label += ", " + c
 		}
-		add(pr.Status, label)
+		for _, name := range profile.StatusNames(pr.Status) {
+			add(name, label)
+		}
 	}
 	if e := p.Events; e != nil {
-		for _, k := range e.FoodLevel {
+		for _, k := range slices.Concat(e.FoodLevel, e.FoodLevelIfKnown) {
 			add(k, "датчик: food_level")
 		}
 		for _, k := range slices.Sorted(maps.Keys(e.Button)) {

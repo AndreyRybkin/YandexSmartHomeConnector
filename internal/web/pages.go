@@ -781,7 +781,7 @@ func (s *Server) renderDevice(w http.ResponseWriter, sess *session, status int, 
 		v.Preview = previewOf(d.previewInfo, hc.Info(), d.preview)
 		t := &editTarget{action: "/devices/" + id + "/profile", builtin: builtin, probe: "/devices/" + id + "/probe",
 			forType: cfg.Profiles[haType], forDevice: dc.Profile, device: true, lg: propsSource(dc.Source),
-			desc: desc, values: slices.Collect(maps.Keys(st.Values)), now: st.Values, program: st.ActiveProgram}
+			desc: desc, values: slices.Collect(maps.Keys(st.Values)), now: profile.WithStatusNames(st.Values), program: st.ActiveProgram}
 		v.Editor = buildEditor(t, sess.csrf, version, d.profile, d.section, d.err)
 	}
 	s.render(w, status, "device", s.newPage(sess, "devices", dc.Name, v))

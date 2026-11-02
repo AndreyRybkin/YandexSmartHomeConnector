@@ -28,6 +28,10 @@ func hasToggle(t *profile.Toggle, desc *appliance.Description) bool {
 	if t.Instance == "pause" && t.Setting == "" {
 		return desc.HasCommand(appliance.CommandPause) && desc.HasCommand(appliance.CommandResume)
 	}
+	if t.Optional {
+		o, ok := desc.Options[t.Setting]
+		return ok && !o.ReadOnly
+	}
 	return desc.Knows(t.Setting)
 }
 

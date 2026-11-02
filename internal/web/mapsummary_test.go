@@ -3,6 +3,7 @@ package web
 import (
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 
@@ -102,5 +103,68 @@ func TestPreviewWords(t *testing.T) {
 	if status != http.StatusOK || !strings.Contains(body, `<span class="chip warn">тип изменится</span>`) ||
 		!strings.Contains(body, "<summary>JSON для Яндекса</summary>") || !strings.Contains(body, "не изменится") {
 		t.Fatalf("предпросмотр на странице: %d", status)
+	}
+}
+
+// Значение с другим именем видно в сводке, в редакторе и в таблице значений прибора.
+func TestStatusOtherName(t *testing.T) {
+	const status, other = "Cooking.Oven.Status.CurrentCavityTemperature", "Cooking.Oven.Status.Cavity.001.CurrentTemperature"
+	p := profile.BuiltinProfile("Oven")
+	st := &appliance.State{Values: map[string]any{other: 91.0}}
+	found := false
+	for _, r := range mapRows(p, st, fakeDevice{}) {
+		if r.Key == status {
+			found = true
+			if r.Now != "91" {
+				t.Errorf("сводка: %+v", r)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("в сводке нет температуры")
+	}
+	v := buildEditor(&editTarget{builtin: p, now: profile.WithStatusNames(st.Values)}, "", "", nil, "", "")
+	for _, pv := range v.Properties {
+		if pv.Status == status && pv.Hint != "сейчас 91" {
+			t.Errorf("подсказка редактора: %q", pv.Hint)
+		}
+	}
+	if got := mappings(p)[other]; !strings.Contains(got, "float temperature") {
+		t.Errorf("таблица значений: %q", got)
+	}
+	// Подсветка камеры в сводке - только у прибора с такой настройкой.
+	const light = "Cooking.Oven.Setting.Light.Cavity.001.Power"
+	hasLight := func(values map[string]any) bool {
+		return slices.ContainsFunc(mapRows(p, &appliance.State{Values: values}, fakeDevice{}), func(r mapRow) bool { return r.Key == light })
+	}
+	if hasLight(st.Values) || !hasLight(map[string]any{light: true}) {
+		t.Error("подсветка камеры в сводке")
+	}
+}
+
+// Составные значения - JSON, а не вид Go; незанятые избранные отделены от остальных значений.
+func TestValueDisplay(t *testing.T) {
+	for want, v := range map[string]any{
+		`{"length":0,"list":[]}`:           map[string]any{"length": 0.0, "list": []any{}},
+		`{"tz":"UTC0","tzName":"Etc/UTC"}`: map[string]any{"tz": "UTC0", "tzName": "Etc/UTC"},
+		`[1,"a"]`:                          []any{1.0, "a"},
+		"91":                               91.0,
+		"строка":                           "строка",
+		"true":                             true,
+		"":                                 nil,
+	} {
+		if got := formatValue(v); got != want {
+			t.Errorf("%v: %q, нужно %q", v, got, want)
+		}
+	}
+	const prefix = "BSH.Common.Setting.Favorite."
+	values := map[string]any{prefix + "001.Functionality": favoriteOff, prefix + "001.Name": "",
+		prefix + "002.Functionality": "BSH.Common.EnumType.Favorite.Functionality.Program", prefix + "002.Name": "",
+		prefix + "003.Name": "", "BSH.Common.Setting.Favorites.SortOrder": "x"}
+	for key, want := range map[string]bool{prefix + "001.Functionality": true, prefix + "001.Name": true, prefix + "002.Name": false,
+		prefix + "003.Name": false, "BSH.Common.Setting.Favorites.SortOrder": false, "other": false} {
+		if got := emptyFavorite(values, key); got != want {
+			t.Errorf("%s: %v", key, got)
+		}
 	}
 }

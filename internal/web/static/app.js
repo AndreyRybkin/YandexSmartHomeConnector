@@ -296,10 +296,17 @@ function bindLive(live) {
     document.querySelectorAll("[data-offline]").forEach((el) => {
       el.hidden = s.online;
     });
-    fill(document.getElementById("values"), s.values, "Прибор пока ничего не сообщил.", 3, (row, v) => {
+    const valueCells = (row, v) => {
       cell(row, v.key, true);
       cell(row, v.value);
       cell(row, v.mapping);
+    };
+    fill(document.getElementById("values"), s.values, "Прибор пока ничего не сообщил.", 3, valueCells);
+    fill(document.getElementById("values-empty"), s.emptyFavorites, "", 3, valueCells);
+    document.querySelectorAll("[data-empty-favorites]").forEach((el) => {
+      const n = s.emptyFavorites ? s.emptyFavorites.length : 0;
+      el.hidden = n === 0;
+      el.querySelector("[data-count]").textContent = n;
     });
     fill(document.getElementById("mappings"), s.mappings, "", 6, mapCells);
     fill(document.getElementById("history"), s.history, "Изменений пока не было.", 4, (row, h) => {

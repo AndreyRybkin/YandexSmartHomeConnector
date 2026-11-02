@@ -54,6 +54,8 @@ type Option struct {
 	Step float64
 	// Values - допустимые значения перечисления; пусто для чисел и флагов.
 	Values []string
+	// ReadOnly - прибор сообщает значение, но менять его не разрешает.
+	ReadOnly bool
 	// Setting - настройка: меняется сразу, без программы. У Home Connect настройку видно
 	// и по имени с .Setting.
 	Setting bool

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"fmt"
 	"maps"
 	"math"
@@ -579,6 +580,11 @@ func formatValue(v any) string {
 		return strconv.FormatBool(x)
 	case nil:
 		return ""
+	case map[string]any, []any:
+		// Составное значение прибора: JSON читается лучше, чем вид по умолчанию.
+		if data, err := json.Marshal(x); err == nil {
+			return string(data)
+		}
 	}
 	return fmt.Sprint(v)
 }

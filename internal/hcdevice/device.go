@@ -359,11 +359,22 @@ func (d *Device) Info() []alice.DeviceInfo {
 			sensor.Properties = append(sensor.Properties, alice.Capability{Type: alice.PropEvent, Retrievable: true, Reportable: true,
 				Parameters: alice.EventParams{Instance: "button", Events: alice.Items(values)}})
 		}
-		if len(p.Events.FoodLevel) > 0 {
+		if len(foodKeys(p.Events, &desc)) > 0 {
 			sensor.Properties = append(sensor.Properties, alice.Capability{Type: alice.PropEvent, Retrievable: true, Reportable: true,
 				Parameters: alice.EventParams{Instance: "food_level", Events: alice.Items([]string{"low", "normal"})}})
 		}
 		out = append(out, sensor)
+	}
+	return out
+}
+
+// foodKeys - события «заканчивается» этого прибора: общие для типа и те, что прибор описывает сам.
+func foodKeys(e *profile.Events, desc *appliance.Description) []string {
+	out := e.FoodLevel
+	for _, k := range e.FoodLevelIfKnown {
+		if slices.Contains(desc.Events, k) {
+			out = append(slices.Clip(out), k)
+		}
 	}
 	return out
 }
@@ -524,7 +535,7 @@ func (d *Device) mainState(st *appliance.State) alice.DeviceState {
 			}
 			continue
 		}
-		raw, ok := st.Values[pr.Status]
+		raw, ok := profile.StatusValue(st.Values, pr.Status)
 		if !ok {
 			continue
 		}
@@ -585,9 +596,10 @@ func (d *Device) sensorState(st *appliance.State, button string) alice.DeviceSta
 	if button != "" {
 		ds.Properties = append(ds.Properties, alice.CapState{Type: alice.PropEvent, State: alice.StateValue{Instance: "button", Value: button}})
 	}
-	if len(e.FoodLevel) > 0 {
+	desc := d.Appliance.Describe()
+	if keys := foodKeys(e, &desc); len(keys) > 0 {
 		level := "normal"
-		for _, key := range e.FoodLevel {
+		for _, key := range keys {
 			if st.Values[key] == appliance.EventPresent {
 				level = "low"
 			}

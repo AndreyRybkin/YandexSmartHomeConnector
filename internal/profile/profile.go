@@ -96,6 +96,9 @@ type Toggle struct {
 	// On и Off - значения настройки для «включено» и «выключено»; без них - true и false.
 	On  string `yaml:"on,omitempty"`
 	Off string `yaml:"off,omitempty"`
+	// Optional - переключатель есть, только если прибор описывает эту настройку и разрешает её менять:
+	// такая настройка есть не у всех приборов типа.
+	Optional bool `yaml:"optional,omitempty"`
 }
 
 // Power - питание через свойство прибора: Setting получает On или Off.
@@ -125,6 +128,42 @@ type Property struct {
 	Offset *float64 `yaml:"offset,omitempty"`
 	// Values - для event: значение Home Connect -> значение Алисы.
 	Values map[string]string `yaml:"values,omitempty"`
+}
+
+// otherNames - другие имена значений прибора: одно и то же значение приборы называют по-разному,
+// например духовка с номером камеры в именах. Профиль хранит основное имя, а значение ищется по всем.
+var otherNames = map[string][]string{
+	"Cooking.Oven.Status.CurrentCavityTemperature": {"Cooking.Oven.Status.Cavity.001.CurrentTemperature"},
+}
+
+// StatusNames - все имена значения status: основное и другие.
+func StatusNames(status string) []string {
+	return append([]string{status}, otherNames[status]...)
+}
+
+// StatusValue - значение status в values: по основному имени, затем по другим.
+func StatusValue(values map[string]any, status string) (any, bool) {
+	if v, ok := values[status]; ok {
+		return v, true
+	}
+	for _, name := range otherNames[status] {
+		if v, ok := values[name]; ok {
+			return v, true
+		}
+	}
+	return nil, false
+}
+
+// WithStatusNames - значения values, где значение с другим именем есть и под основным: так его
+// видят подсказки редактора.
+func WithStatusNames(values map[string]any) map[string]any {
+	out := maps.Clone(values)
+	for status := range otherNames {
+		if v, ok := StatusValue(values, status); ok {
+			out[status] = v
+		}
+	}
+	return out
 }
 
 // Conversion - пересчёт значения прибора: значение × Scale + Offset.
@@ -182,6 +221,9 @@ type Events struct {
 	Button map[string]string `yaml:"button,omitempty"`
 	// FoodLevel - события «заканчивается»: если есть хотя бы одно, уровень low.
 	FoodLevel []string `yaml:"food_level,omitempty"`
+	// FoodLevelIfKnown - такие же события, которые есть не у всех приборов типа: шлюз учитывает их,
+	// только если прибор сообщил, что умеет их присылать.
+	FoodLevelIfKnown []string `yaml:"food_level_if_known,omitempty"`
 }
 
 // Resolve собирает профиль прибора: встроенный для типа, затем переопределение

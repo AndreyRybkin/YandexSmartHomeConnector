@@ -40,7 +40,7 @@ func mapRows(p *profile.Profile, st *appliance.State, dev alice.Device) []mapRow
 		}
 		r := mapRow{Key: key, Label: short(key), Convert: convert, Alice: itemLabel(kind, instance), Value: seen[kind+"/"+instance],
 			Section: section}
-		if v, ok := st.Values[key]; ok {
+		if v, ok := profile.StatusValue(st.Values, key); ok {
 			r.Now = shortValue(v)
 		}
 		out = append(out, r)
@@ -78,6 +78,10 @@ func mapRows(p *profile.Profile, st *appliance.State, dev alice.Device) []mapRow
 			add(appliance.StatusOperationState, "включено, пока программа на паузе", alice.CapToggle, t.Instance, "toggles")
 			continue
 		}
+		if _, ok := st.Values[t.Setting]; t.Optional && !ok {
+			// Такой настройки у этого прибора нет.
+			continue
+		}
 		add(t.Setting, valuePair(t.On, t.Off), alice.CapToggle, t.Instance, "toggles")
 	}
 	if c := p.Color; c != nil {
@@ -105,6 +109,11 @@ func mapRows(p *profile.Profile, st *appliance.State, dev alice.Device) []mapRow
 		}
 		for _, k := range e.FoodLevel {
 			out = append(out, mapRow{Key: k, Label: short(k), Alice: itemLabel(alice.PropEvent, "food_level"), Value: "низкий", Section: "events"})
+		}
+		for _, k := range e.FoodLevelIfKnown {
+			if _, ok := st.Values[k]; ok {
+				out = append(out, mapRow{Key: k, Label: short(k), Alice: itemLabel(alice.PropEvent, "food_level"), Value: "низкий", Section: "events"})
+			}
 		}
 	}
 	return out

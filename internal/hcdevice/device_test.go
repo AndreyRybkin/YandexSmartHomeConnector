@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -373,5 +374,112 @@ func TestConvertedProperty(t *testing.T) {
 	a.state.Values["run.state"] = "END"
 	if v, ok := Remaining(p, &a.state); !ok || v != 0 {
 		t.Fatalf("после стирки: %v %v", v, ok)
+	}
+}
+
+// Температура духовки с номером камеры в имени доходит до Алисы по встроенному профилю.
+func TestOvenCavityTemperature(t *testing.T) {
+	const other = "Cooking.Oven.Status.Cavity.001.CurrentTemperature"
+	a := newProps(map[string]any{other: 91.0})
+	p, err := profile.Resolve("Oven", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &Device{ID: "oven", Profile: p, Appliance: a}
+	raw, _ := json.Marshal(d.States()[0].Properties)
+	if want := `{"type":"devices.properties.float","state":{"instance":"temperature","value":91}}`; !strings.Contains(string(raw), want) {
+		t.Fatalf("свойства: %s", raw)
+	}
+}
+
+// Нет соли - low, как и «соль скоро закончится»; оба события Off - normal.
+func TestDishwasherFoodLevel(t *testing.T) {
+	const off, present = "BSH.Common.EnumType.EventPresentState.Off", appliance.EventPresent
+	level := func(values map[string]any) string {
+		t.Helper()
+		p, err := profile.Resolve("Dishwasher", nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		d := &Device{ID: "dish", Profile: p, Appliance: newProps(values)}
+		raw, _ := json.Marshal(d.States())
+		for _, l := range []string{"low", "normal"} {
+			if strings.Contains(string(raw), `"instance":"food_level","value":"`+l+`"`) {
+				return l
+			}
+		}
+		t.Fatalf("нет food_level: %s", raw)
+		return ""
+	}
+	if got := level(map[string]any{"Dishcare.Dishwasher.Event.SaltNearlyEmpty": off, "Dishcare.Dishwasher.Event.SaltLack": off}); got != "normal" {
+		t.Errorf("всё есть: %s", got)
+	}
+	for _, event := range []string{"SaltLack", "RinseAidLack", "SaltNearlyEmpty", "RinseAidNearlyEmpty"} {
+		if got := level(map[string]any{"Dishcare.Dishwasher.Event." + event: present}); got != "low" {
+			t.Errorf("%s: %s", event, got)
+		}
+	}
+}
+
+// Подсветка камеры: есть, если прибор описывает настройку и разрешает её менять.
+func TestOvenBacklight(t *testing.T) {
+	const light = "Cooking.Oven.Setting.Light.Cavity.001.Power"
+	has := func(opts map[string]appliance.Option) bool {
+		t.Helper()
+		a := newProps(map[string]any{light: true})
+		a.desc.Options = opts
+		p, err := profile.Resolve("Oven", nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		d := &Device{ID: "oven", Profile: p, Appliance: a}
+		for _, c := range d.Info()[0].Capabilities {
+			if ip, ok := c.Parameters.(alice.InstanceParams); ok && c.Type == alice.CapToggle && ip.Instance == "backlight" {
+				return true
+			}
+		}
+		return false
+	}
+	if !has(map[string]appliance.Option{light: {Key: light, Setting: true}}) {
+		t.Error("настройку можно менять, а подсветки нет")
+	}
+	if has(map[string]appliance.Option{light: {Key: light, Setting: true, ReadOnly: true}}) {
+		t.Error("подсветка только для чтения")
+	}
+	if has(map[string]appliance.Option{}) {
+		t.Error("подсветка у прибора без такой настройки")
+	}
+}
+
+// Вода духовки: уровень есть, только если прибор описывает эти события.
+func TestOvenWater(t *testing.T) {
+	const fill = "Cooking.Oven.Event.Cavity.001.FillWaterContainer"
+	p, err := profile.Resolve("Oven", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	water := func(events []string, values map[string]any) (bool, string) {
+		t.Helper()
+		a := newProps(values)
+		a.desc.Events = events
+		d := &Device{ID: "oven", Profile: p, Appliance: a}
+		info, _ := json.Marshal(d.Info())
+		raw, _ := json.Marshal(d.States())
+		state := ""
+		for _, l := range []string{"low", "normal"} {
+			if strings.Contains(string(raw), `"instance":"food_level","value":"`+l+`"`) {
+				state = l
+			}
+		}
+		return strings.Contains(string(info), `"instance":"food_level"`), state
+	}
+	if has, state := water(nil, map[string]any{}); has || state != "" {
+		t.Errorf("прибор без этих событий: %v %q", has, state)
+	}
+	if has, state := water([]string{fill}, map[string]any{fill: "BSH.Common.EnumType.EventPresentState.Off"}); !has || state != "normal" {
+		t.Errorf("вода есть: %v %q", has, state)
+	}
+	if has, state := water([]string{fill}, map[string]any{fill: appliance.EventPresent}); !has || state != "low" {
+		t.Errorf("нужно долить: %v %q", has, state)
 	}
 }
