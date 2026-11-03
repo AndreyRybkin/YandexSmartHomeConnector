@@ -219,11 +219,16 @@ type Events struct {
 	// Button - событие прибора -> click, double_click или long_press. Ключ - имя события,
 	// шаблон с * (например *_IS_COMPLETE) или переход значения: состояние=значение.
 	Button map[string]string `yaml:"button,omitempty"`
-	// FoodLevel - события «заканчивается»: если есть хотя бы одно, уровень low.
+	// FoodLevel - события «заканчивается» сухого: соль, зёрна. Если есть хотя бы одно, уровень low.
 	FoodLevel []string `yaml:"food_level,omitempty"`
 	// FoodLevelIfKnown - такие же события, которые есть не у всех приборов типа: шлюз учитывает их,
 	// только если прибор сообщил, что умеет их присылать.
 	FoodLevelIfKnown []string `yaml:"food_level_if_known,omitempty"`
+	// WaterLevel и WaterLevelIfKnown - то же для жидкостей: вода, ополаскиватель.
+	WaterLevel        []string `yaml:"water_level,omitempty"`
+	WaterLevelIfKnown []string `yaml:"water_level_if_known,omitempty"`
+	// Empty - какие из этих событий значат «уже нет»: при них уровень empty, а не low.
+	Empty []string `yaml:"empty,omitempty"`
 }
 
 // Resolve собирает профиль прибора: встроенный для типа, затем переопределение
@@ -288,6 +293,19 @@ func (p *Profile) apply(o *Profile) {
 	}
 	if o.Events != nil {
 		e := *o.Events
+		// Редактор задаёт только основные списки: остальное наследуется, иначе правка кнопки
+		// отключила бы уровень воды духовки.
+		if p.Events != nil {
+			if e.FoodLevelIfKnown == nil {
+				e.FoodLevelIfKnown = p.Events.FoodLevelIfKnown
+			}
+			if e.WaterLevelIfKnown == nil {
+				e.WaterLevelIfKnown = p.Events.WaterLevelIfKnown
+			}
+			if e.Empty == nil {
+				e.Empty = p.Events.Empty
+			}
+		}
 		p.Events = &e
 	}
 }
@@ -580,7 +598,7 @@ func (c *Color) validate() error {
 
 // HasEvents сообщает, нужен ли прибору датчик событий.
 func (p *Profile) HasEvents() bool {
-	return p.Events != nil && (len(p.Events.Button) > 0 || len(p.Events.FoodLevel) > 0)
+	return p.Events != nil && (len(p.Events.Button) > 0 || len(p.Events.FoodLevel) > 0 || len(p.Events.WaterLevel) > 0)
 }
 
 // checkFormula проверяет пересчёт свойства: он только у float, convert - из Conversions и

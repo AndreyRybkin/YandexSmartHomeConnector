@@ -85,6 +85,8 @@ func waitingText(source string) string {
 		return "ждёт профиля прибора LG"
 	case config.SourceSmartThings:
 		return "ждёт описания SmartThings"
+	case config.SourcePolaris:
+		return "ждёт прибор Polaris на брокере MQTT"
 	}
 	return "ждёт данных облака Home Connect"
 }
@@ -174,11 +176,11 @@ func battery(dev alice.Device, id string) (float64, bool) {
 	return 0, false
 }
 
-// foodLow - датчик событий прибора сообщает, что что-то заканчивается: соль, вода, зёрна.
+// foodLow - прибор сообщает, что что-то заканчивается: соль, вода, зёрна.
 func foodLow(dev alice.Device) bool {
 	for _, st := range dev.States() {
 		for _, p := range st.Properties {
-			if sv, ok := p.State.(alice.StateValue); ok && p.Type == alice.PropEvent && sv.Instance == "food_level" && sv.Value == "low" {
+			if sv, ok := p.State.(alice.StateValue); ok && p.Type == alice.PropEvent && (sv.Instance == "food_level" || sv.Instance == "water_level") && (sv.Value == "low" || sv.Value == "empty") {
 				return true
 			}
 		}

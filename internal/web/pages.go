@@ -179,7 +179,7 @@ var sourceLabels = map[string]string{config.SourceDemo: "Демо-прибор �
 	config.SourceHomeConnectCloud: "Прибор из облака Home Connect", config.SourceHomeConnectLocal: "Прибор Home Connect в домашней сети",
 	config.SourceWLED: "Лента WLED в домашней сети", config.SourceThinQ: "Прибор LG из ThinQ",
 	config.SourceDeLonghi: "Кофемашина De'Longhi в домашней сети", config.SourceWebOS: "Телевизор LG webOS в домашней сети",
-	config.SourceSamsungTV: "Телевизор Samsung в домашней сети", config.SourceSmartThings: "Устройство из SmartThings"}
+	config.SourcePolaris: "Прибор Polaris на встроенном брокере MQTT", config.SourceSamsungTV: "Телевизор Samsung в домашней сети", config.SourceSmartThings: "Устройство из SmartThings"}
 
 func (s *Server) devicesPage(w http.ResponseWriter, r *http.Request, sess *session) {
 	// Ссылка «Добавить» со страницы «Подключения» передаёт haId прибора аккаунта.
@@ -194,6 +194,9 @@ func (s *Server) devicesPage(w http.ResponseWriter, r *http.Request, sess *sessi
 	}
 	if haID := r.URL.Query().Get("local_id"); haID != "" {
 		form = config.Device{Source: config.SourceHomeConnectLocal, HaID: haID}
+	}
+	if id := r.URL.Query().Get("polaris_id"); id != "" {
+		form = config.Device{Source: config.SourcePolaris, DeviceID: id, Name: "Чайник"}
 	}
 	if id := r.URL.Query().Get("thinq_id"); id != "" {
 		form = config.Device{Source: config.SourceThinQ, DeviceID: id, Location: r.URL.Query().Get("location")}
@@ -230,7 +233,7 @@ func (s *Server) renderDevices(w http.ResponseWriter, sess *session, status int,
 		Taken:   strings.Join(slices.Sorted(maps.Keys(cfg.Devices)), " "), RoomNames: roomNames(cfg),
 		Sources: plain([]string{config.SourceDemo, config.SourceHomeConnectCloud, config.SourceHomeConnectLocal,
 			config.SourceWLED, config.SourceThinQ, config.SourceDeLonghi, config.SourceWebOS, config.SourceSamsungTV,
-			config.SourceSmartThings}, form.Source, "", sourceLabels),
+			config.SourceSmartThings, config.SourcePolaris}, form.Source, "", sourceLabels),
 		DemoKinds: plain(appliance.DemoKinds, form.Demo, "", typeNames),
 		HaIDs:     s.haIDChoices(cfg, "", form.HaID),
 		ThinQIDs:  s.thinqChoices(cfg, "", form.DeviceID), CoffeeSerials: s.coffeeChoices(cfg, form.Serial),
@@ -601,7 +604,7 @@ func (s *Server) addDevice(w http.ResponseWriter, r *http.Request, sess *session
 		if d.Source != config.SourceDeLonghi {
 			d.Serial = ""
 		}
-		if d.Source != config.SourceThinQ && d.Source != config.SourceSmartThings {
+		if d.Source != config.SourceThinQ && d.Source != config.SourceSmartThings && d.Source != config.SourcePolaris {
 			d.DeviceID, d.Location = "", ""
 		}
 		if !tvSource(d.Source) {
@@ -989,7 +992,7 @@ func (s *Server) saveDevice(w http.ResponseWriter, r *http.Request, sess *sessio
 			d.Host = strings.TrimSpace(f.Get("host"))
 		case config.SourceWLED:
 			d.Host = strings.TrimSpace(f.Get("host"))
-		case config.SourceThinQ, config.SourceSmartThings:
+		case config.SourceThinQ, config.SourceSmartThings, config.SourcePolaris:
 			if deviceID := strings.TrimSpace(f.Get("device_id")); deviceID != "" {
 				d.DeviceID = deviceID
 			}
@@ -1939,7 +1942,7 @@ func (s *Server) lift(w http.ResponseWriter, r *http.Request, sess *session) {
 // propsSource - источник приборов без программ: всё, что они умеют, - записать свойство.
 func propsSource(source string) bool {
 	switch source {
-	case config.SourceThinQ, config.SourceSmartThings, config.SourceWebOS, config.SourceSamsungTV:
+	case config.SourceThinQ, config.SourceSmartThings, config.SourceWebOS, config.SourceSamsungTV, config.SourcePolaris:
 		return true
 	}
 	return false

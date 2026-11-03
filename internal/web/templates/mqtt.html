@@ -22,6 +22,9 @@
 {{range .Live.Failures}}<tr><td>{{.Time}}</td><td>{{.Remote}}</td><td>{{.User}}</td></tr>{{else}}<tr><td colspan="3">Неудачных входов нет.</td></tr>{{end}}
 </tbody></table></div>
 </section>
+{{with .Polaris}}<section class="field" id="polaris"><h2>Найдены приборы Polaris</h2>
+<div class="wrap"><table>{{range .}}<tr><td><code>{{.ID}}</code></td><td>{{.Label}}</td><td>{{if .Add}}<a class="button" href="/?polaris_id={{.ID}}#add">Добавить</a>{{end}}</td></tr>{{end}}</table></div>
+</section>{{end}}
 <form method="get" action="/mqtt" class="field"><label>Показывать топики, начинающиеся с <input name="topic" value="{{.Filter}}" maxlength="256" placeholder="polaris/"></label> <button>Показать</button>{{if .Filter}} <a href="/mqtt">Все топики</a>{{end}}</form>
 <section class="field" id="journal"><h2>Журнал сообщений</h2>
 <p class="muted">До 200 последних сообщений в памяти шлюза, новые первыми. Длинные значения обрезаны.</p>

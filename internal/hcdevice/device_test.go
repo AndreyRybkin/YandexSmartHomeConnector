@@ -392,35 +392,6 @@ func TestOvenCavityTemperature(t *testing.T) {
 	}
 }
 
-// Нет соли - low, как и «соль скоро закончится»; оба события Off - normal.
-func TestDishwasherFoodLevel(t *testing.T) {
-	const off, present = "BSH.Common.EnumType.EventPresentState.Off", appliance.EventPresent
-	level := func(values map[string]any) string {
-		t.Helper()
-		p, err := profile.Resolve("Dishwasher", nil, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		d := &Device{ID: "dish", Profile: p, Appliance: newProps(values)}
-		raw, _ := json.Marshal(d.States())
-		for _, l := range []string{"low", "normal"} {
-			if strings.Contains(string(raw), `"instance":"food_level","value":"`+l+`"`) {
-				return l
-			}
-		}
-		t.Fatalf("нет food_level: %s", raw)
-		return ""
-	}
-	if got := level(map[string]any{"Dishcare.Dishwasher.Event.SaltNearlyEmpty": off, "Dishcare.Dishwasher.Event.SaltLack": off}); got != "normal" {
-		t.Errorf("всё есть: %s", got)
-	}
-	for _, event := range []string{"SaltLack", "RinseAidLack", "SaltNearlyEmpty", "RinseAidNearlyEmpty"} {
-		if got := level(map[string]any{"Dishcare.Dishwasher.Event." + event: present}); got != "low" {
-			t.Errorf("%s: %s", event, got)
-		}
-	}
-}
-
 // Подсветка камеры: есть, если прибор описывает настройку и разрешает её менять.
 func TestOvenBacklight(t *testing.T) {
 	const light = "Cooking.Oven.Setting.Light.Cavity.001.Power"
@@ -467,11 +438,11 @@ func TestOvenWater(t *testing.T) {
 		raw, _ := json.Marshal(d.States())
 		state := ""
 		for _, l := range []string{"low", "normal"} {
-			if strings.Contains(string(raw), `"instance":"food_level","value":"`+l+`"`) {
+			if strings.Contains(string(raw), `"instance":"water_level","value":"`+l+`"`) {
 				state = l
 			}
 		}
-		return strings.Contains(string(info), `"instance":"food_level"`), state
+		return strings.Contains(string(info), `"instance":"water_level"`), state
 	}
 	if has, state := water(nil, map[string]any{}); has || state != "" {
 		t.Errorf("прибор без этих событий: %v %q", has, state)
@@ -502,5 +473,42 @@ func TestHistoryJournal(t *testing.T) {
 	}
 	if h := d.History(); len(h) != 3 || h[2].Key != saved.Key {
 		t.Fatalf("история: %+v", h)
+	}
+}
+
+// Посудомойка: соль - food_level, ополаскиватель - water_level, а «уже нет» - empty.
+func TestDishwasherLevels(t *testing.T) {
+	const present = appliance.EventPresent
+	p, err := profile.Resolve("Dishwasher", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := func(values map[string]any) string {
+		d := &Device{ID: "dish", Profile: p, Appliance: newProps(values)}
+		raw, _ := json.Marshal(d.States())
+		return string(raw)
+	}
+	has := func(raw, instance, value string) bool {
+		return strings.Contains(raw, `"instance":"`+instance+`","value":"`+value+`"`)
+	}
+	if raw := state(map[string]any{}); !has(raw, "food_level", "normal") || !has(raw, "water_level", "normal") {
+		t.Fatalf("всё есть: %s", raw)
+	}
+	if raw := state(map[string]any{"Dishcare.Dishwasher.Event.SaltNearlyEmpty": present}); !has(raw, "food_level", "low") || !has(raw, "water_level", "normal") {
+		t.Fatalf("соль кончается: %s", raw)
+	}
+	if raw := state(map[string]any{"Dishcare.Dishwasher.Event.SaltNearlyEmpty": present, "Dishcare.Dishwasher.Event.SaltLack": present}); !has(raw, "food_level", "empty") {
+		t.Fatalf("соли нет: %s", raw)
+	}
+	if raw := state(map[string]any{"Dishcare.Dishwasher.Event.RinseAidNearlyEmpty": present}); !has(raw, "water_level", "low") || !has(raw, "food_level", "normal") {
+		t.Fatalf("ополаскиватель кончается: %s", raw)
+	}
+	if raw := state(map[string]any{"Dishcare.Dishwasher.Event.RinseAidLack": present}); !has(raw, "water_level", "empty") {
+		t.Fatalf("ополаскивателя нет: %s", raw)
+	}
+	d := &Device{ID: "dish", Profile: p, Appliance: newProps(map[string]any{})}
+	info, _ := json.Marshal(d.Info())
+	if !strings.Contains(string(info), `"instance":"water_level","events":[{"value":"empty"},{"value":"low"},{"value":"normal"}]`) {
+		t.Fatalf("устройство: %s", info)
 	}
 }

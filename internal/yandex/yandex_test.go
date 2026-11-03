@@ -145,7 +145,7 @@ func TestDevicesList(t *testing.T) {
 		`"id":"oven.events","name":"oven - события","room":"Кухня","type":"devices.types.sensor.button"`,
 		`"instance":"button","events":[{"value":"click"},{"value":"double_click"}]`,
 		`"instance":"dishwashing"`,
-		`"instance":"food_level","events":[{"value":"low"},{"value":"normal"}]`,
+		`"instance":"food_level","events":[{"value":"empty"},{"value":"low"},{"value":"normal"}]`,
 	} {
 		if !bytes.Contains(raw, []byte(want)) {
 			t.Errorf("нет %s", want)
@@ -165,7 +165,7 @@ func TestQuery(t *testing.T) {
 		`{"type":"devices.capabilities.range","state":{"instance":"temperature","value":180}}`,
 		`{"type":"devices.properties.event","state":{"instance":"open","value":"closed"}}`,
 		`{"type":"devices.properties.float","state":{"instance":"temperature","value":22}}`,
-		`{"id":"dish.events","properties":[{"type":"devices.properties.event","state":{"instance":"food_level","value":"normal"}}]}`,
+		`{"id":"dish.events","properties":[{"type":"devices.properties.event","state":{"instance":"food_level","value":"normal"}},{"type":"devices.properties.event","state":{"instance":"water_level","value":"normal"}}]}`,
 		`{"id":"nope","error_code":"DEVICE_NOT_FOUND"}`,
 	} {
 		if !bytes.Contains(raw, []byte(want)) {

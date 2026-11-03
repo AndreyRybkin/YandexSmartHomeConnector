@@ -106,7 +106,7 @@ var lgBuiltin = map[string]*Profile{
 		YandexType: "dishwasher",
 		OnOff:      "power",
 		Power:      lgRun("operation.dishWasherOperationMode", "STOP", lgIdle),
-		Properties: []Property{lgDoor, {Type: "event", Instance: "food_level", Status: "dishWashingStatus.rinseRefill",
+		Properties: []Property{lgDoor, {Type: "event", Instance: "water_level", Status: "dishWashingStatus.rinseRefill",
 			Values: map[string]string{"true": "low", "false": "normal"}}},
 		Events: lgEvents,
 	},

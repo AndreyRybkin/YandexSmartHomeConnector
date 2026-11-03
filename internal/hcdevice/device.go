@@ -374,19 +374,41 @@ func (d *Device) Info() []alice.DeviceInfo {
 			sensor.Properties = append(sensor.Properties, alice.Capability{Type: alice.PropEvent, Retrievable: true, Reportable: true,
 				Parameters: alice.EventParams{Instance: "button", Events: alice.Items(values)}})
 		}
-		if len(foodKeys(p.Events, &desc)) > 0 {
+		for _, l := range levels(p.Events, &desc) {
+			values := []string{"low", "normal"}
+			if slices.ContainsFunc(l.keys, func(k string) bool { return slices.Contains(p.Events.Empty, k) }) {
+				values = []string{"empty", "low", "normal"}
+			}
 			sensor.Properties = append(sensor.Properties, alice.Capability{Type: alice.PropEvent, Retrievable: true, Reportable: true,
-				Parameters: alice.EventParams{Instance: "food_level", Events: alice.Items([]string{"low", "normal"})}})
+				Parameters: alice.EventParams{Instance: l.instance, Events: alice.Items(values)}})
 		}
 		out = append(out, sensor)
 	}
 	return out
 }
 
-// foodKeys - события «заканчивается» этого прибора: общие для типа и те, что прибор описывает сам.
-func foodKeys(e *profile.Events, desc *appliance.Description) []string {
-	out := e.FoodLevel
-	for _, k := range e.FoodLevelIfKnown {
+// level - свойство уровня датчика и события «заканчивается», которые его задают.
+type level struct {
+	instance string
+	keys     []string
+}
+
+// levels - уровни этого прибора: сухое и жидкости.
+func levels(e *profile.Events, desc *appliance.Description) []level {
+	var out []level
+	if keys := knownKeys(e.FoodLevel, e.FoodLevelIfKnown, desc); len(keys) > 0 {
+		out = append(out, level{"food_level", keys})
+	}
+	if keys := knownKeys(e.WaterLevel, e.WaterLevelIfKnown, desc); len(keys) > 0 {
+		out = append(out, level{"water_level", keys})
+	}
+	return out
+}
+
+// knownKeys - события «заканчивается» этого прибора: общие для типа и те, что прибор описывает сам.
+func knownKeys(always, ifKnown []string, desc *appliance.Description) []string {
+	out := always
+	for _, k := range ifKnown {
 		if slices.Contains(desc.Events, k) {
 			out = append(slices.Clip(out), k)
 		}
@@ -612,14 +634,19 @@ func (d *Device) sensorState(st *appliance.State, button string) alice.DeviceSta
 		ds.Properties = append(ds.Properties, alice.CapState{Type: alice.PropEvent, State: alice.StateValue{Instance: "button", Value: button}})
 	}
 	desc := d.Appliance.Describe()
-	if keys := foodKeys(e, &desc); len(keys) > 0 {
-		level := "normal"
-		for _, key := range keys {
-			if st.Values[key] == appliance.EventPresent {
-				level = "low"
+	for _, l := range levels(e, &desc) {
+		value := "normal"
+		for _, key := range l.keys {
+			if st.Values[key] != appliance.EventPresent {
+				continue
 			}
+			if slices.Contains(e.Empty, key) {
+				value = "empty"
+				break
+			}
+			value = "low"
 		}
-		ds.Properties = append(ds.Properties, alice.CapState{Type: alice.PropEvent, State: alice.StateValue{Instance: "food_level", Value: level}})
+		ds.Properties = append(ds.Properties, alice.CapState{Type: alice.PropEvent, State: alice.StateValue{Instance: l.instance, Value: value}})
 	}
 	return ds
 }

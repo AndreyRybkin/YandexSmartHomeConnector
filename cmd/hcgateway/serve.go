@@ -61,6 +61,7 @@ func serve(ctx context.Context, configPath string, log *slog.Logger) error {
 			return c.MQTT.Username, c.MQTT.Password
 		}}, state, log)
 		ui.AttachBroker(broker)
+		gw.Polaris.Attach(broker)
 	}
 	servers := []*http.Server{newServer(cfg.Listen, web.Handler(ui, gw.Handler()))}
 	metricsAddr := "закрыт: не задан metrics.token"

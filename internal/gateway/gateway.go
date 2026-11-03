@@ -29,6 +29,7 @@ import (
 	"hcgateway/internal/hcsource"
 	"hcgateway/internal/linking"
 	"hcgateway/internal/metrics"
+	"hcgateway/internal/polaris"
 	"hcgateway/internal/profile"
 	"hcgateway/internal/samsungtv"
 	"hcgateway/internal/smartthings"
@@ -62,6 +63,8 @@ type Gateway struct {
 	DeLonghi *delonghi.Account
 	// SmartThings - устройства из облака SmartThings.
 	SmartThings *smartthings.Cloud
+	// Polaris - приборы Polaris на встроенном брокере MQTT.
+	Polaris *polaris.Hub
 	// Discovery - поиск приборов в домашней сети.
 	Discovery *discovery.Search
 	// Keys - загрузка ключей приборов Home Connect со страницы интерфейса.
@@ -131,6 +134,7 @@ func New(dataDir string, tokens *linking.Store, login linking.Login, log *slog.L
 		ThinQ:       lg,
 		DeLonghi:    dl,
 		SmartThings: st,
+		Polaris:     polaris.New(filepath.Join(dataDir, "polaris"), log),
 		Discovery:   discovery.New(nil),
 		Keys:        hccloud.NewFlow(dataDir, cloud.API, cloud.LoggedIn, log, hccloud.EU, hccloud.NA, hccloud.China),
 		CheckLocal: func(ctx context.Context, haID, host string) error {
@@ -220,6 +224,8 @@ func (g *Gateway) watchCloud(ctx context.Context) {
 			g.reapply("LG ThinQ")
 		case <-g.SmartThings.Changes():
 			g.reapply("SmartThings")
+		case <-g.Polaris.Changes():
+			g.reapply("Polaris")
 		case <-g.tvChanges:
 			g.reapply("телевизор")
 		}
@@ -354,6 +360,10 @@ func (g *Gateway) build(cfg *config.Config, id string, dc config.Device, prev *b
 		return nil, errWaiting
 	}
 	forType := cfg.Profiles[haType]
+	// Тип, который шлюз сам не знает, ждёт своего профиля: иначе один новый прибор сломал бы все настройки.
+	if dc.Source == config.SourcePolaris && profile.BuiltinProfile(haType) == nil && forType == nil && dc.Profile == nil {
+		return nil, errWaiting
+	}
 	if prev != nil && a == prev.appliance && sameDevice(prev.conf, dc) && reflect.DeepEqual(prev.typeProfile, forType) {
 		return prev, nil
 	}
@@ -408,6 +418,8 @@ func manufacturer(source string, a appliance.Appliance) string {
 		return "LG"
 	case config.SourceDeLonghi:
 		return "De'Longhi"
+	case config.SourcePolaris:
+		return "Polaris"
 	case config.SourceSamsungTV:
 		return "Samsung"
 	case config.SourceSmartThings:
@@ -443,6 +455,8 @@ func (g *Gateway) newAppliance(id string, dc config.Device) (appliance.Appliance
 			Dir: filepath.Join(g.dataDir, "samsung-tv")}, g.log)
 	case config.SourceSmartThings:
 		return g.SmartThings.Appliance(dc.DeviceID, dc.Location), nil
+	case config.SourcePolaris:
+		return g.Polaris.Appliance(dc.DeviceID), nil
 	}
 	return nil, fmt.Errorf("источник %s не поддерживается", dc.Source)
 }

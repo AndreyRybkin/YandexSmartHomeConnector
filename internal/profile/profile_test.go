@@ -297,14 +297,24 @@ func TestBuiltinEventNames(t *testing.T) {
 			t.Errorf("%s: %q", event, got)
 		}
 	}
-	if !slices.Contains(oven.FoodLevelIfKnown, "Cooking.Oven.Event.Cavity.001.FillWaterContainer") ||
-		!slices.Contains(oven.FoodLevelIfKnown, "Cooking.Oven.Event.Cavity.001.EmptyWaterContainer") || len(oven.FoodLevel) != 0 {
+	if !slices.Contains(oven.WaterLevelIfKnown, "Cooking.Oven.Event.Cavity.001.FillWaterContainer") ||
+		!slices.Contains(oven.WaterLevelIfKnown, "Cooking.Oven.Event.Cavity.001.EmptyWaterContainer") || len(oven.FoodLevelIfKnown) != 0 {
 		t.Errorf("вода духовки: %+v", oven)
 	}
-	food := BuiltinProfile("Dishwasher").Events.FoodLevel
-	for _, event := range []string{"SaltNearlyEmpty", "RinseAidNearlyEmpty", "SaltLack", "RinseAidLack"} {
-		if !slices.Contains(food, "Dishcare.Dishwasher.Event."+event) {
+	dish := BuiltinProfile("Dishwasher").Events
+	for _, event := range []string{"SaltNearlyEmpty", "SaltLack"} {
+		if !slices.Contains(dish.FoodLevel, "Dishcare.Dishwasher.Event."+event) {
 			t.Errorf("нет %s", event)
 		}
+	}
+	for _, event := range []string{"RinseAidNearlyEmpty", "RinseAidLack"} {
+		if !slices.Contains(dish.WaterLevel, "Dishcare.Dishwasher.Event."+event) {
+			t.Errorf("нет %s", event)
+		}
+	}
+	// Правка основных списков не отключает то, чего нет в редакторе.
+	merged := Merge(BuiltinProfile("Oven"), &Profile{Events: &Events{Button: map[string]string{"x": "click"}}})
+	if len(merged.Events.WaterLevelIfKnown) != 2 {
+		t.Errorf("уровень воды духовки пропал: %+v", merged.Events)
 	}
 }

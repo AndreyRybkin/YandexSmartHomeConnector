@@ -107,14 +107,25 @@ func mapRows(p *profile.Profile, st *appliance.State, dev alice.Device) []mapRow
 			out = append(out, mapRow{Key: k, Label: short(k), Alice: itemLabel(alice.PropEvent, "button"),
 				Value: nameOr(eventValueNames, e.Button[k]), Section: "events"})
 		}
-		for _, k := range e.FoodLevel {
-			out = append(out, mapRow{Key: k, Label: short(k), Alice: itemLabel(alice.PropEvent, "food_level"), Value: "низкий", Section: "events"})
-		}
-		for _, k := range e.FoodLevelIfKnown {
-			if _, ok := st.Values[k]; ok {
-				out = append(out, mapRow{Key: k, Label: short(k), Alice: itemLabel(alice.PropEvent, "food_level"), Value: "низкий", Section: "events"})
+		level := func(instance string, always, ifKnown []string) {
+			row := func(k string) {
+				value := "низкий"
+				if slices.Contains(e.Empty, k) {
+					value = "пусто"
+				}
+				out = append(out, mapRow{Key: k, Label: short(k), Alice: itemLabel(alice.PropEvent, instance), Value: value, Section: "events"})
+			}
+			for _, k := range always {
+				row(k)
+			}
+			for _, k := range ifKnown {
+				if _, ok := st.Values[k]; ok {
+					row(k)
+				}
 			}
 		}
+		level("food_level", e.FoodLevel, e.FoodLevelIfKnown)
+		level("water_level", e.WaterLevel, e.WaterLevelIfKnown)
 	}
 	return out
 }

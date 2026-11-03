@@ -284,3 +284,44 @@ func TestMQTTPage(t *testing.T) {
 		t.Fatalf("неверные сообщения дошли до брокера: %+v", st.Journal)
 	}
 }
+
+// Чайник Polaris: без пароля брокера не добавляется, а с паролем ждёт прибор, и на странице об этом сказано.
+func TestPolarisDevice(t *testing.T) {
+	f := newFixture(t, "")
+	f.writeUser(testPassword)
+	f.login()
+	add := func() url.Values {
+		return url.Values{"name": {"Чайник"}, "source": {"polaris"}, "device_id": {"aabbccddeeff"}}
+	}
+	f.get("/")
+	if status, body, _ := f.post("/devices", add()); status == http.StatusSeeOther || !strings.Contains(body, "создайте пароль на странице MQTT") {
+		t.Fatalf("прибор без пароля брокера: %d", status)
+	}
+	if status, _, _ := f.post("/mqtt/password", url.Values{}); status != http.StatusSeeOther {
+		t.Fatalf("пароль: %d", status)
+	}
+	if _, body := f.get("/?polaris_id=aabbccddeeff"); !strings.Contains(body, "aabbccddeeff") {
+		t.Fatal("форма добавления без идентификатора")
+	}
+	if status, _, _ := f.post("/devices", add()); status != http.StatusSeeOther {
+		t.Fatalf("добавление: %d", status)
+	}
+	var id string
+	for k, d := range f.config().Devices {
+		if d.DeviceID == "aabbccddeeff" {
+			id = k
+		}
+	}
+	if id == "" {
+		t.Fatal("прибор не сохранён")
+	}
+	if !f.gw.Waiting(id) {
+		t.Fatal("прибор не ждёт данных")
+	}
+	if _, body := f.get("/devices/" + id); !strings.Contains(body, "Шлюз ещё не знает этот прибор Polaris") {
+		t.Fatal("на странице нет объяснения")
+	}
+	if _, body := f.get("/"); !strings.Contains(body, "ждёт прибор Polaris") {
+		t.Fatal("на плитке нет причины")
+	}
+}

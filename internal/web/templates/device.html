@@ -4,7 +4,7 @@
 <h1>{{.Conf.Name}} <span class="tech">{{.ID}}</span></h1>
 <p class="state" data-online aria-live="polite"><span class="chip {{.Head.Tone}}">{{.Head.Text}}</span>{{with .Head.Notice}}<span class="chip warn">{{.}}</span>{{end}}</p>
 </div></div>
-{{if .Waiting}}{{if eq .Source "thinq"}}<p class="notice">Профиль прибора LG ещё не загружен, поэтому в Алисе прибора пока нет. Шлюз загрузит профиль сам, когда облако LG доступно; загрузить его заново можно кнопкой «Обновить список» на странице «Подключения».</p>{{else if eq .Source "smartthings"}}<p class="notice">SmartThings ещё не описал устройство, поэтому в Алисе его пока нет. Войдите в SmartThings и обновите список устройств на странице «Подключения».</p>{{else}}<p class="notice">Облако Home Connect ещё не сообщило тип прибора, поэтому в Алисе его пока нет. Войдите в Home Connect на странице «Подключения»: прибор появится, когда облако его опишет.</p>{{end}}{{end}}
+{{if .Waiting}}{{if eq .Source "polaris"}}<p class="notice">Шлюз ещё не знает этот прибор Polaris, поэтому в Алисе его пока нет. Включите прибор и проверьте на странице MQTT, что он подключился к брокеру. Если тип незнакомый, задайте свой профиль.</p>{{else if eq .Source "thinq"}}<p class="notice">Профиль прибора LG ещё не загружен, поэтому в Алисе прибора пока нет. Шлюз загрузит профиль сам, когда облако LG доступно; загрузить его заново можно кнопкой «Обновить список» на странице «Подключения».</p>{{else if eq .Source "smartthings"}}<p class="notice">SmartThings ещё не описал устройство, поэтому в Алисе его пока нет. Войдите в SmartThings и обновите список устройств на странице «Подключения».</p>{{else}}<p class="notice">Облако Home Connect ещё не сообщило тип прибора, поэтому в Алисе его пока нет. Войдите в Home Connect на странице «Подключения»: прибор появится, когда облако его опишет.</p>{{end}}{{end}}
 <nav class="tabs" data-tabs{{with .Tab}} data-active="{{.}}"{{end}}{{with .Focus}} data-focus="{{.}}"{{end}}>
 <a href="#tab-device">Прибор</a>
 {{if .State}}<a href="#tab-state">Состояние и команды</a>{{end}}
@@ -22,6 +22,7 @@
 <label>Значок <select name="icon">{{template "opts" .Icons}}</select></label>
 <p>Источник: {{source .Source}}{{with .Conf.HaID}}, haId {{.}}{{end}}{{with .Conf.DeviceID}}, deviceId {{.}}{{end}}{{with .Conf.Location}}, {{if eq $p.Data.Source "smartthings"}}компонент{{else}}камера{{end}} {{.}}{{end}}</p>
 {{if eq .Source "demo"}}<label>Тип демо-прибора <select name="demo">{{template "opts" .DemoKinds}}</select> <span class="muted">другой тип сбрасывает состояние прибора</span></label>{{end}}
+{{if eq .Source "polaris"}}<label>Прибор Polaris <input name="device_id" value="{{.Conf.DeviceID}}" maxlength="129"></label>{{end}}
 {{if eq .Source "thinq"}}<label>Прибор аккаунта LG {{if .ThinQIDs}}<select name="device_id">{{template "opts" .ThinQIDs}}</select>{{else}}<input name="device_id" value="{{.Conf.DeviceID}}" maxlength="128">{{end}}</label>
 <label>Камера <input name="location" value="{{.Conf.Location}}" maxlength="32"> <span class="muted">пусто - прибор целиком</span></label>{{end}}
 {{if eq .Source "wled"}}<label>Адрес ленты в домашней сети <input name="host" value="{{.Conf.Host}}" maxlength="261" required></label>{{end}}

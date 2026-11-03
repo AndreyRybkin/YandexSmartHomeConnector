@@ -30,8 +30,10 @@ func init() {
 		}}},
 		DefaultProgram: DeLonghiRecipePrefix + "6",
 		Events: &Events{
-			Button:    map[string]string{"DeLonghi.Event.BeverageFinished": "click", "DeLonghi.Event.LoginRequired": "long_press"},
-			FoodLevel: []string{"DeLonghi.Alarm.TankLevel", "DeLonghi.Alarm.NoCoffee"},
+			Button:     map[string]string{"DeLonghi.Event.BeverageFinished": "click", "DeLonghi.Event.LoginRequired": "long_press"},
+			FoodLevel:  []string{"DeLonghi.Alarm.NoCoffee"},
+			WaterLevel: []string{"DeLonghi.Alarm.TankLevel"},
+			Empty:      []string{"DeLonghi.Alarm.NoCoffee"},
 		},
 	}
 }

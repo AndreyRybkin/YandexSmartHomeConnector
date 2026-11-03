@@ -60,11 +60,15 @@ const (
 	SourceWebOS            = "webos"
 	SourceSamsungTV        = "samsung-tv"
 	SourceSmartThings      = "smartthings"
+	SourcePolaris          = "polaris"
 )
 
 // Sources - допустимые значения source.
 var Sources = []string{SourceDemo, SourceHomeConnectCloud, SourceHomeConnectLocal, SourceWLED, SourceThinQ, SourceDeLonghi,
-	SourceWebOS, SourceSamsungTV, SourceSmartThings}
+	SourceWebOS, SourceSamsungTV, SourceSmartThings, SourcePolaris}
+
+// polarisIDRe - идентификатор прибора Polaris из топика: <mac> или, у старых прошивок, <тип>/<id>.
+var polarisIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}(/[A-Za-z0-9_-]{1,64})?$`)
 
 // haIDRe - допустимый haId: он уходит в адреса облака и в имена файлов.
 var haIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
@@ -556,7 +560,7 @@ var hostSources = []string{SourceWLED, SourceHomeConnectLocal, SourceDeLonghi, S
 // SmartThings: одна пара - у одного прибора. Компонент main шлюз хранит пустым: это то же
 // устройство, что без компонента.
 func checkCloudDevice(id string, d *Device, used map[string]string) error {
-	lg, st := d.Source == SourceThinQ, d.Source == SourceSmartThings
+	lg, st, pl := d.Source == SourceThinQ, d.Source == SourceSmartThings, d.Source == SourcePolaris
 	if st && d.Location == "main" {
 		d.Location = ""
 	}
@@ -566,17 +570,21 @@ func checkCloudDevice(id string, d *Device, used map[string]string) error {
 		return fmt.Errorf("devices.%s.device_id: нужно от 1 до 128 латинских букв, цифр, _ и -", id)
 	case st && !stIDRe.MatchString(d.DeviceID):
 		return fmt.Errorf("devices.%s.device_id: нужен deviceId устройства SmartThings: до 64 латинских букв, цифр и -", id)
-	case !lg && !st && d.DeviceID != "":
+	case pl && !polarisIDRe.MatchString(d.DeviceID):
+		return fmt.Errorf("devices.%s.device_id: нужен идентификатор прибора Polaris из топика: латинские буквы, цифры, _ и -", id)
+	case pl && d.Location != "":
+		return fmt.Errorf("devices.%s.location: у прибора Polaris камер нет", id)
+	case !lg && !st && !pl && d.DeviceID != "":
 		return fmt.Errorf("devices.%s.device_id: задаётся только для источников %s и %s", id, SourceThinQ, SourceSmartThings)
-	case !lg && !st && d.Location != "":
+	case !lg && !st && !pl && d.Location != "":
 		return fmt.Errorf("devices.%s.location: задаётся только для источников %s и %s", id, SourceThinQ, SourceSmartThings)
 	case lg && d.Location != "" && !locationRe.MatchString(d.Location):
 		return fmt.Errorf("devices.%s.location: нужно от 1 до 32 латинских букв, цифр и _", id)
 	case st && d.Location != "" && !componentRe.MatchString(d.Location):
 		return fmt.Errorf("devices.%s.location: компонент - до 64 латинских букв, цифр, _, . и -", id)
-	case (lg || st) && used[key] != "":
+	case (lg || st || pl) && used[key] != "":
 		return fmt.Errorf("devices.%s: прибор %s %s уже у прибора %s", id, d.DeviceID, d.Location, used[key])
-	case lg || st:
+	case lg || st || pl:
 		used[key] = id
 	}
 	return nil
@@ -792,6 +800,10 @@ func (c *Config) ValidateServe() error {
 			}
 		case SourceDeLonghi:
 			// Вход в аккаунт De'Longhi - на странице «Подключения»: без него машина не на связи.
+		case SourcePolaris:
+			if c.MQTT.Password == "" {
+				return fmt.Errorf("devices.%s: источнику %s нужен встроенный брокер: создайте пароль на странице MQTT", id, d.Source)
+			}
 		case SourceWebOS, SourceSamsungTV:
 			// Разрешение телевизор спрашивает на экране при первом подключении.
 		case SourceSmartThings:

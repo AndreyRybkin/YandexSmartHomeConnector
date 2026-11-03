@@ -113,6 +113,12 @@ type Status struct {
 	Saved, Unsaved int
 }
 
+// Message - сообщение от клиента брокера. Сохранённые сообщения из базы сюда не попадают.
+type Message struct {
+	Client, Topic string
+	Payload       []byte
+}
+
 // Broker - встроенный брокер.
 type Broker struct {
 	conf  Config
@@ -121,6 +127,9 @@ type Broker struct {
 	srv   *mqtt.Server
 	// wait - сколько соединение может молчать до входа.
 	wait time.Duration
+	// onMessage и onGone - кому передавать сообщения и отключения; задаются до Run.
+	onMessage func(Message)
+	onGone    func(client string)
 
 	mu       sync.Mutex
 	open     bool
@@ -183,6 +192,16 @@ func (b *Broker) start() error {
 	b.open = true
 	b.mu.Unlock()
 	return nil
+}
+
+// OnMessage задаёт, кому передавать сообщения клиентов. Вызывается до Run.
+func (b *Broker) OnMessage(fn func(Message)) {
+	b.onMessage = fn
+}
+
+// OnClientGone задаёт, кому сообщать об отключении клиента. Вызывается до Run.
+func (b *Broker) OnClientGone(fn func(client string)) {
+	b.onGone = fn
 }
 
 // Status - состояние брокера; топики с prefix, если он задан.
@@ -307,6 +326,9 @@ func (h *hook) OnDisconnect(cl *mqtt.Client, _ error, _ bool) {
 	n := len(h.b.clients)
 	h.b.mu.Unlock()
 	metrics.MQTTClients(n)
+	if h.b.onGone != nil {
+		h.b.onGone(cl.ID)
+	}
 }
 
 func (h *hook) OnPublished(cl *mqtt.Client, pk packets.Packet) {
@@ -317,6 +339,9 @@ func (h *hook) OnPublished(cl *mqtt.Client, pk packets.Packet) {
 	metrics.MQTTMessage(In)
 	h.b.remember(Entry{Dir: In, Client: cl.ID, Topic: pk.TopicName, Payload: shown(pk.Payload), QoS: pk.FixedHeader.Qos,
 		Retain: pk.FixedHeader.Retain, PayloadCut: len(pk.Payload) > maxShown})
+	if h.b.onMessage != nil {
+		h.b.onMessage(Message{Client: cl.ID, Topic: pk.TopicName, Payload: pk.Payload})
+	}
 }
 
 // OnRetainMessage передаёт сохранённое сообщение в базу. Пустое сообщение стирает топик.

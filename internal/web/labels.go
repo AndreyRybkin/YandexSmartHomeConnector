@@ -11,6 +11,7 @@ import (
 	"hcgateway/internal/config"
 	"hcgateway/internal/delonghi"
 	"hcgateway/internal/hcdevice"
+	"hcgateway/internal/polaris"
 	"hcgateway/internal/profile"
 )
 
@@ -29,6 +30,7 @@ var sourceNames = map[string]string{
 	config.SourceWebOS:            "телевизор LG",
 	config.SourceSamsungTV:        "телевизор Samsung",
 	config.SourceSmartThings:      "SmartThings",
+	config.SourcePolaris:          "Polaris",
 }
 
 // typeNames - типы приборов Home Connect, LG ThinQ и De'Longhi.
@@ -39,7 +41,7 @@ var typeNames = map[string]string{
 	"CoffeeMaker": "Кофемашина", "Hob": "Варочная панель", "Hood": "Вытяжка", "CleaningRobot": "Робот-пылесос",
 	"CookProcessor": "Кухонный процессор", "WarmingDrawer": "Шкаф для подогрева",
 	"AirConditioner": "Кондиционер", "Microwave": "Микроволновая печь",
-	profile.DeLonghiType: "Кофемашина De'Longhi", profile.LGTVType: "Телевизор LG", profile.SamsungTVType: "Телевизор Samsung",
+	profile.PolarisKettleType: "Чайник Polaris", profile.DeLonghiType: "Кофемашина De'Longhi", profile.LGTVType: "Телевизор LG", profile.SamsungTVType: "Телевизор Samsung",
 
 	"DEVICE_AIR_CONDITIONER": "Кондиционер LG", "DEVICE_AIR_PURIFIER": "Очиститель воздуха LG",
 	"DEVICE_AIR_PURIFIER_FAN": "Очиститель-вентилятор LG", "DEVICE_CEILING_FAN": "Потолочный вентилятор LG",
@@ -186,6 +188,10 @@ var stateNames = map[string]string{
 
 	"POWER_OFF": "выключен", "INITIAL": "ожидание", "DETECTING": "определяет загрузку", "RUNNING": "работает",
 	"RINSING": "полоскание", "SPINNING": "отжим", "DRYING": "сушка", "COOLING": "охлаждение", "PAUSE": "пауза",
+	polaris.KeyMode + "=0": "выключен", polaris.KeyMode + "=1": "кипячение", polaris.KeyMode + "=2": "кипячение с удержанием",
+	polaris.KeyMode + "=3": "разогрев", polaris.KeyMode + "=4": "разогрев с удержанием", polaris.KeyMode + "=5": "IQ-кипячение",
+	polaris.KeyMode + "=6": "чайная церемония",
+
 	"RESERVED": "отложенный старт", "END": "работа закончена", "ERROR": "ошибка",
 	"COOL_DOWN": "охлаждение", "RINSE_HOLD": "ожидание после полоскания", "REFRESHING": "освежение", "SLEEP": "спящий режим",
 }
@@ -490,7 +496,7 @@ func named(list []string, cur, blank string, names map[string]string) []choice {
 // typeIcons - значок прибора по типу Home Connect, LG или De'Longhi.
 var typeIcons = map[string]string{
 	"Oven": "oven", "Dishwasher": "dishwasher", "Washer": "washer", "WasherDryer": "washer", "Dryer": "dryer",
-	"CoffeeMaker": "coffee", profile.DeLonghiType: "coffee", "Hood": "hood", "Refrigerator": "fridge",
+	"CoffeeMaker": "coffee", profile.DeLonghiType: "coffee", profile.PolarisKettleType: "coffee", "Hood": "hood", "Refrigerator": "fridge",
 	"FridgeFreezer": "fridge", "Freezer": "fridge", "WineCooler": "fridge", "CleaningRobot": "robot",
 	"Microwave": "oven", "WarmingDrawer": "oven", "AirConditioner": "ac",
 	"DEVICE_WASHER": "washer", "DEVICE_WASHTOWER": "washer", "DEVICE_WASHTOWER_WASHER": "washer",

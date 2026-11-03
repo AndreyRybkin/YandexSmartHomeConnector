@@ -355,7 +355,7 @@ func sameField(a, b *profile.Profile, field string) bool {
 		if len(n.Properties) == 0 {
 			n.Properties = nil
 		}
-		if n.Events != nil && len(n.Events.Button) == 0 && len(n.Events.FoodLevel) == 0 {
+		if n.Events != nil && len(n.Events.Button) == 0 && len(n.Events.FoodLevel) == 0 && len(n.Events.WaterLevel) == 0 {
 			n.Events = nil
 		}
 		return n
@@ -546,6 +546,11 @@ func parseField(field string, form url.Values) (*profile.Profile, error) {
 				p.Events.FoodLevel = append(p.Events.FoodLevel, v)
 			}
 		}
+		for j := 0; form.Has(fk("w", j)); j++ {
+			if v := get(fk("w", j)); v != "" && !slices.Contains(p.Events.WaterLevel, v) {
+				p.Events.WaterLevel = append(p.Events.WaterLevel, v)
+			}
+		}
 	}
 	return p, nil
 }
@@ -717,9 +722,10 @@ type editorView struct {
 	Color                            colorView
 	Properties                       []propertyView
 	// Units - единицы Яндекса для подсказок у свойства.
-	Units     []choice
-	Buttons   []row
-	FoodLevel []row
+	Units      []choice
+	Buttons    []row
+	FoodLevel  []row
+	WaterLevel []row
 }
 
 // buildEditor собирает редактор. draft - введённое переопределение, которое не сохранилось
@@ -794,6 +800,7 @@ func buildEditor(t *editTarget, csrf, version string, draft *profile.Profile, se
 	if eff.Events != nil {
 		events = append(events, slices.Collect(maps.Keys(eff.Events.Button))...)
 		events = append(events, eff.Events.FoodLevel...)
+		events = append(events, eff.Events.WaterLevel...)
 	}
 	v.Programs, v.NumericOptions, v.Settings = t.keyChoices(uniq(programs)), t.keyChoices(uniq(numeric)), t.keyChoices(uniq(settings))
 	v.Statuses, v.Events = t.keyChoices(uniq(statuses)), t.keyChoices(uniq(events))
@@ -955,9 +962,9 @@ func buildEditor(t *editTarget, csrf, version string, draft *profile.Profile, se
 	}
 
 	var button map[string]string
-	var food []string
+	var food, water []string
 	if eff.Events != nil {
-		button, food = eff.Events.Button, eff.Events.FoodLevel
+		button, food, water = eff.Events.Button, eff.Events.FoodLevel, eff.Events.WaterLevel
 	}
 	for j, k := range slices.Sorted(maps.Keys(button)) {
 		v.Buttons = append(v.Buttons, row{Index: j, Key: k, Value: button[k], Choices: named(profile.ButtonValues, button[k], "-", eventValueNames)})
@@ -970,6 +977,10 @@ func buildEditor(t *editTarget, csrf, version string, draft *profile.Profile, se
 		v.FoodLevel = append(v.FoodLevel, row{Index: j, Key: k})
 	}
 	v.FoodLevel = append(v.FoodLevel, blank(len(v.FoodLevel), blankRows)...)
+	for j, k := range water {
+		v.WaterLevel = append(v.WaterLevel, row{Index: j, Key: k})
+	}
+	v.WaterLevel = append(v.WaterLevel, blank(len(v.WaterLevel), blankRows)...)
 	return v
 }
 

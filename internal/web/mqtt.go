@@ -8,6 +8,7 @@ import (
 
 	"hcgateway/internal/config"
 	"hcgateway/internal/mqttbroker"
+	"hcgateway/internal/polaris"
 )
 
 // Страница /mqtt: брокер встроен в шлюз, и без неё не понять, почему прибор не подключается и что
@@ -25,6 +26,15 @@ type mqttView struct {
 	Stream string
 	Live   mqttSnapshot
 	Send   mqttMessage
+	// Polaris - приборы Polaris, которых ещё нет в настройках.
+	Polaris []mqttPolarisRow
+}
+
+// mqttPolarisRow - найденный прибор Polaris.
+type mqttPolarisRow struct {
+	ID, Label string
+	// Add - шлюз знает этот тип и может показать его в Алисе.
+	Add bool
 }
 
 // mqttMessage - сообщение из формы отправки.
@@ -137,10 +147,33 @@ func (s *Server) mqttPage(w http.ResponseWriter, r *http.Request, sess *session)
 	st := s.mqttStatus(filter)
 	v := mqttView{Listen: cfg.MQTT.Listen, Username: cfg.MQTT.Username, Password: cfg.MQTT.Password, Open: st.Open, Err: st.Err,
 		Pending: cfg.MQTT.Password != "" && !st.Open && st.Err == "", Filter: filter, Stream: "/mqtt/stream", Live: mqttSnap(st), Send: mqttMessage{QoS: "0"}}
+	v.Polaris = s.polarisFound(cfg)
 	if filter != "" {
 		v.Stream += "?topic=" + url.QueryEscape(filter)
 	}
 	s.render(w, http.StatusOK, "mqtt", s.newPage(sess, "mqtt", "MQTT", v))
+}
+
+// polarisFound - приборы Polaris на брокере, которых нет в настройках.
+func (s *Server) polarisFound(cfg *config.Config) []mqttPolarisRow {
+	used := map[string]bool{}
+	for _, d := range cfg.Devices {
+		if d.Source == config.SourcePolaris {
+			used[d.DeviceID] = true
+		}
+	}
+	var out []mqttPolarisRow
+	for _, f := range s.gw.Polaris.Found() {
+		if used[f.ID] {
+			continue
+		}
+		row := mqttPolarisRow{ID: f.ID, Label: "тип " + f.DevType + ", шлюз его пока не знает: нужен свой профиль"}
+		if polaris.Kettle(f.DevType) {
+			row.Label, row.Add = "чайник, тип "+f.DevType, true
+		}
+		out = append(out, row)
+	}
+	return out
 }
 
 func (s *Server) mqttStream(w http.ResponseWriter, r *http.Request, _ *session) {

@@ -354,6 +354,9 @@ func mappings(p *profile.Profile) map[string]string {
 		for _, k := range slices.Concat(e.FoodLevel, e.FoodLevelIfKnown) {
 			add(k, "датчик: food_level")
 		}
+		for _, k := range slices.Concat(e.WaterLevel, e.WaterLevelIfKnown) {
+			add(k, "датчик: water_level")
+		}
 		for _, k := range slices.Sorted(maps.Keys(e.Button)) {
 			name, _, _ := strings.Cut(k, "=")
 			add(name, "датчик: button "+e.Button[k])

@@ -71,7 +71,7 @@ var builtin = map[string]*Profile{
 			"Cooking.Oven.Event.Cavity.001.FastPreheatFinished":    "double_click",
 		},
 			// Ёмкость для воды у духовки с паром.
-			FoodLevelIfKnown: []string{"Cooking.Oven.Event.Cavity.001.FillWaterContainer", "Cooking.Oven.Event.Cavity.001.EmptyWaterContainer"},
+			WaterLevelIfKnown: []string{"Cooking.Oven.Event.Cavity.001.FillWaterContainer", "Cooking.Oven.Event.Cavity.001.EmptyWaterContainer"},
 		},
 	},
 	"Dishwasher": {
@@ -87,8 +87,9 @@ var builtin = map[string]*Profile{
 		Events: &Events{
 			Button: finished,
 			// NearlyEmpty - скоро закончится, Lack - уже нет: прибор сообщает их по отдельности.
-			FoodLevel: []string{"Dishcare.Dishwasher.Event.SaltNearlyEmpty", "Dishcare.Dishwasher.Event.RinseAidNearlyEmpty",
-				"Dishcare.Dishwasher.Event.SaltLack", "Dishcare.Dishwasher.Event.RinseAidLack"},
+			FoodLevel:  []string{"Dishcare.Dishwasher.Event.SaltNearlyEmpty", "Dishcare.Dishwasher.Event.SaltLack"},
+			WaterLevel: []string{"Dishcare.Dishwasher.Event.RinseAidNearlyEmpty", "Dishcare.Dishwasher.Event.RinseAidLack"},
+			Empty:      []string{"Dishcare.Dishwasher.Event.SaltLack", "Dishcare.Dishwasher.Event.RinseAidLack"},
 		},
 	},
 	"Washer":      washer,
@@ -111,10 +112,11 @@ var builtin = map[string]*Profile{
 			"Espresso": "espresso", "Coffee": "americano", "Cappuccino": "cappuccino", "CaffeLatte": "latte",
 			"LatteMacchiato": "one",
 		})}},
-		Events: &Events{FoodLevel: []string{
-			"ConsumerProducts.CoffeeMaker.Event.BeanContainerEmpty",
-			"ConsumerProducts.CoffeeMaker.Event.WaterTankEmpty",
-		}},
+		Events: &Events{
+			FoodLevel:  []string{"ConsumerProducts.CoffeeMaker.Event.BeanContainerEmpty"},
+			WaterLevel: []string{"ConsumerProducts.CoffeeMaker.Event.WaterTankEmpty"},
+			Empty:      []string{"ConsumerProducts.CoffeeMaker.Event.BeanContainerEmpty", "ConsumerProducts.CoffeeMaker.Event.WaterTankEmpty"},
+		},
 	},
 	"Hood": {
 		YandexType:     "ventilation",
