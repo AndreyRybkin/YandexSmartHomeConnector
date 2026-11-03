@@ -1,0 +1,77 @@
+# Проверка кода: те же команды, что в README, раздел 12, сборка под обе архитектуры образа и
+# поиск известных уязвимостей в коде, который шлюз действительно вызывает.
+name: Go
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+  # Новые уязвимости появляются и тогда, когда код не менялся. GitHub запускает расписание для
+  # ветки по умолчанию.
+  schedule:
+    - cron: "0 6 * * 1"
+
+# Токену нужно только чтение: сторонний код из запроса на слияние ничего не изменит в репозитории.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Форматирование
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - name: Зависимости
+        run: |
+          go mod verify
+          go mod tidy -diff
+      - name: Статическая проверка
+        run: go vet ./...
+      - name: Тесты с детектором гонок
+        run: go test ./... -race
+
+  vuln:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Известные уязвимости
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # Как в Dockerfile: статический файл без CGO.
+      - name: Сборка под ${{ matrix.arch }}
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: ${{ matrix.arch }}
+        run: go build -trimpath -ldflags="-s -w" -o /dev/null ./cmd/hcgateway
