@@ -14,6 +14,7 @@ import (
 	"hcgateway/internal/hcapi"
 	"hcgateway/internal/linking"
 	"hcgateway/internal/metrics"
+	"hcgateway/internal/statedb"
 	"hcgateway/internal/web"
 )
 
@@ -31,12 +32,16 @@ func serve(ctx context.Context, configPath string, log *slog.Logger) error {
 		return err
 	}
 	users := auth.NewUsers(filepath.Join(cfg.DataDir, auth.UserFile), log)
+	state := statedb.Open(filepath.Join(cfg.DataDir, statedb.FileName), log)
+	defer state.Close()
 	// Проверка входа общая для веб-интерфейса и страницы привязки: у них один бан.
 	login := auth.New(users, cfg.Proxies, log)
+	login.Bans.Attach(state)
 	gw, err := gateway.New(cfg.DataDir, store, login, log)
 	if err != nil {
 		return err
 	}
+	gw.Attach(state)
 	if err := gw.Apply(cfg); err != nil {
 		return err
 	}

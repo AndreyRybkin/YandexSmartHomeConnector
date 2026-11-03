@@ -187,6 +187,7 @@ var stateNames = map[string]string{
 	"POWER_OFF": "выключен", "INITIAL": "ожидание", "DETECTING": "определяет загрузку", "RUNNING": "работает",
 	"RINSING": "полоскание", "SPINNING": "отжим", "DRYING": "сушка", "COOLING": "охлаждение", "PAUSE": "пауза",
 	"RESERVED": "отложенный старт", "END": "работа закончена", "ERROR": "ошибка",
+	"COOL_DOWN": "охлаждение", "RINSE_HOLD": "ожидание после полоскания", "REFRESHING": "освежение", "SLEEP": "спящий режим",
 }
 
 // nameOr - подпись из names или само имя, если подписи нет.

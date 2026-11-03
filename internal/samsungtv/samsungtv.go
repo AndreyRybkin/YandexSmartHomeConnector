@@ -227,8 +227,8 @@ func (t *TV) Describe() appliance.Description {
 	}, Reports: []string{tv.Power, tv.Volume, tv.Mute, tv.Channel, tv.Input, tv.Playback}}
 }
 
-// State - питание, громкость и звук. Канал, источник и воспроизведение телевизор по
-// домашней сети не сообщает.
+// State - питание, громкость и звук. Источник и воспроизведение телевизор по домашней сети не
+// сообщает, а номер канала шлюз не читает.
 func (t *TV) State() appliance.State {
 	t.mu.Lock()
 	defer t.mu.Unlock()

@@ -357,6 +357,10 @@ func (s *Server) steps(cfg *config.Config) []step {
 	case !api.LoggedIn() && usesSource(cfg, config.SourceHomeConnectCloud):
 		out = append(out, step{"Нет входа в Home Connect: приборы облака не на связи.", "/connections#homeconnect"})
 	}
+	if s.gw.StateFailing() {
+		out = append(out, step{"База состояния не принимает запись: баны, связь и значения приборов лежат только в памяти. " +
+			"Проверьте место на диске и права на data_dir.", "/logins"})
+	}
 	return out
 }
 

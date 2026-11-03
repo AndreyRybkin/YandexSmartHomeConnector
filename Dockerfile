@@ -20,7 +20,7 @@ FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/hcgateway /hcgateway
 COPY --from=build --chown=nonroot:nonroot /out/data /data
 # /config - каталог настроек: веб-интерфейс сохраняет в него config.yaml и config.yaml.bak.
-# /data - ключи приборов, токены Яндекса и пользователь веб-интерфейса.
+# /data - ключи приборов, токены Яндекса, пользователь веб-интерфейса и база состояния.
 VOLUME ["/data"]
 # 8080 - запросы Яндекса и веб-интерфейс под /ui, только через Traefik.
 # 8082 - метрики для Prometheus в сети Docker.

@@ -32,6 +32,7 @@ import (
 	"hcgateway/internal/profile"
 	"hcgateway/internal/samsungtv"
 	"hcgateway/internal/smartthings"
+	"hcgateway/internal/statedb"
 	"hcgateway/internal/thinq"
 	"hcgateway/internal/webos"
 	"hcgateway/internal/wled"
@@ -40,6 +41,12 @@ import (
 
 // DemoDuration - сколько идёт программа демо-прибора.
 const DemoDuration = 2 * time.Minute
+
+// Имена работающей и выбранной программы среди последних значений прибора.
+const (
+	ValueProgram  = "программа"
+	ValueSelected = "выбранная программа"
+)
 
 // Gateway - приборы и подключение к Яндексу по применённым настройкам.
 type Gateway struct {
@@ -73,6 +80,8 @@ type Gateway struct {
 	// links - с какого времени приборы не на связи; now - часы, nil - time.Now.
 	links links
 	now   func() time.Time
+	// state - база состояния; nil - связь, значения и история только в памяти.
+	state *statedb.DB
 
 	// cfg - применённые настройки; читаются без блокировки.
 	cfg atomic.Pointer[config.Config]
@@ -142,10 +151,25 @@ func New(dataDir string, tokens *linking.Store, login linking.Login, log *slog.L
 	}, nil
 }
 
+// Attach подключает базу состояния: шлюз берёт из неё связь приборов и отмечает в истории приборов,
+// сколько не работал. Вызывается до первого Apply.
+func (g *Gateway) Attach(state *statedb.DB) {
+	g.state = state
+	alive := state.Alive()
+	g.links.restore(state.Links(), alive)
+	if now := g.clock(); !alive.IsZero() {
+		state.MarkGap(statedb.Change{Time: now, Value: "не работал " + hcdevice.Duration(now.Sub(alive).Seconds())})
+	}
+}
+
 // Run держит связь с приборами и облаком и отправляет уведомления, пока ctx не отменён.
 func (g *Gateway) Run(ctx context.Context) {
 	var wg sync.WaitGroup
-	wg.Add(8)
+	wg.Add(9)
+	go func() {
+		defer wg.Done()
+		g.state.Run(ctx)
+	}()
 	go func() {
 		defer wg.Done()
 		g.Cloud.Run(ctx)
@@ -342,9 +366,31 @@ func (g *Gateway) build(cfg *config.Config, id string, dc config.Device, prev *b
 	if err != nil {
 		return nil, err
 	}
-	return &built{conf: dc, haType: haType, typeProfile: forType, appliance: a,
-		dev: &hcdevice.Device{ID: id, Name: dc.Name, Room: dc.Room, Profile: p, Appliance: a,
-			Manufacturer: manufacturer(dc.Source, a)}}, nil
+	dev := &hcdevice.Device{ID: id, Name: dc.Name, Room: dc.Room, Profile: p, Appliance: a,
+		Manufacturer: manufacturer(dc.Source, a)}
+	g.keepHistory(dev)
+	return &built{conf: dc, haType: haType, typeProfile: forType, appliance: a, dev: dev}, nil
+}
+
+// keepHistory подключает историю прибора к базе состояния: новый объект прибора после правки
+// настроек получает прежние строки.
+func (g *Gateway) keepHistory(dev *hcdevice.Device) {
+	if g.state == nil {
+		return
+	}
+	saved := g.state.Changes(dev.ID)
+	history := make([]hcdevice.Change, len(saved))
+	for i, c := range saved {
+		history[i] = hcdevice.Change{Time: c.Time, Kind: c.Kind, Key: c.Key, Value: c.Value}
+	}
+	dev.Restore(history)
+	dev.Journal = func(changes []hcdevice.Change) {
+		out := make([]statedb.Change, len(changes))
+		for i, c := range changes {
+			out[i] = statedb.Change{Time: c.Time, Kind: c.Kind, Key: c.Key, Value: c.Value}
+		}
+		g.state.AddChanges(dev.ID, out)
+	}
 }
 
 // sameDevice - настройки прибора не изменились для шлюза: значок нужен только интерфейсу,

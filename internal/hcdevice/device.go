@@ -35,6 +35,9 @@ type Device struct {
 	Appliance appliance.Appliance
 	// Manufacturer - производитель в списке устройств Алисы; пусто - BSH.
 	Manufacturer string
+	// Journal получает новые изменения прибора, чтобы они пережили перезапуск; nil - только память.
+	// Не должен ждать диска: его вызывает поток событий прибора.
+	Journal func([]Change)
 
 	// actMu не даёт двум командам Алисы менять прибор одновременно:
 	// смена программы - это остановка и запуск, между ними нельзя вклиниться.
@@ -61,7 +64,7 @@ type Device struct {
 }
 
 // RemainingTime - instance свойства float с оставшимся временем программы в секундах. В
-// документации Яндекса его нет: шлюз передаёт его, а примет ли его Яндекс, не проверено.
+// документации Яндекса его нет, и с ним Яндекс отвечает 400 на уведомления о приборе целиком.
 const RemainingTime = "remaining_time"
 
 // Duration - время словами с точностью до минуты, минуты - с округлением вверх: «1 ч 25 мин».
@@ -126,17 +129,23 @@ func (d *Device) reported(v float64) float64 {
 	return d.remain
 }
 
-// historySize - сколько последних изменений прибор помнит. История - в памяти и после
-// перезапуска шлюза пропадает.
+// historySize - сколько последних изменений прибор помнит.
 const historySize = 50
 
 // Change - изменение прибора для страницы «Всё о приборе».
 type Change struct {
 	Time time.Time
-	// Kind - event, value или online.
+	// Kind - event, value, online или отметка простоя шлюза.
 	Kind  string
 	Key   string
 	Value string
+}
+
+// Restore задаёт сохранённую историю прибора, старые изменения первыми. Вызывается до Run.
+func (d *Device) Restore(history []Change) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.history = slices.Clone(history)
 }
 
 // History - последние изменения прибора, новые первыми.
@@ -154,10 +163,12 @@ func (d *Device) History() []Change {
 // запуска только запоминается: иначе каждое значение выглядело бы изменением.
 func (d *Device) record(st *appliance.State, events []string) {
 	now := time.Now()
+	var added []Change
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	add := func(kind, key, value string) {
-		d.history = append(d.history, Change{Time: now, Kind: kind, Key: key, Value: value})
+		c := Change{Time: now, Kind: kind, Key: key, Value: value}
+		added = append(added, c)
+		d.history = append(d.history, c)
 		if len(d.history) > historySize {
 			d.history = d.history[len(d.history)-historySize:]
 		}
@@ -178,6 +189,10 @@ func (d *Device) record(st *appliance.State, events []string) {
 	d.seen = cur
 	for _, e := range events {
 		add("event", e, "")
+	}
+	d.mu.Unlock()
+	if d.Journal != nil && len(added) > 0 {
+		d.Journal(added)
 	}
 }
 
@@ -671,7 +686,7 @@ func (d *Device) Act(ctx context.Context, id string, a *alice.Action) string {
 			}
 			if on == powered(pw, &st) {
 				if on && p.DefaultProgram != "" {
-					// «Включи» включённой кофемашины с default_program - напиток, «свари кофе».
+					// «Включи» включённой кофемашины с default_program - напиток.
 					return d.start(ctx, &st, p.DefaultProgram)
 				}
 				return ""

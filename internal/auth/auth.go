@@ -100,7 +100,7 @@ func (a *Auth) login(r *http.Request, where, name, password string) (Result, Use
 		return OK, u
 	}
 	a.log.Warn("неудачный вход", "where", where, "addr", addr)
-	if p, banned := a.Bans.Fail(addr); banned {
+	if p, banned := a.Bans.Fail(addr, where); banned {
 		metrics.Ban()
 		a.log.Warn("адрес забанен", "addr", p, "for", BanTime)
 	}

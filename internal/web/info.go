@@ -16,8 +16,11 @@ import (
 	"hcgateway/internal/appliance"
 	"hcgateway/internal/config"
 	"hcgateway/internal/delonghi"
+	"hcgateway/internal/gateway"
 	"hcgateway/internal/hcdevice"
 	"hcgateway/internal/profile"
+	"hcgateway/internal/statedb"
+	"hcgateway/internal/wled"
 )
 
 // Страница «Всё о приборе» /devices/<id>/info и её поток SSE /devices/<id>/stream:
@@ -86,6 +89,8 @@ type valueRow struct {
 	Key     string `json:"key"`
 	Value   string `json:"value"`
 	Mapping string `json:"mapping"`
+	// Last - значение не текущее: «последнее, 3 ч назад»; пусто - прибор сообщает его сейчас.
+	Last string `json:"last,omitempty"`
 }
 
 type historyRow struct {
@@ -95,7 +100,7 @@ type historyRow struct {
 	Value string `json:"value"`
 }
 
-var kindLabels = map[string]string{"event": "событие", "value": "значение", "online": "связь"}
+var kindLabels = map[string]string{"event": "событие", "value": "значение", "online": "связь", statedb.GapKind: "шлюз"}
 
 func (s *Server) infoPage(w http.ResponseWriter, r *http.Request, sess *session) {
 	id := r.PathValue("id")
@@ -183,29 +188,94 @@ func (s *Server) snapshot(id string) snapshot {
 	sn.Online, sn.Summary, sn.Tone, sn.Notice, sn.Alice = st.Online, st.Text, st.Tone, st.Notice, deviceState(dev).Alice
 	hc, ok := dev.(*hcdevice.Device)
 	if !ok {
+		if strip, ok := dev.(*wled.Device); ok {
+			current, online := strip.Values()
+			sn.Values, _ = s.valueRows(id, current, online, stripMappings)
+		}
 		return sn
 	}
 	ast := hc.Appliance.State()
 	sn.Mappings = mapRows(hc.Profile, &ast, hc)
 	mapping := mappings(hc.Profile)
+	current := maps.Clone(ast.Values)
+	if current == nil {
+		current = map[string]any{}
+	}
 	if ast.ActiveProgram != "" {
-		sn.Values = append(sn.Values, valueRow{"программа", ast.ActiveProgram, mapping[ast.ActiveProgram]})
+		current[gateway.ValueProgram] = ast.ActiveProgram
 	}
 	if ast.SelectedProgram != "" {
-		sn.Values = append(sn.Values, valueRow{"выбранная программа", ast.SelectedProgram, mapping[ast.SelectedProgram]})
+		current[gateway.ValueSelected] = ast.SelectedProgram
 	}
-	for _, k := range slices.Sorted(maps.Keys(ast.Values)) {
-		row := valueRow{k, formatValue(ast.Values[k]), mapping[k]}
-		if row.Mapping == "" && emptyFavorite(ast.Values, k) {
-			sn.EmptyFavorites = append(sn.EmptyFavorites, row)
-			continue
-		}
-		sn.Values = append(sn.Values, row)
-	}
+	sn.Values, sn.EmptyFavorites = s.valueRows(id, current, ast.Online, mapping)
 	for _, c := range hc.History() {
-		sn.History = append(sn.History, historyRow{Time: c.Time.Local().Format("15:04:05"), Kind: kindLabels[c.Kind], Key: c.Key, Value: c.Value})
+		// С датой: история переживает перезапуск и может быть длиннее суток.
+		sn.History = append(sn.History, historyRow{Time: c.Time.Local().Format("02.01 15:04:05"), Kind: kindLabels[c.Kind], Key: c.Key, Value: c.Value})
 	}
 	return sn
+}
+
+// stripMappings - кто берёт значения ленты WLED.
+var stripMappings = map[string]string{"on": "on_off: питание", "brightness": "range brightness", "rgb": "color_setting: цвет",
+	"scene": "color_setting: сцена"}
+
+// valueRows - строки значений прибора: текущие значения и последние полученные с пометкой. Если
+// прибор на связи, с пометкой идут только значения, которых он сейчас не сообщает.
+func (s *Server) valueRows(id string, current map[string]any, online bool, mapping map[string]string) (rows, empty []valueRow) {
+	all := make(map[string]any, len(current))
+	maps.Copy(all, current)
+	stale, gone := map[string]bool{}, map[string]time.Time{}
+	for _, v := range s.gw.LastValues(id) {
+		if _, ok := all[v.Key]; !ok {
+			all[v.Key], stale[v.Key], gone[v.Key] = v.Value, true, v.Gone
+		}
+	}
+	var since time.Time
+	if !online {
+		since, _, _ = s.gw.Offline(id)
+	}
+	row := func(k string) valueRow {
+		r := valueRow{Key: k, Value: formatValue(all[k]), Mapping: mapping[k]}
+		if !online || stale[k] {
+			at := gone[k]
+			if at.IsZero() {
+				at = since
+			}
+			r.Last = lastText(at)
+		}
+		return r
+	}
+	// У программы подпись поля - по самой программе, и в таблице она идёт первой.
+	for _, k := range []string{gateway.ValueProgram, gateway.ValueSelected} {
+		if v, ok := all[k]; ok {
+			r := row(k)
+			r.Mapping = mapping[formatValue(v)]
+			rows = append(rows, r)
+		}
+	}
+	for _, k := range slices.Sorted(maps.Keys(all)) {
+		if k == gateway.ValueProgram || k == gateway.ValueSelected {
+			continue
+		}
+		r := row(k)
+		if r.Mapping == "" && emptyFavorite(all, k) {
+			empty = append(empty, r)
+			continue
+		}
+		rows = append(rows, r)
+	}
+	return rows, empty
+}
+
+// lastText - пометка значения, которое прибор сейчас не сообщает: «последнее, 3 ч назад». Часы, а не
+// время: часовой пояс контейнера может не совпадать с домашним.
+func lastText(at time.Time) string {
+	if !at.IsZero() {
+		if a := ago(time.Since(at)); a != "" {
+			return "последнее," + a + " назад"
+		}
+	}
+	return "последнее"
 }
 
 // favoriteRe - значение избранного прибора Home Connect и номер избранного.

@@ -483,3 +483,24 @@ func TestOvenWater(t *testing.T) {
 		t.Errorf("нужно долить: %v %q", has, state)
 	}
 }
+
+// Новые изменения уходят в журнал, сохранённая история видна сразу, а первое состояние только запоминается.
+func TestHistoryJournal(t *testing.T) {
+	saved := Change{Time: time.Now(), Kind: "value", Key: "door", Value: "open"}
+	var got []Change
+	d := &Device{Journal: func(c []Change) { got = append(got, c...) }}
+	d.Restore([]Change{saved})
+	st := appliance.State{Online: true, Values: map[string]any{"door": "closed"}}
+	d.record(&st, nil)
+	if len(got) != 0 {
+		t.Fatalf("первое состояние в журнале: %+v", got)
+	}
+	st.Values = map[string]any{"door": "open"}
+	d.record(&st, []string{"done"})
+	if len(got) != 2 || got[0].Key != "door" || got[1].Kind != "event" {
+		t.Fatalf("журнал: %+v", got)
+	}
+	if h := d.History(); len(h) != 3 || h[2].Key != saved.Key {
+		t.Fatalf("история: %+v", h)
+	}
+}

@@ -5,4 +5,13 @@
 {{if .Bans}}<div class="wrap"><table><tr><th>Адрес</th><th>Бан до</th><th></th></tr>
 {{range .Bans}}<tr><td>{{.Prefix}}</td><td>{{.Until}}</td><td><form method="post" action="/logins/lift"><input type="hidden" name="csrf" value="{{$p.CSRF}}"><input type="hidden" name="prefix" value="{{.Prefix}}"><button>Снять</button></form></td></tr>{{end}}
 </table></div>{{else}}<p>Банов нет.</p>{{end}}
+<h2 id="history">История банов</h2>
+<p class="muted">Хранится 90 дней, не больше 10 000 записей. Введённые имена и пароли шлюз в неё не пишет.</p>
+{{if .HistoryFailed}}<p class="err">История сейчас недоступна, подробности в журнале шлюза.</p>
+{{else if .History}}<div class="wrap"><table><tr><th>Адрес</th><th>Начало</th><th>Конец</th><th>Итог</th><th>Откуда попытки</th></tr>
+{{range .History}}<tr><td>{{.Prefix}}</td><td>{{.Start}}</td><td>{{.End}}</td><td>{{.Outcome}}</td><td>{{.Where}}</td></tr>{{end}}
+</table></div>
+{{else}}<p>Записей нет.</p>{{end}}
+{{if .Paged}}<p><a href="/logins#history">К последним записям</a></p>{{end}}
+{{with .Older}}<p><a href="{{.}}">Более старые записи</a></p>{{end}}
 {{end}}{{end}}

@@ -30,6 +30,7 @@ import (
 	"hcgateway/internal/hcapi/hcfake"
 	"hcgateway/internal/linking"
 	"hcgateway/internal/metrics"
+	"hcgateway/internal/statedb"
 )
 
 const (
@@ -43,6 +44,7 @@ type fixture struct {
 	cfgPath string
 	auth    *auth.Auth
 	gw      *gateway.Gateway
+	state   *statedb.DB
 	hs      *httptest.Server
 	client  *http.Client
 	cookie  string
@@ -75,6 +77,10 @@ func newFixture(t *testing.T, cfgText string, before ...func(dir string)) *fixtu
 	if f.gw, err = gateway.New(f.dir, store, f.auth, log); err != nil {
 		t.Fatal(err)
 	}
+	f.state = statedb.Open(filepath.Join(f.dir, statedb.FileName), log)
+	t.Cleanup(f.state.Close)
+	f.auth.Bans.Attach(f.state)
+	f.gw.Attach(f.state)
 	if err := f.gw.Apply(cfg); err != nil {
 		t.Fatal(err)
 	}

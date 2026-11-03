@@ -100,6 +100,21 @@ func (d *Device) Strip() (online bool, name, arch string) {
 	return d.have, d.st.Name, d.st.Arch
 }
 
+// Values - что лента сообщила о своём состоянии: те же instance, что у Алисы. ok - лента на связи.
+func (d *Device) Values() (values map[string]any, ok bool) {
+	d.mu.Lock()
+	st, have := d.st, d.have
+	d.mu.Unlock()
+	if !have {
+		return nil, false
+	}
+	values = map[string]any{"on": st.On, "brightness": float64(percent(st.Bri)), "rgb": fmt.Sprintf("#%06X", st.Color)}
+	if scene, ok := d.Presets[st.PS]; ok {
+		values["scene"] = scene
+	}
+	return values, true
+}
+
 // MAC - MAC ленты из её последнего сообщения о себе; пусто - лента его ещё не сообщала.
 func (d *Device) MAC() string {
 	d.mu.Lock()

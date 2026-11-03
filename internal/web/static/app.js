@@ -297,8 +297,12 @@ function bindLive(live) {
       el.hidden = s.online;
     });
     const valueCells = (row, v) => {
+      row.classList.toggle("stale", Boolean(v.last));
       cell(row, v.key, true);
-      cell(row, v.value);
+      const value = cell(row, v.value);
+      if (v.last) {
+        value.append(" ", span("tech", v.last));
+      }
       cell(row, v.mapping);
     };
     fill(document.getElementById("values"), s.values, "Прибор пока ничего не сообщил.", 3, valueCells);

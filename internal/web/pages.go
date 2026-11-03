@@ -23,6 +23,7 @@ import (
 	"hcgateway/internal/hcdevice"
 	"hcgateway/internal/hclocal"
 	"hcgateway/internal/profile"
+	"hcgateway/internal/statedb"
 	"hcgateway/internal/thinq"
 	"hcgateway/internal/wled"
 )
@@ -1850,9 +1851,63 @@ type banRow struct {
 	Prefix, Until string
 }
 
+// banHistoryPage - сколько строк журнала банов на странице.
+const banHistoryPage = 100
+
+// banHistoryRow - строка журнала банов.
+type banHistoryRow struct {
+	Prefix, Start, End, Outcome, Where string
+}
+
 type loginsView struct {
 	Addr string
 	Bans []banRow
+	// History - журнал банов; Older - ссылка на более старые строки, Paged - показаны не самые новые;
+	// HistoryFailed - журнал не прочитан.
+	History       []banHistoryRow
+	Older         string
+	Paged         bool
+	HistoryFailed bool
+}
+
+// banOutcome - чем закончился бан.
+func banOutcome(b statedb.Ban, now time.Time) string {
+	switch b.EndedBy {
+	case statedb.EndedWeb:
+		return "снят в интерфейсе"
+	case statedb.EndedCommand:
+		return "снят командой"
+	case statedb.EndedEvicted:
+		return "вытеснен новыми банами"
+	}
+	if now.Before(b.Until) {
+		return "действует"
+	}
+	return "истёк"
+}
+
+// banHistory заполняет журнал банов: before - номер строки из ссылки на старые строки.
+func (s *Server) banHistory(v *loginsView, before int64) {
+	rows, err := s.auth.Bans.History(before, banHistoryPage+1)
+	if err != nil {
+		s.log.Warn("журнал банов не прочитан", "err", err)
+		v.HistoryFailed = true
+		return
+	}
+	v.Paged = before > 0
+	if len(rows) > banHistoryPage {
+		rows = rows[:banHistoryPage]
+		v.Older = "/logins?before=" + strconv.FormatInt(rows[len(rows)-1].ID, 10) + "#history"
+	}
+	now := time.Now()
+	for _, b := range rows {
+		end := b.Until
+		if !b.Ended.IsZero() {
+			end = b.Ended
+		}
+		v.History = append(v.History, banHistoryRow{Prefix: b.Prefix.String(), Start: b.Start.Local().Format(time.DateTime),
+			End: end.Local().Format(time.DateTime), Outcome: banOutcome(b, now), Where: b.Where})
+	}
 }
 
 func (s *Server) loginsPage(w http.ResponseWriter, r *http.Request, sess *session) {
@@ -1860,6 +1915,12 @@ func (s *Server) loginsPage(w http.ResponseWriter, r *http.Request, sess *sessio
 	for _, b := range s.auth.Bans.List() {
 		v.Bans = append(v.Bans, banRow{Prefix: b.Prefix.String(), Until: b.Until.Local().Format(time.DateTime)})
 	}
+	// Неверный номер - первая страница журнала.
+	before, err := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
+	if err != nil {
+		before = 0
+	}
+	s.banHistory(&v, before)
 	s.render(w, http.StatusOK, "logins", s.newPage(sess, "logins", "Входы", v))
 }
 

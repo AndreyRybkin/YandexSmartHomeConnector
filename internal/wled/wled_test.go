@@ -316,3 +316,17 @@ func TestProbe(t *testing.T) {
 		t.Fatal("неверный MAC разобран")
 	}
 }
+
+// Значения ленты: те же instance, что у Алисы, и только пока лента на связи.
+func TestValues(t *testing.T) {
+	d := &Device{ID: "strip", Presets: map[int]string{3: "party"}}
+	if _, ok := d.Values(); ok {
+		t.Fatal("лента без связи сообщает значения")
+	}
+	d.st = status{On: true, Bri: 255, PS: 3, Color: 0xFF0000}
+	d.have = true
+	v, ok := d.Values()
+	if !ok || v["on"] != true || v["brightness"] != 100.0 || v["rgb"] != "#FF0000" || v["scene"] != "party" {
+		t.Fatalf("значения: %v", v)
+	}
+}

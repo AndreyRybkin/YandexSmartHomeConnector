@@ -111,11 +111,19 @@ var (
 		Name: "hcgateway_build_info",
 		Help: "Версия шлюза.",
 	}, []string{"version"})
+	storeErrors = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "hcgateway_store_errors_total",
+		Help: "Сбои записи в базу состояния.",
+	})
+	storeRecreated = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "hcgateway_store_recreated_total",
+		Help: "Сколько раз шлюз пересоздал сломанную базу состояния.",
+	})
 	state = &stateCollector{}
 
 	// own - свои метрики шлюза, без метрик Go и процесса.
 	own = []prometheus.Collector{yandexRequests, yandexDuration, actions, notifications, deviceEvents,
-		webLogins, linkingLogins, bans, configSaves, sourceRequests, sourceConnected, sourceReconnects, tokenRefreshes, buildInfo, state}
+		webLogins, linkingLogins, bans, configSaves, sourceRequests, sourceConnected, sourceReconnects, tokenRefreshes, buildInfo, storeErrors, storeRecreated, state}
 )
 
 func init() {
@@ -165,6 +173,16 @@ func Login(web bool, result string) {
 // Ban считает выданный бан.
 func Ban() {
 	bans.Inc()
+}
+
+// StoreError считает сбой записи в базу состояния.
+func StoreError() {
+	storeErrors.Inc()
+}
+
+// StoreRecreated считает пересоздание сломанной базы состояния.
+func StoreRecreated() {
+	storeRecreated.Inc()
 }
 
 // ConfigSave считает сохранение настроек.

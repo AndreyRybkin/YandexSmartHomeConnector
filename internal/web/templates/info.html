@@ -29,15 +29,15 @@
 </section>
 <section class="field"><h2>Значения прибора</h2>
 <div class="wrap"><table><thead><tr><th>Имя</th><th>Значение</th><th>Кто берёт</th></tr></thead><tbody id="values">
-{{range .Live.Values}}<tr><td><code>{{.Key}}</code></td><td>{{.Value}}</td><td>{{.Mapping}}</td></tr>{{else}}<tr><td colspan="3">Прибор пока ничего не сообщил.</td></tr>{{end}}
+{{range .Live.Values}}<tr{{if .Last}} class="stale"{{end}}><td><code>{{.Key}}</code></td><td>{{.Value}}{{with .Last}} <span class="tech">{{.}}</span>{{end}}</td><td>{{.Mapping}}</td></tr>{{else}}<tr><td colspan="3">Прибор пока ничего не сообщил.</td></tr>{{end}}
 </tbody></table></div>
 <details data-empty-favorites{{if not .Live.EmptyFavorites}} hidden{{end}}><summary>Незанятые избранные, значений: <span data-count>{{len .Live.EmptyFavorites}}</span></summary>
 <div class="wrap"><table><thead><tr><th>Имя</th><th>Значение</th><th>Кто берёт</th></tr></thead><tbody id="values-empty">
-{{range .Live.EmptyFavorites}}<tr><td><code>{{.Key}}</code></td><td>{{.Value}}</td><td>{{.Mapping}}</td></tr>{{end}}
+{{range .Live.EmptyFavorites}}<tr{{if .Last}} class="stale"{{end}}><td><code>{{.Key}}</code></td><td>{{.Value}}{{with .Last}} <span class="tech">{{.}}</span>{{end}}</td><td>{{.Mapping}}</td></tr>{{end}}
 </tbody></table></div></details>
 </section>
 <section class="field"><h2>Последние изменения</h2>
-<p class="muted">До 50 изменений с запуска шлюза.</p>
+<p class="muted">До 50 последних изменений.</p>
 <div class="wrap"><table><thead><tr><th>Время</th><th>Что</th><th>Имя</th><th>Значение</th></tr></thead><tbody id="history">
 {{range .Live.History}}<tr><td>{{.Time}}</td><td>{{.Kind}}</td><td><code>{{.Key}}</code></td><td>{{.Value}}</td></tr>{{else}}<tr><td colspan="4">Изменений пока не было.</td></tr>{{end}}
 </tbody></table></div>

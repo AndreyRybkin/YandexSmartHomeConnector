@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"hcgateway/internal/metrics"
+	"hcgateway/internal/statedb"
 )
 
 func TestMain(m *testing.M) {
@@ -112,12 +113,12 @@ func TestBans(t *testing.T) {
 	b := newBans(&now)
 	a := netip.MustParseAddr("203.0.113.7")
 	for i := 1; i < MaxFailures; i++ {
-		if _, banned := b.Fail(a); banned {
+		if _, banned := b.Fail(a, WhereWeb); banned {
 			t.Fatalf("бан после %d попыток", i)
 		}
 		now = now.Add(time.Minute)
 	}
-	if p, banned := b.Fail(a); !banned || p != netip.MustParsePrefix("203.0.113.7/32") || !b.Banned(a) {
+	if p, banned := b.Fail(a, WhereWeb); !banned || p != netip.MustParsePrefix("203.0.113.7/32") || !b.Banned(a) {
 		t.Fatalf("нет бана после %d попыток", MaxFailures)
 	}
 	if list := b.List(); len(list) != 1 || !list[0].Until.Equal(now.Add(BanTime)) {
@@ -132,22 +133,22 @@ func TestBans(t *testing.T) {
 	// Попытки старше часа не считаются, успешный вход обнуляет счётчик.
 	c := netip.MustParseAddr("198.51.100.1")
 	for range MaxFailures - 1 {
-		b.Fail(c)
+		b.Fail(c, WhereWeb)
 	}
 	now = now.Add(FailWindow)
-	if _, banned := b.Fail(c); banned {
+	if _, banned := b.Fail(c, WhereWeb); banned {
 		t.Fatal("учтены попытки старше часа")
 	}
-	b.Fail(c)
+	b.Fail(c, WhereWeb)
 	b.Reset(c)
-	b.Fail(c)
-	if _, banned := b.Fail(c); banned {
+	b.Fail(c, WhereWeb)
+	if _, banned := b.Fail(c, WhereWeb); banned {
 		t.Fatal("успешный вход не обнулил счётчик")
 	}
 
 	// IPv6 банится сетью /64, IPv4 в IPv6 - как IPv4.
 	for range MaxFailures {
-		b.Fail(netip.MustParseAddr("2001:db8:1:2::10"))
+		b.Fail(netip.MustParseAddr("2001:db8:1:2::10"), WhereWeb)
 	}
 	if !b.Banned(netip.MustParseAddr("2001:db8:1:2:ffff::1")) || b.Banned(netip.MustParseAddr("2001:db8:1:3::10")) {
 		t.Fatal("бан IPv6 не по /64")
@@ -168,11 +169,11 @@ func TestBansOverflow(t *testing.T) {
 	b := newBans(&now)
 	first := netip.AddrFrom4([4]byte{10, 0, 0, 0})
 	for range MaxFailures {
-		b.Fail(first)
+		b.Fail(first, WhereWeb)
 	}
 	for i := 1; i < maxEntries+10; i++ {
 		now = now.Add(time.Millisecond)
-		b.Fail(netip.AddrFrom4([4]byte{10, byte(i >> 16), byte(i >> 8), byte(i)}))
+		b.Fail(netip.AddrFrom4([4]byte{10, byte(i >> 16), byte(i >> 8), byte(i)}), WhereWeb)
 	}
 	if len(b.entries) > maxEntries {
 		t.Fatalf("записей %d", len(b.entries))
@@ -256,5 +257,97 @@ func TestLogin(t *testing.T) {
 	defer cancel()
 	if res, _ := a.Login(r.WithContext(ctx), WhereWeb, "owner", "password-0001"); res != Busy {
 		t.Fatalf("проверки заняты: %v", res)
+	}
+}
+
+// Действующий бан переживает перезапуск, снятый и истёкший - нет, а счётчик попыток начинается заново.
+func TestBansRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), statedb.FileName)
+	banned := netip.MustParseAddr("203.0.113.7")
+	lifted := netip.MustParseAddr("203.0.113.8")
+	counting := netip.MustParseAddr("203.0.113.9")
+	db := statedb.Open(path, discard())
+	b := NewBans()
+	b.Attach(db)
+	for range MaxFailures {
+		b.Fail(banned, WhereLinking)
+		b.Fail(lifted, WhereWeb)
+	}
+	b.Fail(counting, WhereWeb)
+	if !b.Lift(key(lifted)) {
+		t.Fatal("бан не снят")
+	}
+	db.Close()
+
+	db = statedb.Open(path, discard())
+	defer db.Close()
+	r := NewBans()
+	r.Attach(db)
+	if !r.Banned(banned) || r.Active() != 1 {
+		t.Fatalf("после перезапуска: в бане %v, всего %d", r.Banned(banned), r.Active())
+	}
+	if r.Banned(lifted) {
+		t.Fatal("снятый бан вернулся")
+	}
+	for range MaxFailures - 1 {
+		if _, ban := r.Fail(counting, WhereWeb); ban {
+			t.Fatal("счётчик попыток пережил перезапуск")
+		}
+	}
+	rows, err := r.History(0, 10)
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("журнал: %v %v", rows, err)
+	}
+	if rows[0].Prefix != key(lifted) || rows[0].EndedBy != statedb.EndedWeb || rows[0].Where != WhereWeb ||
+		rows[1].Prefix != key(banned) || rows[1].EndedBy != "" || rows[1].Where != WhereLinking {
+		t.Fatalf("строки: %+v", rows)
+	}
+}
+
+// Команда unban действует на следующую попытку входа без перезапуска, а новый бан того же адреса
+// после команды остаётся.
+func TestBansUnbanCommand(t *testing.T) {
+	path := filepath.Join(t.TempDir(), statedb.FileName)
+	a := netip.MustParseAddr("203.0.113.7")
+	db := statedb.Open(path, discard())
+	defer db.Close()
+	b := NewBans()
+	b.Attach(db)
+	now := time.Now()
+	b.now = func() time.Time { return now }
+	for range MaxFailures {
+		b.Fail(a, WhereWeb)
+	}
+	db.Flush()
+	if n, err := statedb.Unban(path, key(a), false, now); err != nil || n != 1 {
+		t.Fatalf("команда: %d %v", n, err)
+	}
+	if b.Banned(a) {
+		t.Fatal("бан остался после команды")
+	}
+	now = now.Add(time.Minute)
+	for range MaxFailures {
+		b.Fail(a, WhereWeb)
+	}
+	db.Flush()
+	now = now.Add(time.Minute)
+	if !b.Banned(a) {
+		t.Fatal("старая команда сняла новый бан")
+	}
+}
+
+func TestBanTarget(t *testing.T) {
+	for in, want := range map[string]string{
+		"203.0.113.7":       "203.0.113.7/32",
+		"2001:db8:1:2::10":  "2001:db8:1:2::/64",
+		"2001:db8:1:2::/64": "2001:db8:1:2::/64",
+		"203.0.113.7/32":    "203.0.113.7/32",
+	} {
+		if p, err := BanTarget(in); err != nil || p.String() != want {
+			t.Fatalf("%s: %v %v", in, p, err)
+		}
+	}
+	if _, err := BanTarget("не адрес"); err == nil {
+		t.Fatal("мусор принят")
 	}
 }

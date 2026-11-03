@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"hcgateway/internal/config"
 )
@@ -31,10 +32,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 	configPath := fs.String("config", "/config/config.yaml", "путь к файлу настроек")
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "использование: hcgateway [-config путь] serve | fetch-keys [-region eu|na|cn|global] | web-user [-password-stdin] [имя]")
+		fmt.Fprintln(stderr, "использование: hcgateway [-config путь] serve | fetch-keys [-region eu|na|cn|global] | web-user [-password-stdin] [имя] | unban all|адрес")
 		fmt.Fprintln(stderr, "  serve      - принимать запросы умного дома Яндекса, управлять приборами и показывать веб-интерфейс")
 		fmt.Fprintln(stderr, "  fetch-keys - войти в аккаунт Home Connect и сохранить ключи и описания приборов в data_dir/appliances")
 		fmt.Fprintln(stderr, "  web-user   - создать пользователя веб-интерфейса или сменить его пароль")
+		fmt.Fprintln(stderr, "  unban      - снять все баны или бан адреса; работающий шлюз подхватит это сам")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -45,7 +47,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		return errors.New("не указана команда")
 	}
 	cmd, rest := fs.Arg(0), fs.Args()[1:]
-	if cmd != "web-user" && cmd != "fetch-keys" && len(rest) > 0 {
+	if cmd != "web-user" && cmd != "fetch-keys" && cmd != "unban" && len(rest) > 0 {
 		fs.Usage()
 		return errors.New("лишние аргументы")
 	}
@@ -56,13 +58,16 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	switch cmd {
 	case "serve":
 		return serve(ctx, *configPath, slog.New(slog.NewTextHandler(stderr, nil)))
-	case "fetch-keys", "web-user":
+	case "fetch-keys", "web-user", "unban":
 		cfg, err := config.Load(*configPath)
 		if err != nil {
 			return err
 		}
 		if cmd == "web-user" {
 			return webUser(cfg.DataDir, rest, stdin, stdout, stderr)
+		}
+		if cmd == "unban" {
+			return unban(cfg.DataDir, rest, stdout, time.Now())
 		}
 		return fetchKeys(ctx, cfg.DataDir, rest, stdin, stdout, stderr)
 	default:
