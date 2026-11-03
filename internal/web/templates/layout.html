@@ -1,5 +1,5 @@
 {{define "layout"}}<!doctype html>
-<html lang="ru"{{with .Theme}} data-theme="{{.}}"{{end}}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<html lang="ru"{{with .Theme}} data-theme="{{.}}"{{end}}{{with .Scripts}} data-i18n="{{.}}"{{end}}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>{{.Title}} - hcgateway</title>
 {{if .RefreshTo}}<meta http-equiv="refresh" content="{{.Refresh}}; url={{.RefreshTo}}">{{else if .Refresh}}<meta http-equiv="refresh" content="{{.Refresh}}">{{end}}
 <link rel="manifest" href="/static/manifest.webmanifest">
@@ -115,6 +115,7 @@ pre{background:var(--surface-2);border-radius:10px;padding:12px;overflow-x:auto}
 .tile-head .icon{width:44px;height:44px;padding:10px;border-radius:12px;background:var(--surface-2);color:var(--accent)}
 .tile-name{display:block;font-weight:600;font-size:16px}
 .tile .state{margin:0}
+.tile .vals{margin:0;color:var(--muted);font-size:13px}
 .tile .flash{margin:0}
 .tile-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:auto}
 .tile-foot form{margin:0}
@@ -198,6 +199,9 @@ button,.button,input:not([type=checkbox]),select{min-height:44px}
 {{define "account"}}<form method="post" action="/theme"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="back" value="{{.Back}}">
 <select name="theme" aria-label="Тема" data-theme-select><option value=""{{if not .Theme}} selected{{end}}>Тема: как в системе</option><option value="light"{{if eq .Theme "light"}} selected{{end}}>Тема: светлая</option><option value="dark"{{if eq .Theme "dark"}} selected{{end}}>Тема: тёмная</option></select>
 <button data-theme-apply>Применить</button></form>
+<form method="post" action="/lang"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="back" value="{{.Back}}">
+<select name="lang" aria-label="Язык" data-lang-select><option value=""{{if not .LangChoice}} selected{{end}}>Язык: как в браузере</option><option value="ru"{{if eq .LangChoice "ru"}} selected{{end}} translate="no">Язык: русский</option><option value="en"{{if eq .LangChoice "en"}} selected{{end}} translate="no">Language: English</option></select>
+<button data-lang-apply>Применить</button></form>
 <form method="post" action="/reload"><input type="hidden" name="csrf" value="{{.CSRF}}"><button>Перечитать файл</button></form>
 <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button>Выйти: {{.User}}</button></form>{{end}}
 

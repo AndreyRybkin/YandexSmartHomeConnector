@@ -19,7 +19,7 @@
 <form method="post" action="{{.Action}}">{{template "keys" $e}}
 <select name="on_off">{{template "opts" $e.OnOff}}</select>
 {{with $e.Power}}<fieldset><legend>Питание через свойство прибора</legend>
-<p class="muted">{{if $e.LG}}«Включи» и «выключи» записывают в свойство значения «включить» и «выключить». {{else if $e.HomeConnect}}Без свойства питание - BSH.Common.Setting.PowerState. {{end}}Если задано состояние, прибор включён, пока его значение не из списка «не работает». Если флаг разрешения равен false, «включи» получает REMOTE_CONTROL_DISABLED.</p>
+<p class="muted"><span>{{if $e.LG}}«Включи» и «выключи» записывают в свойство значения «включить» и «выключить». {{else if $e.HomeConnect}}Без свойства питание - BSH.Common.Setting.PowerState. {{end}}</span>Если задано состояние, прибор включён, пока его значение не из списка «не работает». Если флаг разрешения равен false, «включи» получает REMOTE_CONTROL_DISABLED.</p>
 <label>Свойство <input name="power_setting" value="{{.Setting}}" list="dl-settings" size="40"><span class="hint" data-hint>{{.SettingHint}}</span>{{with .Warn}}<span class="fit">{{.}}</span>{{end}}</label>
 <label>Включить <input name="power_on" value="{{.On}}" size="14"></label>
 <label>Выключить <input name="power_off" value="{{.Off}}" size="14"></label>
@@ -109,6 +109,11 @@
 <div data-when="p.{{.Index}}.convert" data-is="custom"><label class="inline">Множитель <input name="p.{{.Index}}.scale" value="{{.Scale}}" inputmode="decimal" size="8" placeholder="1"></label>
 <label class="inline">Слагаемое <input name="p.{{.Index}}.offset" value="{{.Offset}}" inputmode="decimal" size="8" placeholder="0"></label>
 <span class="muted">значение прибора × множитель + слагаемое, результат - до сотых</span></div>
+{{if .ShowVolume}}<div data-when="p.{{.Index}}.convert" data-is="weight_to_percent"><label class="inline">Объём чайника, л <input name="p.{{.Index}}.volume" value="{{.Volume}}" inputmode="decimal" size="8" placeholder="1,7"></label>
+<span class="muted">от 0,1 до 10; пусто - 1,7. Уровень воды = вес × 100 / (объём × 1000)</span></div>{{end}}
+<label class="inline">Минимум <input name="p.{{.Index}}.min" value="{{.Min}}" inputmode="decimal" size="8" placeholder="нет"></label>
+<label class="inline">Максимум <input name="p.{{.Index}}.max" value="{{.Max}}" inputmode="decimal" size="8" placeholder="нет"></label>
+<span class="muted">значение за границей прилипает к ней</span>
 <p class="hint" data-result data-raw="{{.Raw}}">{{.Result}}</p>
 </div>
 <div data-when="p.{{.Index}}.kind" data-prefix="event/">
@@ -128,5 +133,16 @@
 {{range $e.FoodLevel}}<input name="f.{{.Index}}" value="{{.Key}}" list="dl-events" size="50" data-map><br>{{end}}
 <p>События «заканчивается» жидкости, например вода или ополаскиватель: если есть хотя бы одно, «Уровень воды» (water_level) датчика - «низкий».</p>
 {{range $e.WaterLevel}}<input name="w.{{.Index}}" value="{{.Key}}" list="dl-events" size="50" data-map><br>{{end}}
+{{template "buttons" .}}</form></section>{{end}}
+
+{{with .Sections.tile}}<section class="field" id="tile">{{template "head" .}}
+<p class="muted">До трёх показаний под меткой состояния на плитке прибора. Если ничего не выбрано, шлюз выбирает сам: сработавшие события, показания, затем настройки включённого прибора. Алисе этот выбор не уходит.</p>
+<form method="post" action="{{.Action}}">{{template "keys" $e}}
+{{range $e.Tile}}<fieldset><legend>Показание {{.Number}}</legend>
+<label>Что показать <select name="t.{{.Index}}.item">{{template "opts" .Items}}</select></label>
+<div data-when="t.{{.Index}}.item" data-is="status"><label>Значение прибора <input name="t.{{.Index}}.status" value="{{.Status}}" list="dl-statuses" size="50"><span class="hint" data-hint>{{.Hint}}</span></label>
+<label>Единица <input name="t.{{.Index}}.unit" value="{{.Unit}}" list="dl-units" maxlength="64" placeholder="без единицы"></label></div>
+<label>Подпись <input name="t.{{.Index}}.label" value="{{.Label}}" maxlength="32" placeholder="обычная"></label>
+</fieldset>{{end}}
 {{template "buttons" .}}</form></section>{{end}}
 {{end}}

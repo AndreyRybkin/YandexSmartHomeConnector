@@ -29,6 +29,8 @@ func init() {
 			DeLonghiRecipePrefix + "1": "espresso", DeLonghiRecipePrefix + "6": "americano", DeLonghiRecipePrefix + "15": "cappuccino",
 		}}},
 		DefaultProgram: DeLonghiRecipePrefix + "6",
+		// Значение есть только во время налива.
+		Tile: []TileItem{{Status: "DeLonghi.Status.Pouring", Label: "налито", Unit: percent}},
 		Events: &Events{
 			Button:     map[string]string{"DeLonghi.Event.BeverageFinished": "click", "DeLonghi.Event.LoginRequired": "long_press"},
 			FoodLevel:  []string{"DeLonghi.Alarm.NoCoffee"},

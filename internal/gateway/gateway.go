@@ -170,6 +170,13 @@ func (g *Gateway) Attach(state *statedb.DB) {
 func (g *Gateway) Run(ctx context.Context) {
 	var wg sync.WaitGroup
 	wg.Add(9)
+	for _, c := range g.startClouds() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			refreshOnStart(ctx, g.log, c, startRefreshPause)
+		}()
+	}
 	go func() {
 		defer wg.Done()
 		g.state.Run(ctx)
@@ -208,6 +215,59 @@ func (g *Gateway) Run(ctx context.Context) {
 	}()
 	g.Service.Run(ctx)
 	wg.Wait()
+}
+
+const (
+	// startRefreshTries и startRefreshPause - сколько раз и с какой паузой шлюз пробует обновить данные
+	// облака при запуске: после отключения света сервер запускается раньше роутера.
+	startRefreshTries = 12
+	startRefreshPause = 5 * time.Minute
+	// startRefreshTimeout - предел одной попытки: она ходит в облако несколькими запросами.
+	startRefreshTimeout = 2 * time.Minute
+)
+
+// startCloud - облако, которое шлюз обновляет при запуске.
+type startCloud struct {
+	name string
+	// ready - интеграция настроена.
+	ready func() bool
+	load  func(ctx context.Context) error
+}
+
+// startClouds - облака, данные которых при запуске пусты или лежат на диске и могли устареть. Home
+// Connect здесь нет: он загружает список при подключении потока событий.
+func (g *Gateway) startClouds() []startCloud {
+	return []startCloud{
+		{"LG ThinQ", g.ThinQ.API.Ready, g.ThinQ.RefreshAccount},
+		{"SmartThings", func() bool { return g.SmartThings.API.Configured() && g.SmartThings.API.LoggedIn() }, g.SmartThings.RefreshAccount},
+		{"De'Longhi", func() bool { return g.DeLonghi.Status().LoggedIn }, g.DeLonghi.RefreshDevices},
+	}
+}
+
+// refreshOnStart обновляет данные настроенного облака при запуске шлюза. Сбой не мешает работе: приборы
+// работают по копии с диска, а данные можно обновить кнопкой.
+func refreshOnStart(ctx context.Context, log *slog.Logger, c startCloud, pause time.Duration) {
+	for try := 1; c.ready(); try++ {
+		attempt, cancel := context.WithTimeout(ctx, startRefreshTimeout)
+		err := c.load(attempt)
+		cancel()
+		if err == nil {
+			log.Info("данные облака обновлены при запуске", "cloud", c.name)
+			return
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		log.Warn("данные облака не обновлены при запуске", "cloud", c.name, "try", try, "err", err)
+		if try >= startRefreshTries {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(pause):
+		}
+	}
 }
 
 // watchCloud пересобирает приборы, когда облако сообщило тип, программы или команды прибора

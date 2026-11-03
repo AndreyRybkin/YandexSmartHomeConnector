@@ -22,6 +22,7 @@ import (
 	"hcgateway/internal/hcapi"
 	"hcgateway/internal/hcdevice"
 	"hcgateway/internal/hclocal"
+	"hcgateway/internal/i18n"
 	"hcgateway/internal/profile"
 	"hcgateway/internal/statedb"
 	"hcgateway/internal/thinq"
@@ -100,7 +101,7 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 	token, err := s.sessions.create(u)
 	if err != nil {
 		s.log.Error("сессия веб-интерфейса", "err", err)
-		http.Error(w, "Внутренняя ошибка", http.StatusInternalServerError)
+		plainError(w, "Внутренняя ошибка", http.StatusInternalServerError)
 		return
 	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: token, Path: "/", MaxAge: int(sessionTTL.Seconds()),
@@ -136,6 +137,8 @@ type deviceRow struct {
 	On      bool   `json:"on"`
 	Problem string `json:"problem"`
 	Notice  string `json:"notice"`
+	// Values - показания плитки одной строкой.
+	Values string `json:"values"`
 }
 
 // roomGroup - приборы одной комнаты по имени. Room пусто - приборы без комнаты.
@@ -289,9 +292,17 @@ func (s *Server) deviceRows(cfg *config.Config) []deviceRow {
 		st := s.status(id, d)
 		out = append(out, deviceRow{ID: id, Name: d.Name, Room: d.Room, Source: d.Source, Icon: s.iconOf(id, d), Tone: st.Tone,
 			Online: st.Online, Waiting: st.Waiting, State: st.Text, Switch: st.Switch, On: st.On,
-			Problem: st.Problem, Notice: st.Notice})
+			Problem: st.Problem, Notice: st.Notice, Values: s.tileValues(id, &st)})
 	}
 	return out
+}
+
+// tileValues - показания плитки прибора. У ленты WLED профиля нет: всё нужное уже есть в метке.
+func (s *Server) tileValues(id string, st *status) string {
+	if hc, ok := s.gw.HomeConnect(id); ok {
+		return tileText(hc, st)
+	}
+	return ""
 }
 
 // iconOf - значок прибора: свой из настроек, иначе по типу прибора или устройства Алисы.
@@ -1021,6 +1032,8 @@ func (s *Server) saveDevice(w http.ResponseWriter, r *http.Request, sess *sessio
 // кнопка действия и куда вернуться без него.
 type confirmView struct {
 	Title, Text, Action, Button, Back string
+	// More - следующие предложения текста.
+	More []string
 	// Fields - скрытые поля формы.
 	Fields []kv
 }
@@ -1143,7 +1156,7 @@ func (s *Server) answer(w http.ResponseWriter, r *http.Request, sess *session, t
 		_ = json.NewEncoder(w).Encode(struct {
 			OK   bool   `json:"ok"`
 			Text string `json:"text"`
-		}{ok, text})
+		}{ok, i18n.Translate(langOf(w), text)})
 		return
 	}
 	if ok {

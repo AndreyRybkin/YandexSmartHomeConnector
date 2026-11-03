@@ -187,7 +187,7 @@ func (s *Service) changed(d alice.Device, events []alice.DeviceState) {
 
 // collect собирает изменения за debounce и отправляет состояние каждого изменившегося
 // прибора своим уведомлением: если Яндекс отвергнет состояние одного прибора, изменения
-// остальных всё равно дойдут. События датчика уходят сразу и по одному: два нажатия подряд
+// остальных всё равно дойдут. Нажатия кнопки уходят сразу и по одному: два нажатия подряд
 // не должны слиться в одно.
 func (s *Service) collect(ctx context.Context) {
 	dirty := map[alice.Device]bool{}
@@ -204,7 +204,7 @@ func (s *Service) collect(ctx context.Context) {
 			}
 			if s.ready() {
 				for _, e := range c.events {
-					s.notifier.State([]alice.DeviceState{e})
+					s.notifier.Event(e)
 				}
 			}
 			if len(dirty) == 0 {
@@ -269,6 +269,10 @@ func (s *Service) unlink(w http.ResponseWriter, r *http.Request, requestID strin
 }
 
 func (s *Service) list(w http.ResponseWriter, r *http.Request, requestID string) {
+	// Яндекс перечитывает список после привязки и после уведомления: следующие состояния полные.
+	if s.notifier != nil {
+		s.notifier.Reset()
+	}
 	var devices []alice.DeviceInfo
 	list, _ := s.snapshot()
 	for _, d := range list {
@@ -306,6 +310,7 @@ func (s *Service) stateOf(id string) alice.DeviceState {
 	if d := byID[id]; d != nil {
 		for _, st := range d.States() {
 			if st.ID == id {
+				st.Properties = withoutButton(st.Properties)
 				return st
 			}
 		}
@@ -396,6 +401,11 @@ func (s *Service) act(ctx context.Context, what, requestID, id string, a *alice.
 	ycode := alice.CodeNotFound
 	if d := byID[id]; d != nil {
 		ycode = d.Act(ctx, id, a)
+		// Яндекс мог запомнить значение из команды, а прибор его не принял: следующее
+		// уведомление об этом устройстве полное.
+		if s.notifier != nil {
+			s.notifier.Forget(id)
+		}
 	}
 	attrs := []any{"device", id, "type", a.Type, "instance", a.State.Instance}
 	if requestID != "" {

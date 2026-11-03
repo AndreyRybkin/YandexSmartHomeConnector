@@ -512,3 +512,39 @@ func TestDishwasherLevels(t *testing.T) {
 		t.Fatalf("устройство: %s", info)
 	}
 }
+
+// Кнопка самого прибора: каждое нажатие - отдельное срочное состояние, даже с тем же значением. Переход
+// значения и событие источника об одном нажатии не удваивают его. У кнопки нет запроса состояния.
+func TestButtonProperty(t *testing.T) {
+	a := newProps(map[string]any{"button.button": "pushed"})
+	p, err := profile.Resolve("X", &profile.Profile{YandexType: "sensor.button", Properties: []profile.Property{
+		{Type: "event", Instance: alice.InstanceButton, Status: "button.button", Values: map[string]string{"pushed": "click", "held": "long_press"}}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &Device{ID: "b", Profile: p, Appliance: a}
+	got := make(chan []alice.DeviceState, 4)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go d.Run(ctx, func(events []alice.DeviceState) { got <- events })
+	notify := <-a.notify
+	notify(nil)
+	if ev := <-got; len(ev) != 0 {
+		t.Fatalf("при запуске: %+v", ev)
+	}
+	const click = `[{"id":"b","properties":[{"type":"devices.properties.event","state":{"instance":"button","value":"click"}}]}]`
+	for range 2 {
+		notify([]string{"button.button=pushed"})
+		if raw, _ := json.Marshal(<-got); string(raw) != click {
+			t.Fatalf("нажатие: %s", raw)
+		}
+	}
+	a.state.Values = map[string]any{"button.button": "held"}
+	notify([]string{"button.button=held"})
+	if ev := <-got; len(ev) != 1 || ev[0].Properties[0].State.(alice.StateValue).Value != "long_press" {
+		t.Fatalf("долгое нажатие: %+v", ev)
+	}
+	if info := d.Info(); info[0].Properties[0].Retrievable || !info[0].Properties[0].Reportable {
+		t.Fatalf("описание кнопки: %+v", info[0].Properties[0])
+	}
+}

@@ -203,3 +203,36 @@ func TestTokenRefresh(t *testing.T) {
 		t.Fatalf("отвергнутый refresh token: %v", err)
 	}
 }
+
+// Кнопка: каждое нажатие - событие, даже если значение то же. Другие атрибуты событий не дают.
+func TestButtonEvent(t *testing.T) {
+	fake := stfake.New()
+	defer fake.Close()
+	c, _ := newCloud(t, fake)
+	signIn(t, c)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := c.RefreshAccount(ctx); err != nil {
+		t.Fatal(err)
+	}
+	a := c.Appliance(stfake.Lamp, "main")
+	got := make(chan []string, 4)
+	go a.Run(ctx, func(events []string) { got <- events })
+	waitFor(t, "подписка", func() bool {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		return a.notify != nil
+	})
+	a.load(Status{})
+	<-got
+	for range 2 {
+		a.apply("main", "button", "button", AttrValue{Value: json.RawMessage(`"pushed"`)})
+		if ev := <-got; !slices.Equal(ev, []string{"button.button=pushed"}) {
+			t.Fatalf("нажатие: %v", ev)
+		}
+	}
+	a.apply("main", "switch", "switch", AttrValue{Value: json.RawMessage(`"on"`)})
+	if ev := <-got; len(ev) != 0 {
+		t.Fatalf("другой атрибут: %v", ev)
+	}
+}

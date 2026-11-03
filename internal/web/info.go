@@ -12,12 +12,12 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
-
 	"hcgateway/internal/appliance"
 	"hcgateway/internal/config"
 	"hcgateway/internal/delonghi"
 	"hcgateway/internal/gateway"
 	"hcgateway/internal/hcdevice"
+	"hcgateway/internal/i18n"
 	"hcgateway/internal/profile"
 	"hcgateway/internal/statedb"
 	"hcgateway/internal/wled"
@@ -385,7 +385,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request, _ *session) {
 func (s *Server) sse(w http.ResponseWriter, r *http.Request, event string, snap func() any) {
 	if streams.Add(1) > maxStreams {
 		streams.Add(-1)
-		http.Error(w, "Слишком много потоков", http.StatusServiceUnavailable)
+		plainError(w, "Слишком много потоков", http.StatusServiceUnavailable)
 		return
 	}
 	defer streams.Add(-1)
@@ -404,6 +404,7 @@ func (s *Server) sse(w http.ResponseWriter, r *http.Request, event string, snap 
 		// Сервер ограничивает ответ 30 с: поток продлевает срок перед каждой записью.
 		_ = rc.SetWriteDeadline(now.Add(10 * time.Second))
 		data, _ := json.Marshal(snap())
+		data = i18n.JSON(langOf(w), data)
 		var err error
 		switch {
 		case string(data) != string(last):

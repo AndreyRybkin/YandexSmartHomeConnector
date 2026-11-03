@@ -1,6 +1,7 @@
 package profile
 
 import (
+	"math"
 	"reflect"
 	"slices"
 	"strings"
@@ -189,7 +190,7 @@ func TestBuiltinDocumented(t *testing.T) {
 
 // Пересчёт свойства: готовый convert или своя формула; пересчитанное - до сотых.
 func TestConversion(t *testing.T) {
-	scale, offset, zero := 0.1, 5.0, 0.0
+	scale, offset, zero, hundred, one := 0.1, 5.0, 0.0, 100.0, 1.0
 	for _, c := range []struct {
 		pr       Property
 		in, want float64
@@ -198,11 +199,20 @@ func TestConversion(t *testing.T) {
 		{Property{Type: "float", Convert: "minutes_to_seconds"}, 85, 5100},
 		{Property{Type: "float", Convert: "fahrenheit_to_celsius"}, 70, 21.11},
 		{Property{Type: "float", Scale: &scale, Offset: &offset}, 123, 17.3},
+		{Property{Type: "float", Convert: "fraction_to_percent", Min: &zero, Max: &hundred}, 1.5, 100},
+		{Property{Type: "float", Convert: "fraction_to_percent", Min: &zero, Max: &hundred}, -0.2, 0},
+		{Property{Type: "float", Convert: "fraction_to_percent", Min: &zero, Max: &hundred}, 0.25, 25},
+		{Property{Type: "float", Convert: "fraction_to_percent", Max: &hundred}, -0.2, -20},
+		{Property{Type: "float", Min: &offset}, 1, 5},
+		{Property{Type: "float", Convert: WeightToPercent}, 850, 50},
+		{Property{Type: "float", Convert: WeightToPercent, Volume: &one}, 500, 50},
+		{Property{Type: "float", Convert: WeightToPercent, Volume: &one, Max: &hundred}, 1200, 100},
 	} {
 		if got := c.pr.Value(c.in); got != c.want {
 			t.Errorf("%+v: %v -> %v, нужно %v", c.pr, c.in, got, c.want)
 		}
 	}
+	inf := math.Inf(1)
 	check := func(pr Property) error {
 		_, err := Resolve("X", &Profile{YandexType: "other", Properties: []Property{pr}}, nil)
 		return err
@@ -218,6 +228,13 @@ func TestConversion(t *testing.T) {
 		{Type: "float", Instance: "x", Status: "s", Convert: "nope"},
 		{Type: "float", Instance: "x", Status: "s", Convert: "minutes_to_seconds", Scale: &scale},
 		{Type: "float", Instance: "x", Status: "s", Scale: &zero},
+		{Type: "float", Instance: "x", Status: "s", Min: &hundred, Max: &zero},
+		{Type: "float", Instance: "x", Status: "s", Volume: &one},
+		{Type: "float", Instance: "x", Status: "s", Convert: WeightToPercent, Volume: &zero},
+		{Type: "float", Instance: "x", Status: "s", Convert: WeightToPercent, Volume: &hundred},
+		{Type: "float", Instance: "x", Status: "s", Convert: WeightToPercent, Volume: &inf},
+		{Type: "float", Instance: "x", Status: "s", Max: &inf},
+		{Type: "event", Instance: "open", Status: "s", Values: map[string]string{"A": "opened"}, Min: &zero},
 		{Type: "float", Instance: "Bad Instance", Status: "s"},
 		{Type: "float", Instance: "x", Status: "s", Unit: "seconds"},
 		{Type: "event", Instance: "x", Status: "s", Values: map[string]string{"A": "Bad"}},

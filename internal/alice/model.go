@@ -70,6 +70,10 @@ type CapState struct {
 	State any    `json:"state"`
 }
 
+// InstanceButton - событие нажатия кнопки. Оно мгновенное, состояния у него нет: Яндекс получает
+// его только отдельным уведомлением в момент нажатия.
+const InstanceButton = "button"
+
 // StateValue - значение умения или свойства. Value без omitempty: false и 0 - тоже значения.
 type StateValue struct {
 	Instance string `json:"instance"`

@@ -7,6 +7,7 @@ const PolarisKettleType = "PolarisKettle"
 func init() {
 	celsius := "unit.temperature.celsius"
 	minT, maxT, precision := 30.0, 100.0, 1.0
+	noWater, fullWater := 0.0, 100.0
 	builtin[PolarisKettleType] = &Profile{
 		YandexType: "cooking.kettle",
 		OnOff:      "power",
@@ -16,8 +17,9 @@ func init() {
 		Modes: []Mode{{Instance: "tea_mode", Option: "tea", Values: map[string]string{
 			"black": "black_tea", "green": "green_tea", "flower": "flower_tea", "red": "red_tea",
 			"puerh": "puerh_tea", "oolong": "oolong_tea", "white": "white_tea", "herbal": "herbal_tea"}}},
-		Toggles:    []Toggle{{Instance: "backlight", Setting: "backlight"}, {Instance: "controls_locked", Setting: "child_lock"}},
-		Properties: []Property{{Type: "float", Instance: "temperature", Status: "sensor/temperature", Unit: celsius}},
+		Toggles: []Toggle{{Instance: "backlight", Setting: "backlight"}, {Instance: "controls_locked", Setting: "child_lock"}},
+		Properties: []Property{{Type: "float", Instance: "temperature", Status: "sensor/temperature", Unit: celsius},
+			{Type: "float", Instance: "water_level", Status: "weight", Unit: percent, Convert: WeightToPercent, Min: &noWater, Max: &fullWater}},
 		Events: &Events{
 			// Переход в режим 0 - конец работы, и после выключения вручную: чайник их не различает.
 			Button: map[string]string{"mode=0": "click", "error/empty_base=true": "long_press"},

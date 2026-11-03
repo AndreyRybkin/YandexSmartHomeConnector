@@ -183,7 +183,9 @@ var builtin = map[string]*Profile{
 			"ConsumerProducts.CleaningRobot.Program.Cleaning.CleanMap": "one",
 		}}},
 		Toggles: []Toggle{pause},
-		Events:  &Events{Button: finished},
+		// Заряд сообщают серии Roxxter и Spotless, от 0 до 100 %.
+		Properties: []Property{{Type: "float", Instance: "battery_level", Status: "BSH.Common.Status.BatteryLevel", Unit: percent}},
+		Events:     &Events{Button: finished},
 	},
 }
 

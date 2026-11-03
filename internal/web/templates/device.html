@@ -20,7 +20,7 @@
 <label>Имя <input name="name" value="{{.Conf.Name}}" required maxlength="64"><span class="hint" data-voice>{{.Voice}}</span><span class="fit" data-dupe{{if not .Dupe}} hidden{{end}}>{{.Dupe}}</span></label>
 <label>Комната <input name="room" value="{{.Conf.Room}}" maxlength="64" list="dl-rooms" placeholder="без комнаты"></label>
 <label>Значок <select name="icon">{{template "opts" .Icons}}</select></label>
-<p>Источник: {{source .Source}}{{with .Conf.HaID}}, haId {{.}}{{end}}{{with .Conf.DeviceID}}, deviceId {{.}}{{end}}{{with .Conf.Location}}, {{if eq $p.Data.Source "smartthings"}}компонент{{else}}камера{{end}} {{.}}{{end}}</p>
+<p>Источник: {{source .Source}}{{with .Conf.HaID}}<span>, haId {{.}}</span>{{end}}{{with .Conf.DeviceID}}<span>, deviceId {{.}}</span>{{end}}{{with .Conf.Location}}, <span>{{if eq $p.Data.Source "smartthings"}}компонент{{else}}камера{{end}}</span> {{.}}{{end}}</p>
 {{if eq .Source "demo"}}<label>Тип демо-прибора <select name="demo">{{template "opts" .DemoKinds}}</select> <span class="muted">другой тип сбрасывает состояние прибора</span></label>{{end}}
 {{if eq .Source "polaris"}}<label>Прибор Polaris <input name="device_id" value="{{.Conf.DeviceID}}" maxlength="129"></label>{{end}}
 {{if eq .Source "thinq"}}<label>Прибор аккаунта LG {{if .ThinQIDs}}<select name="device_id">{{template "opts" .ThinQIDs}}</select>{{else}}<input name="device_id" value="{{.Conf.DeviceID}}" maxlength="128">{{end}}</label>
@@ -47,11 +47,11 @@
 {{with .NewCertText}}<p class="err">Сертификат телевизора изменился, поэтому шлюз не отправляет ему ключ и телевизором не управляет. Новый отпечаток: <code>{{.}}</code>.</p>
 <p><a class="button" href="/devices/{{$p.Data.ID}}/tv/cert">Принять новый сертификат</a></p>{{end}}
 {{if .Prompt}}<p class="notice">Телевизор спрашивает разрешение: нажмите «Разрешить» на его экране пультом.</p>
-{{else if .Connected}}<p>Телевизор на связи{{with .Model}}, модель {{.}}{{end}}.</p>
+{{else if .Connected}}<p>Телевизор на связи{{with .Model}}<span>, модель {{.}}</span>{{end}}.</p>
 {{else if .Paired}}<p>Телевизор выключен или не отвечает. Шлюз проверяет его раз в 10 с.</p>
 {{else}}<p class="notice">Телевизор ещё не разрешил подключение. Включите его: шлюз подключится сам, а телевизор спросит разрешение на экране.</p>{{end}}
 {{with .Err}}<p class="err">{{.}}</p>{{end}}
-<p>MAC для включения по сети: {{with .MAC}}<code>{{.}}</code>{{else}}ещё не известен - шлюз узнает его у включённого телевизора{{end}}.{{if .Samsung}} Громкость и звук {{if .UPnP}}шлюз меняет по UPnP{{else}}по UPnP недоступны: «громче» и «тише» идут кнопками пульта{{end}}.{{end}}</p>
+<p>MAC для включения по сети: <span>{{with .MAC}}<code>{{.}}</code>{{else}}ещё не известен - шлюз узнает его у включённого телевизора{{end}}</span>.{{if .Samsung}} Громкость и звук <span>{{if .UPnP}}шлюз меняет по UPnP{{else}}по UPnP недоступны: «громче» и «тише» идут кнопками пульта{{end}}</span>.{{end}}</p>
 {{if .CertText}}<p class="muted">Отпечаток сертификата телевизора: <code>{{.CertText}}</code></p>{{else if and .Connected .Plain}}<p class="notice">Соединение без шифрования: у телевизора нет защищённого порта, и ключ передаётся открытым текстом.</p>{{end}}
 <form method="post" action="/devices/{{$p.Data.ID}}/tv/retry" class="cmd"><input type="hidden" name="csrf" value="{{$p.CSRF}}"><button>Подключить заново</button></form>
 </section>{{end}}
@@ -102,7 +102,7 @@
 
 {{if or .Editor .Strip}}<div class="tab" id="tab-map">
 {{with .Strip}}<section class="field" id="presets"><h2>Лента WLED</h2>
-{{if .Online}}<p>На связи{{with .Name}}: {{.}}{{end}}{{with .Arch}}, {{.}}{{end}}.</p>{{end}}
+{{if .Online}}<p>На связи{{with .Name}}<span>: {{.}}</span>{{end}}{{with .Arch}}<span>, {{.}}</span>{{end}}.</p>{{end}}
 <h3>Пресеты и сцены Алисы</h3>
 <p class="muted">Сцена Алисы включает сопоставленный пресет ленты. Одной сцене - один пресет.</p>
 {{with .PresetsError}}<p class="notice">{{.}}</p>{{end}}

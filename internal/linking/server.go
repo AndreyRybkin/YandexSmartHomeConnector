@@ -1,6 +1,7 @@
 package linking
 
 import (
+	"bytes"
 	"crypto/subtle"
 	"encoding/json"
 	"html/template"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"hcgateway/internal/auth"
+	"hcgateway/internal/i18n"
 	"hcgateway/internal/metrics"
 )
 
@@ -149,59 +151,63 @@ func origin(redirect string) string {
 	return u.Scheme + "://" + u.Host
 }
 
-func (s *Server) render(w http.ResponseWriter, status int, d pageData) {
+func (s *Server) render(w http.ResponseWriter, r *http.Request, status int, d pageData) {
 	h := w.Header()
 	h.Set("Content-Type", "text/html; charset=utf-8")
 	h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' "+
 		strings.Join(formOrigins(s.config().RedirectURIs), " ")+"; frame-ancestors 'none'")
 	h.Set("Cache-Control", "no-store")
 	h.Set("X-Frame-Options", "DENY")
-	w.WriteHeader(status)
-	if err := page.Execute(w, d); err != nil {
+	var out bytes.Buffer
+	if err := page.Execute(&out, d); err != nil {
 		s.log.Error("страница привязки", "err", err)
 	}
+	lang := i18n.FromRequest(r)
+	h.Set("Content-Language", string(lang))
+	w.WriteHeader(status)
+	_, _ = w.Write(i18n.HTML(lang, out.Bytes()))
 }
 
 func (s *Server) authorizePage(w http.ResponseWriter, r *http.Request) {
 	d, ok := s.request(r.URL.Query())
 	if !ok {
 		// На чужой redirect_uri не перенаправляем: ссылку мог подделать кто угодно.
-		http.Error(w, "Неверный запрос", http.StatusBadRequest)
+		http.Error(w, i18n.Translate(i18n.FromRequest(r), "Неверный запрос"), http.StatusBadRequest)
 		return
 	}
-	s.render(w, http.StatusOK, d)
+	s.render(w, r, http.StatusOK, d)
 }
 
 func (s *Server) authorizeSubmit(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxFormSize)
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "Неверный запрос", http.StatusBadRequest)
+		http.Error(w, i18n.Translate(i18n.FromRequest(r), "Неверный запрос"), http.StatusBadRequest)
 		return
 	}
 	d, ok := s.request(r.PostForm)
 	if !ok {
-		http.Error(w, "Неверный запрос", http.StatusBadRequest)
+		http.Error(w, i18n.Translate(i18n.FromRequest(r), "Неверный запрос"), http.StatusBadRequest)
 		return
 	}
 	switch res, _ := s.login.Login(r, auth.WhereLinking, r.PostForm.Get("username"), r.PostForm.Get("password")); res {
 	case auth.OK:
 	case auth.Banned:
 		d.Error = "Слишком много попыток, попробуйте позже"
-		s.render(w, http.StatusTooManyRequests, d)
+		s.render(w, r, http.StatusTooManyRequests, d)
 		return
 	case auth.Busy:
 		d.Error = "Сервер занят, попробуйте позже"
-		s.render(w, http.StatusServiceUnavailable, d)
+		s.render(w, r, http.StatusServiceUnavailable, d)
 		return
 	default:
 		d.Error = "Неверный логин или пароль"
-		s.render(w, http.StatusUnauthorized, d)
+		s.render(w, r, http.StatusUnauthorized, d)
 		return
 	}
 	c, err := s.newCode(d.RedirectURI)
 	if err != nil {
 		s.log.Error("код авторизации", "err", err)
-		http.Error(w, "Внутренняя ошибка", http.StatusInternalServerError)
+		http.Error(w, i18n.Translate(i18n.FromRequest(r), "Внутренняя ошибка"), http.StatusInternalServerError)
 		return
 	}
 	target, _ := url.Parse(d.RedirectURI)

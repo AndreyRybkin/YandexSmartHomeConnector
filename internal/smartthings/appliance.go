@@ -246,6 +246,13 @@ func (a *Appliance) setLocked(d *Device, capability, attribute string, v AttrVal
 	a.units[key] = v.Unit
 }
 
+const (
+	// buttonKey - значение кнопки SmartThings.
+	buttonKey = "button.button"
+	// maxButtonValue - предел значения кнопки: оно попадает в метку метрики событий.
+	maxButtonValue = 32
+)
+
 // integerRe - целое число строкой.
 var integerRe = regexp.MustCompile(`^-?[0-9]{1,9}$`)
 
@@ -281,8 +288,13 @@ func (a *Appliance) apply(component, capability, attribute string, v AttrValue) 
 		return
 	}
 	a.setLocked(d, capability, attribute, v)
+	var events []string
+	// Кнопка сообщает о каждом нажатии, и значение может не измениться: нажатие - отдельное событие.
+	if s, ok := a.values[buttonKey].(string); ok && capability == "button" && attribute == "button" && len(s) <= maxButtonValue {
+		events = []string{buttonKey + "=" + s}
+	}
 	a.mu.Unlock()
-	a.changed(nil)
+	a.changed(events)
 }
 
 // target - компонент и описание capability для команды.

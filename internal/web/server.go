@@ -4,8 +4,10 @@
 package web
 
 import (
+	"bytes"
 	"crypto/subtle"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -13,7 +15,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +26,7 @@ import (
 	"hcgateway/internal/config"
 	"hcgateway/internal/delonghi"
 	"hcgateway/internal/gateway"
+	"hcgateway/internal/i18n"
 	"hcgateway/internal/metrics"
 	"hcgateway/internal/mqttbroker"
 )
@@ -145,6 +150,7 @@ func New(a *auth.Auth, gw *gateway.Gateway, file *config.File, start *config.Con
 	mux.HandleFunc("GET /devices/{id}/info", s.authed(s.infoPage))
 	mux.HandleFunc("GET /devices/{id}/stream", s.authed(s.stream))
 	mux.HandleFunc("POST /theme", s.authed(s.setTheme))
+	mux.HandleFunc("POST /lang", s.authed(s.setLang))
 	mux.HandleFunc("GET /mqtt", s.authed(s.mqttPage))
 	mux.HandleFunc("GET /mqtt/stream", s.authed(s.mqttStream))
 	mux.HandleFunc("GET /mqtt/publish", s.authed(s.mqttPublishPage))
@@ -210,7 +216,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		back = r.URL.RequestURI()
 	}
-	s.mux.ServeHTTP(&themed{ResponseWriter: w, theme: themeOf(r), back: back}, r)
+	lang := i18n.FromRequest(r)
+	h.Set("Content-Language", string(lang))
+	s.mux.ServeHTTP(&themed{ResponseWriter: w, theme: themeOf(r), back: back, lang: lang, chosen: i18n.Chosen(r)}, r)
 }
 
 // themeCookie - тема интерфейса в этом браузере: light или dark; без cookie - как в системе.
@@ -224,11 +232,40 @@ const themeAge = 365 * 24 * time.Hour
 type themed struct {
 	http.ResponseWriter
 	theme, back string
+	// lang - язык ответа; chosen - язык, выбранный в этом браузере: пусто - как в браузере.
+	lang   i18n.Lang
+	chosen string
 }
 
 // Unwrap нужен http.ResponseController: поток SSE сбрасывает исходный ответ и продлевает
 // срок его записи.
 func (t *themed) Unwrap() http.ResponseWriter { return t.ResponseWriter }
+
+// langOf - язык ответа.
+func langOf(w http.ResponseWriter) i18n.Lang {
+	if t, ok := w.(*themed); ok {
+		return t.lang
+	}
+	return i18n.RU
+}
+
+// plainError - ошибка без страницы на языке ответа.
+func plainError(w http.ResponseWriter, text string, code int) {
+	http.Error(w, i18n.Translate(langOf(w), text), code)
+}
+
+// setLang запоминает язык в cookie браузера и возвращает на ту же страницу. Со скриптом cookie
+// ставит сам скрипт, а форма нужна без него. Пустое значение возвращает язык браузера.
+func (s *Server) setLang(w http.ResponseWriter, r *http.Request, _ *session) {
+	c := &http.Cookie{Name: i18n.CookieName, Path: "/", MaxAge: int(themeAge.Seconds()), Secure: true, SameSite: http.SameSiteStrictMode}
+	if v := r.PostForm.Get("lang"); i18n.Valid(v) {
+		c.Value = v
+	} else {
+		c.MaxAge = -1
+	}
+	http.SetCookie(w, c)
+	http.Redirect(w, r, localPath(r.PostForm.Get("back")), http.StatusSeeOther)
+}
 
 func themeOf(r *http.Request) string {
 	if c, err := r.Cookie(themeCookie); err == nil && (c.Value == "light" || c.Value == "dark") {
@@ -280,7 +317,7 @@ func (s *Server) authed(next handler) http.HandlerFunc {
 				return
 			}
 			if subtle.ConstantTimeCompare([]byte(r.PostForm.Get("csrf")), []byte(sess.csrf)) != 1 {
-				http.Error(w, "Форма устарела, откройте страницу заново", http.StatusForbidden)
+				plainError(w, "Форма устарела, откройте страницу заново", http.StatusForbidden)
 				return
 			}
 		}
@@ -296,9 +333,9 @@ func parseForm(w http.ResponseWriter, r *http.Request) bool {
 	}
 	var tooBig *http.MaxBytesError
 	if errors.As(err, &tooBig) {
-		http.Error(w, "Форма больше 64 КБ", http.StatusRequestEntityTooLarge)
+		plainError(w, "Форма больше 64 КБ", http.StatusRequestEntityTooLarge)
 	} else {
-		http.Error(w, "Неверный запрос", http.StatusBadRequest)
+		plainError(w, "Неверный запрос", http.StatusBadRequest)
 	}
 	return false
 }
@@ -318,12 +355,14 @@ func (s *Server) session(r *http.Request) *session {
 
 // page - общие данные страницы.
 type page struct {
-	Title   string
-	Nav     string
-	User    string
-	CSRF    string
-	Version string
-	Flash   *flash
+	Title string
+	Nav   string
+	// LangChoice - выбранный язык: пусто - как в браузере; Scripts - тексты скрипта на языке ответа, JSON.
+	LangChoice, Scripts string
+	User                string
+	CSRF                string
+	Version             string
+	Flash               *flash
 	// Theme - тема из cookie: light, dark или пусто - как в системе; Back - адрес страницы
 	// для формы темы.
 	Theme, Back string
@@ -428,15 +467,48 @@ func (s *Server) restartNeeded(cfg *config.Config) []string {
 }
 
 func (s *Server) render(w http.ResponseWriter, status int, name string, p *page) {
+	lang := langOf(w)
 	if t, ok := w.(*themed); ok {
-		p.Theme, p.Back = t.theme, t.back
+		p.Theme, p.Back, p.LangChoice = t.theme, t.back, t.chosen
+	}
+	p.Scripts = scriptTexts(lang)
+	var page bytes.Buffer
+	if err := s.pages[name].ExecuteTemplate(&page, "layout", p); err != nil {
+		s.log.Error("страница веб-интерфейса", "page", name, "err", err)
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
-	if err := s.pages[name].ExecuteTemplate(w, "layout", p); err != nil {
-		s.log.Error("страница веб-интерфейса", "page", name, "err", err)
-	}
+	_, _ = w.Write(i18n.HTML(lang, page.Bytes()))
 }
+
+// scriptKey - текст скрипта для перевода: tr("текст").
+var scriptKey = regexp.MustCompile(`\btrf?\("((?:[^"\\]|\\.)*)"`)
+
+// scriptTexts - тексты скрипта на языке lang, JSON: пусто - скрипту перевод не нужен. Скрипт статический,
+// поэтому тексты идут в разметке страницы.
+var scriptTexts = func() func(i18n.Lang) string {
+	var (
+		once sync.Once
+		en   string
+	)
+	return func(l i18n.Lang) string {
+		if l != i18n.EN {
+			return ""
+		}
+		once.Do(func() {
+			data, _ := staticFiles.ReadFile("static/app.js")
+			texts := map[string]string{}
+			for _, m := range scriptKey.FindAllSubmatch(data, -1) {
+				if key, err := strconv.Unquote(`"` + string(m[1]) + `"`); err == nil {
+					texts[key] = i18n.Translate(i18n.EN, key)
+				}
+			}
+			out, _ := json.Marshal(texts)
+			en = string(out)
+		})
+		return en
+	}
+}()
 
 func (s *Server) notFound(w http.ResponseWriter, sess *session) {
 	s.render(w, http.StatusNotFound, "notfound", s.newPage(sess, "", "Не найдено", nil))
@@ -587,5 +659,9 @@ func serveStatic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", typ)
+	if name == "manifest.webmanifest" {
+		lang := langOf(w)
+		data = bytes.Replace(i18n.JSON(lang, data), []byte(`"lang":"ru"`), []byte(`"lang":"`+string(lang)+`"`), 1)
+	}
 	_, _ = w.Write(data)
 }

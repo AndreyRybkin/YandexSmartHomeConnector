@@ -170,7 +170,7 @@ var unitNames = map[string]string{
 // stateNames - состояние работы прибора одним словом. Перечисления Home Connect - по полному
 // имени значения; режимы кофемашины - по имени и значению; значения LG - как есть.
 var stateNames = map[string]string{
-	"BSH.Common.EnumType.OperationState.Inactive":       "не активен",
+	"BSH.Common.EnumType.OperationState.Inactive":       "выключен",
 	appliance.OperationReady:                            "готов",
 	appliance.OperationDelayed:                          "ждёт отложенного старта",
 	appliance.OperationRun:                              "работает",

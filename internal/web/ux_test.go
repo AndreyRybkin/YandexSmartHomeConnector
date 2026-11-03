@@ -234,20 +234,22 @@ func TestCustomProperty(t *testing.T) {
 		"p.0.kind": {"float/*"}, "p.0.instance": {"my_time"}, "p.0.status": {"Cooking.Oven.Status.CurrentCavityTemperature"},
 		"p.0.unit": {"unit.time.seconds"}, "p.0.convert": {"minutes_to_seconds"},
 		"p.1.kind": {"float/temperature"}, "p.1.status": {"Cooking.Oven.Status.CurrentCavityTemperature"},
-		"p.1.unit": {"unit.temperature.celsius"}, "p.1.convert": {"custom"}, "p.1.scale": {"0,1"}, "p.1.offset": {"5"},
+		"p.1.unit": {"unit.temperature.celsius"}, "p.1.convert": {"custom"}, "p.1.scale": {"0,1"}, "p.1.offset": {"5"}, "p.1.min": {"0"}, "p.1.max": {"99,5"},
 		"p.2.kind": {"event/*"}, "p.2.instance": {"my_door"}, "p.2.status": {"BSH.Common.Status.DoorState"},
-		"p.2.k.0": {"BSH.Common.EnumType.DoorState.Open"}, "p.2.v.0": {"wide_open"}, "p.3.kind": {""}}
+		"p.2.k.0": {"BSH.Common.EnumType.DoorState.Open"}, "p.2.v.0": {"wide_open"},
+		"p.3.kind": {"float/water_level"}, "p.3.status": {"Cooking.Oven.Status.CurrentCavityTemperature"},
+		"p.3.unit": {"unit.percent"}, "p.3.convert": {"weight_to_percent"}, "p.3.volume": {"1,5"}, "p.4.kind": {""}}
 	if status, _, _ := f.post("/devices/oven/profile/properties", form); status != http.StatusSeeOther {
 		t.Fatalf("сохранение: %d", status)
 	}
 	props := f.config().Devices["oven"].Profile.Properties
-	if len(props) != 3 || props[0].Instance != "my_time" || props[0].Convert != "minutes_to_seconds" ||
-		*props[1].Scale != 0.1 || *props[1].Offset != 5 || props[2].Values["BSH.Common.EnumType.DoorState.Open"] != "wide_open" {
+	if len(props) != 4 || props[3].Convert != profile.WeightToPercent || *props[3].Volume != 1.5 || props[0].Instance != "my_time" || props[0].Convert != "minutes_to_seconds" ||
+		*props[1].Scale != 0.1 || *props[1].Offset != 5 || *props[1].Min != 0 || *props[1].Max != 99.5 || props[2].Values["BSH.Common.EnumType.DoorState.Open"] != "wide_open" {
 		t.Fatalf("свойства в файле: %+v", props)
 	}
 	_, body := f.get("/devices/oven")
 	for _, want := range []string{`<option value="float/*" selected>Своё число (float)</option>`, `name="p.0.instance" value="my_time"`,
-		"В документации Яндекса нет instance my_time и единицы unit.time.seconds", `<option value="custom" selected>своя формула</option>`,
+		"В документации Яндекса нет instance my_time и единицы unit.time.seconds", `<option value="custom" selected>своя формула</option>`, `name="p.1.min" value="0"`, `name="p.1.max" value="99.5"`, `name="p.3.volume" value="1.5"`,
 		`name="p.1.scale" value="0.1"`, `name="p.2.instance" value="my_door"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("на странице нет %s", want)

@@ -31,11 +31,14 @@ var profileFields = []struct{ name, title string }{
 	{"color", "Цвет"},
 	{"properties", "Свойства"},
 	{"events", "Датчик событий"},
+	{"tile", "На плитке"},
 }
 
 const (
 	// sourcePrograms - режим выбирает программу, а не значение параметра.
 	sourcePrograms = "programs"
+	// tileStatus - показание на плитке из значения прибора, а не из того, что видит Алиса.
+	tileStatus = "status"
 	// customKind - своё свойство в поле вида: instance вписывается отдельно, например float/*.
 	customKind = "*"
 	// convertCustom - своя формула пересчёта: множитель и слагаемое из формы.
@@ -287,6 +290,8 @@ func has(p *profile.Profile, field string) bool {
 		return p.Properties != nil
 	case "events":
 		return p.Events != nil
+	case "tile":
+		return p.Tile != nil
 	}
 	return false
 }
@@ -322,6 +327,8 @@ func setField(o *profile.Profile, field string, src *profile.Profile) *profile.P
 		n.Properties = src.Properties
 	case "events":
 		n.Events = src.Events
+	case "tile":
+		n.Tile = src.Tile
 	}
 	if reflect.DeepEqual(n, profile.Profile{}) {
 		return nil
@@ -354,6 +361,9 @@ func sameField(a, b *profile.Profile, field string) bool {
 		}
 		if len(n.Properties) == 0 {
 			n.Properties = nil
+		}
+		if len(n.Tile) == 0 {
+			n.Tile = nil
 		}
 		if n.Events != nil && len(n.Events.Button) == 0 && len(n.Events.FoodLevel) == 0 && len(n.Events.WaterLevel) == 0 {
 			n.Events = nil
@@ -500,25 +510,31 @@ func parseField(field string, form url.Values) (*profile.Profile, error) {
 			pr := profile.Property{Type: typ, Instance: instance, Status: get(fk("p", i, "status"))}
 			if typ == "float" {
 				pr.Unit = get(fk("p", i, "unit"))
+				type numberField struct {
+					name, label string
+					dst         **float64
+				}
+				fields := []numberField{{"min", "минимум", &pr.Min}, {"max", "максимум", &pr.Max}}
 				switch c := get(fk("p", i, "convert")); c {
 				case "":
 				case convertCustom:
-					for _, f := range []struct {
-						name, label string
-						dst         **float64
-					}{{"scale", "множитель", &pr.Scale}, {"offset", "слагаемое", &pr.Offset}} {
-						raw := strings.Replace(get(fk("p", i, f.name)), ",", ".", 1)
-						if raw == "" {
-							continue
-						}
-						v, err := strconv.ParseFloat(raw, 64)
-						if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
-							return nil, invalid("properties %s: %s %q - не число", instance, f.label, raw)
-						}
-						*f.dst = &v
-					}
+					fields = append(fields, numberField{"scale", "множитель", &pr.Scale}, numberField{"offset", "слагаемое", &pr.Offset})
+				case profile.WeightToPercent:
+					pr.Convert = c
+					fields = append(fields, numberField{"volume", "объём", &pr.Volume})
 				default:
 					pr.Convert = c
+				}
+				for _, f := range fields {
+					raw := strings.Replace(get(fk("p", i, f.name)), ",", ".", 1)
+					if raw == "" {
+						continue
+					}
+					v, err := strconv.ParseFloat(raw, 64)
+					if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
+						return nil, invalid("properties %s: %s %q - не число", instance, f.label, raw)
+					}
+					*f.dst = &v
 				}
 			} else {
 				pr.Values = map[string]string{}
@@ -529,6 +545,20 @@ func parseField(field string, form url.Values) (*profile.Profile, error) {
 				}
 			}
 			p.Properties = append(p.Properties, pr)
+		}
+	case "tile":
+		// Пустой раздел - значение по умолчанию: правила шлюза или список встроенного профиля.
+		for i := 0; form.Has(fk("t", i, "item")); i++ {
+			item, label := get(fk("t", i, "item")), get(fk("t", i, "label"))
+			switch item {
+			case "":
+			case tileStatus:
+				if status := get(fk("t", i, "status")); status != "" {
+					p.Tile = append(p.Tile, profile.TileItem{Status: status, Label: label, Unit: get(fk("t", i, "unit"))})
+				}
+			default:
+				p.Tile = append(p.Tile, profile.TileItem{Item: item, Label: label})
+			}
 		}
 	case "events":
 		p.Events = &profile.Events{}
@@ -686,9 +716,14 @@ type propertyView struct {
 	Instance string
 	Status   string
 	Unit     string
-	// Convert - пересчёт числа; Scale и Offset - своя формула.
+	// Convert - пересчёт числа; Scale и Offset - своя формула; Min и Max - границы значения.
 	Convert       []choice
 	Scale, Offset string
+	Min, Max      string
+	// Volume - объём для пересчёта веса воды; ShowVolume - показать поле: у прибора - только если он
+	// сообщает эту функцию, а на странице типа прибора нет.
+	Volume     string
+	ShowVolume bool
 	// Events - значения Алисы для подсказок у события.
 	Events []choice
 	// Warn - чего из свойства нет в документации Яндекса; Fit - функция прибора не подходит
@@ -726,6 +761,58 @@ type editorView struct {
 	Buttons    []row
 	FoodLevel  []row
 	WaterLevel []row
+	Tile       []tileRowView
+}
+
+// tileRowView - строка раздела «На плитке».
+type tileRowView struct {
+	Index, Number             int
+	Items                     []choice
+	Status, Label, Unit, Hint string
+}
+
+// tileChoices - что можно показать на плитке: то, что видит Алиса по профилю, и значение прибора.
+// Выбранное остаётся в списке, даже если профиль его больше не передаёт.
+func tileChoices(eff *profile.Profile, cur string) []choice {
+	out := []choice{{Value: "", Label: "-", Selected: cur == ""}}
+	add := func(value, label string) {
+		if !slices.ContainsFunc(out, func(c choice) bool { return c.Value == value }) {
+			out = append(out, choice{Value: value, Label: label, Selected: value == cur})
+		}
+	}
+	for _, pr := range eff.Properties {
+		if pr.Instance == alice.InstanceButton {
+			continue
+		}
+		switch pr.Type {
+		case "float":
+			add("float/"+pr.Instance, "Показание: "+nameOr(floatInstanceNames, pr.Instance))
+		case "event":
+			add("event/"+pr.Instance, "Событие: "+nameOr(eventInstanceNames, pr.Instance))
+		}
+	}
+	if e := eff.Events; e != nil {
+		if len(e.FoodLevel)+len(e.FoodLevelIfKnown) > 0 {
+			add("event/food_level", "Событие: "+nameOr(eventInstanceNames, "food_level"))
+		}
+		if len(e.WaterLevel)+len(e.WaterLevelIfKnown) > 0 {
+			add("event/water_level", "Событие: "+nameOr(eventInstanceNames, "water_level"))
+		}
+	}
+	for _, r := range eff.Ranges {
+		add("range/"+r.Instance, "Настройка: "+nameOr(rangeInstanceNames, r.Instance))
+	}
+	for _, m := range eff.Modes {
+		add("mode/"+m.Instance, "Режим: "+nameOr(modeInstanceNames, m.Instance))
+	}
+	for _, tg := range eff.Toggles {
+		add("toggle/"+tg.Instance, "Переключатель: "+nameOr(toggleInstanceNames, tg.Instance))
+	}
+	add(tileStatus, "Значение прибора")
+	if cur != "" {
+		add(cur, cur)
+	}
+	return out
 }
 
 // buildEditor собирает редактор. draft - введённое переопределение, которое не сохранилось
@@ -907,6 +994,20 @@ func buildEditor(t *editTarget, csrf, version string, draft *profile.Profile, se
 			HueHint: t.hint(c.Hue), SaturationHint: t.hint(c.Saturation), TemperatureHint: t.hint(c.Temperature)}
 	}
 
+	for i := range profile.MaxTile {
+		row := tileRowView{Index: i, Number: i + 1, Items: tileChoices(eff, "")}
+		if i < len(eff.Tile) {
+			it := eff.Tile[i]
+			row.Label, row.Status, row.Unit, row.Hint = it.Label, it.Status, it.Unit, t.hint(it.Status)
+			cur := it.Item
+			if it.Status != "" {
+				cur = tileStatus
+			}
+			row.Items = tileChoices(eff, cur)
+		}
+		v.Tile = append(v.Tile, row)
+	}
+
 	var kinds []string
 	kindLabels := map[string]string{}
 	for _, k := range slices.Sorted(maps.Keys(profile.EventValues)) {
@@ -946,6 +1047,9 @@ func buildEditor(t *editTarget, csrf, version string, draft *profile.Profile, se
 		if pr.Scale != nil || pr.Offset != nil {
 			convert, pv.Scale, pv.Offset = convertCustom, number(pr.Scale), number(pr.Offset)
 		}
+		pv.Min, pv.Max, pv.Volume = number(pr.Min), number(pr.Max), number(pr.Volume)
+		_, reported := t.now[pr.Status]
+		pv.ShowVolume = !t.device || pr.Volume != nil || reported || slices.Contains(desc.Reports, pr.Status)
 		pv.Convert = append([]choice{{Value: "", Label: "без пересчёта", Selected: convert == ""}}, conversionChoices(convert)...)
 		events := allEvents
 		if list, ok := profile.EventValues[pr.Instance]; ok && pr.Type == "event" {
@@ -990,6 +1094,7 @@ var conversionLabels = []kv{
 	{"hours_to_seconds", "часы → секунды, ×3600"},
 	{"fahrenheit_to_celsius", "°F → °C"},
 	{"fraction_to_percent", "доля → проценты, ×100"},
+	{profile.WeightToPercent, "вес воды → проценты объёма"},
 	{convertCustom, "своя формула"},
 }
 
@@ -1001,8 +1106,26 @@ func conversionChoices(cur string) []choice {
 	return out
 }
 
-// conversionLabel - пересчёт свойства для страницы; пусто - без пересчёта.
+// conversionLabel - пересчёт и границы свойства для страницы; пусто - их нет.
 func conversionLabel(pr *profile.Property) string {
+	var parts []string
+	if s := formulaLabel(pr); s != "" {
+		parts = append(parts, s)
+	}
+	if pr.Min != nil {
+		parts = append(parts, "от "+formatValue(*pr.Min))
+	}
+	if pr.Max != nil {
+		parts = append(parts, "до "+formatValue(*pr.Max))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// formulaLabel - пересчёт свойства словами; пусто - без пересчёта.
+func formulaLabel(pr *profile.Property) string {
+	if pr.Convert == profile.WeightToPercent && pr.Volume != nil {
+		return "вес воды → проценты объёма " + formatValue(*pr.Volume) + " л"
+	}
 	if pr.Convert != "" {
 		for _, c := range conversionLabels {
 			if c.Key == pr.Convert {

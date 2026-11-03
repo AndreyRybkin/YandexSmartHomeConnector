@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -435,5 +436,64 @@ func TestCoffeeMaker(t *testing.T) {
 	}
 	if d = hc(t, g, "coffee"); d.Appliance != before || d.Profile.ProgramMode().Programs["DeLonghi.Recipe.6"] != "americano" {
 		t.Fatal("рецепты пересоздали машину или не применились")
+	}
+}
+
+// Обновление при запуске: ненастроенное облако не трогает, сбой повторяет с паузой и не больше
+// startRefreshTries раз, после успеха не повторяет.
+func TestRefreshOnStart(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ctx := context.Background()
+	calls := 0
+	load := func(fail int) func(context.Context) error {
+		calls = 0
+		return func(context.Context) error {
+			calls++
+			if calls <= fail {
+				return errors.New("нет сети")
+			}
+			return nil
+		}
+	}
+	yes := func() bool { return true }
+	refreshOnStart(ctx, log, startCloud{"x", func() bool { return false }, load(0)}, 0)
+	if calls != 0 {
+		t.Fatalf("не настроено: %d запросов", calls)
+	}
+	refreshOnStart(ctx, log, startCloud{"x", yes, load(0)}, 0)
+	if calls != 1 {
+		t.Fatalf("успех: %d запросов", calls)
+	}
+	refreshOnStart(ctx, log, startCloud{"x", yes, load(2)}, 0)
+	if calls != 3 {
+		t.Fatalf("сбой и успех: %d запросов", calls)
+	}
+	refreshOnStart(ctx, log, startCloud{"x", yes, load(1000)}, 0)
+	if calls != startRefreshTries {
+		t.Fatalf("постоянный сбой: %d запросов", calls)
+	}
+	// Выход из аккаунта прекращает повторы.
+	ready := true
+	f := load(1000)
+	refreshOnStart(ctx, log, startCloud{"x", func() bool { return ready }, func(c context.Context) error {
+		ready = false
+		return f(c)
+	}}, 0)
+	if calls != 1 {
+		t.Fatalf("после выхода: %d запросов", calls)
+	}
+	// Остановка шлюза прерывает паузу.
+	stop, cancel := context.WithCancel(ctx)
+	f = load(1000)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		refreshOnStart(stop, log, startCloud{"x", yes, f}, time.Hour)
+	}()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("пауза не прервана")
 	}
 }

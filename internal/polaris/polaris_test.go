@@ -156,6 +156,22 @@ func TestKettleInAlice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Уровень воды: вес воды в проценты от полного чайника, за границами - граница.
+	level := func(weight float64) float64 {
+		t.Helper()
+		for i := range p.Properties {
+			if pr := &p.Properties[i]; pr.Instance == "water_level" && pr.Status == "weight" {
+				return pr.Value(weight)
+			}
+		}
+		t.Fatalf("нет уровня воды: %+v", p.Properties)
+		return 0
+	}
+	for weight, want := range map[float64]float64{0: 0, 850: 50, 1630: 95.88, 1700: 100, 1800: 100, -10: 0} {
+		if got := level(weight); got != want {
+			t.Errorf("вес %v: уровень %v, нужно %v", weight, got, want)
+		}
+	}
 	d := &hcdevice.Device{ID: "kettle", Name: "Чайник", Profile: p, Appliance: a, Manufacturer: "Polaris"}
 	info := d.Info()
 	if len(info) != 2 || info[0].Type != alice.TypePrefix+"cooking.kettle" {
@@ -198,9 +214,12 @@ func TestKettleInAlice(t *testing.T) {
 		t.Fatal("температура 150 принята")
 	}
 
-	// Мало воды и снятие с подставки.
-	water := func() any {
+	// Уровень воды у чайника - проценты, у датчика событий - мало или нормально.
+	water := func(id string) any {
 		for _, ds := range d.States() {
+			if ds.ID != id {
+				continue
+			}
 			for _, p := range ds.Properties {
 				if sv, ok := p.State.(alice.StateValue); ok && sv.Instance == "water_level" {
 					return sv.Value
@@ -209,11 +228,14 @@ func TestKettleInAlice(t *testing.T) {
 		}
 		return nil
 	}
-	if got := water(); got != "normal" {
+	if got := water("kettle"); got != 64.71 {
+		t.Fatalf("уровень воды в процентах: %v", got)
+	}
+	if got := water("kettle.events"); got != "normal" {
 		t.Fatalf("уровень воды: %v", got)
 	}
 	f.state("error/code", "01")
-	waitFor(t, "мало воды", func() bool { return water() == "low" })
+	waitFor(t, "мало воды", func() bool { return water("kettle.events") == "low" })
 	f.state("error/empty_base", "true")
 	waitFor(t, "подставка", func() bool { return a.State().Values["error/empty_base"] == true })
 

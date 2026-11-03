@@ -1,3 +1,11 @@
+// Тексты скрипта на языке страницы: русский текст - ключ. Без перевода остаётся русский. trf подставляет
+// значения вместо %s.
+const scriptTexts = JSON.parse(document.documentElement.dataset.i18n || "{}");
+const tr = (s) => scriptTexts[s] || s;
+function trf(s, ...args) {
+  return tr(s).replace(/%s/g, () => args.shift());
+}
+
 // Скрипт веб-интерфейса hcgateway. Страницы работают и без него: скрипт только прячет
 // лишние поля, показывает вкладки, обновляет состояние приборов и бережёт введённое.
 "use strict";
@@ -305,7 +313,7 @@ function bindLive(live) {
       }
       cell(row, v.mapping);
     };
-    fill(document.getElementById("values"), s.values, "Прибор пока ничего не сообщил.", 3, valueCells);
+    fill(document.getElementById("values"), s.values, tr("Прибор пока ничего не сообщил."), 3, valueCells);
     fill(document.getElementById("values-empty"), s.emptyFavorites, "", 3, valueCells);
     document.querySelectorAll("[data-empty-favorites]").forEach((el) => {
       const n = s.emptyFavorites ? s.emptyFavorites.length : 0;
@@ -313,7 +321,7 @@ function bindLive(live) {
       el.querySelector("[data-count]").textContent = n;
     });
     fill(document.getElementById("mappings"), s.mappings, "", 6, mapCells);
-    fill(document.getElementById("history"), s.history, "Изменений пока не было.", 4, (row, h) => {
+    fill(document.getElementById("history"), s.history, tr("Изменений пока не было."), 4, (row, h) => {
       cell(row, h.time);
       cell(row, h.kind);
       cell(row, h.key, true);
@@ -336,7 +344,7 @@ function setSwitch(button, on) {
   button.value = on ? "false" : "true";
   button.classList.toggle("on", on);
   button.setAttribute("aria-checked", String(on));
-  button.querySelector("span").textContent = on ? "Выключить" : "Включить";
+  button.querySelector("span").textContent = on ? tr("Выключить") : tr("Включить");
 }
 
 // Кнопка питания на плитке - без перезагрузки страницы. Кнопка сразу показывает новое
@@ -370,7 +378,7 @@ function bindSwitch(form) {
         reason = r.text;
       }
     } catch (err) {
-      reason = "Не выполнено: шлюз не ответил.";
+      reason = tr("Не выполнено: шлюз не ответил.");
     }
     button.classList.remove("pending");
     delete form.dataset.busy;
@@ -404,7 +412,7 @@ function updateAttention(bar, rows) {
     }
   });
   const filter = bar.hasAttribute("data-filter");
-  bar.querySelector("[data-counts]").textContent = parts.join(" · ") || (filter ? "сейчас таких нет" : "");
+  bar.querySelector("[data-counts]").textContent = parts.join(" · ") || (filter ? tr("сейчас таких нет") : "");
   bar.hidden = !filter && parts.length === 0;
 }
 
@@ -430,12 +438,26 @@ function bindDevices(list) {
         tile.hidden = !d.problem;
       }
       tile.querySelector(".state").replaceChildren(...stateChips(d.tone, d.state, d.notice));
+      const vals = tile.querySelector(".vals");
+      vals.textContent = d.values;
+      vals.hidden = !d.values;
       const form = tile.querySelector(".tile-foot form");
       if (form && !form.dataset.busy) {
         form.hidden = !d.switch;
         setSwitch(form.querySelector("button"), d.on);
       }
     });
+  });
+}
+
+// Язык: тексты страницы приходят с сервера, поэтому выбор запоминается в cookie на год и страница
+// загружается заново. Кнопка «Применить» нужна только без скрипта.
+function bindLang(select) {
+  select.form.querySelector("[data-lang-apply]").hidden = true;
+  select.addEventListener("change", () => {
+    const age = select.value ? "; Max-Age=31536000" : "; Max-Age=0";
+    document.cookie = "hcgateway-lang=" + select.value + "; Path=/" + age + "; SameSite=Strict; Secure";
+    location.reload();
   });
 }
 
@@ -488,7 +510,7 @@ function bindChoices(input) {
   });
   const other = document.createElement("option");
   other.value = "\u0000other";
-  other.textContent = "другое…";
+  other.textContent = tr("другое…");
   select.append(other);
   if (!found) {
     other.selected = true;
@@ -551,9 +573,11 @@ function bindNames(form) {
   const key = (s) => s.trim().toLowerCase();
   const update = () => {
     const r = room.value.trim();
-    voice.textContent = name.value.trim() ? "В Алисе: «" + name.value.trim() + "», " + (r ? "комната «" + r + "»" : "без комнаты") : "";
+    const typed = name.value.trim();
+    voice.textContent = !typed ? "" : r ? trf("В Алисе: «%s», комната «%s»", typed, r) : trf("В Алисе: «%s», без комнаты", typed);
     const other = list.find((d) => d.id !== form.dataset.self && key(d.name) === key(name.value) && key(d.room) === key(r));
-    dupe.textContent = other ? (r ? "В комнате «" + r + "» уже есть прибор «" : "Без комнаты уже есть прибор «") + other.name + "»: голосом их не различить." : "";
+    dupe.textContent = !other ? "" : r ? trf("В комнате «%s» уже есть прибор «%s»: голосом их не различить.", r, other.name) :
+      trf("Без комнаты уже есть прибор «%s»: голосом их не различить.", other.name);
     dupe.hidden = !other;
   };
   name.addEventListener("input", update);
@@ -567,6 +591,7 @@ const formulas = {
   hours_to_seconds: [3600, 0],
   fahrenheit_to_celsius: [5 / 9, -160 / 9],
   fraction_to_percent: [100, 0],
+  weight_to_percent: [100 / 1700, 0],
 };
 
 function decimal(text, fallback) {
@@ -575,7 +600,7 @@ function decimal(text, fallback) {
 }
 
 // Пересчёт показания до сохранения (data-result): значение прибора сейчас - data-now у
-// варианта в списке состояний, формула - выбранный пересчёт. Результат - до сотых, как у шлюза.
+// варианта в списке состояний, формула - выбранный пересчёт. Результат - до сотых и в границах, как у шлюза.
 function bindResult(p) {
   const box = p.closest("fieldset");
   const field = (name) => box.querySelector('[name$=".' + name + '"]');
@@ -583,6 +608,9 @@ function bindResult(p) {
   const convert = field("convert");
   const scale = field("scale");
   const offset = field("offset");
+  const volume = field("volume");
+  const low = field("min");
+  const high = field("max");
   const unit = field("unit");
   if (!status || !convert) {
     return;
@@ -598,12 +626,23 @@ function bindResult(p) {
     if (convert.value === "custom") {
       f = [decimal(scale && scale.value, 1), decimal(offset && offset.value, 0)];
     }
-    const v = f ? raw * f[0] + f[1] : raw;
+    if (convert.value === "weight_to_percent") {
+      f = [100 / (decimal(volume && volume.value, 1.7) * 1000), 0];
+    }
+    let v = Math.round((f ? raw * f[0] + f[1] : raw) * 100) / 100;
+    const lowest = decimal(low && low.value, NaN);
+    const highest = decimal(high && high.value, NaN);
+    if (!Number.isNaN(lowest)) {
+      v = Math.max(v, lowest);
+    }
+    if (!Number.isNaN(highest)) {
+      v = Math.min(v, highest);
+    }
     const u = unit && unit.value ? option(unit) : null;
     const label = u ? u.getAttribute("label") || u.value : unit ? unit.value : "";
-    p.textContent = "сейчас " + raw + " → " + Math.round(v * 100) / 100 + (label ? " " + label : "");
+    p.textContent = trf("сейчас %s → %s", raw, v + (label ? " " + label : ""));
   };
-  [status, convert, scale, offset, unit].forEach((el) => {
+  [status, convert, scale, offset, volume, low, high, unit].forEach((el) => {
     if (el) {
       el.addEventListener("input", update);
       el.addEventListener("change", update);
@@ -614,7 +653,7 @@ function bindResult(p) {
 // mapCells - строка сводки сопоставлений: как в шаблоне страницы прибора.
 function mapCells(row, m) {
   if (m.program) {
-    cell(row, "программа прибора");
+    cell(row, tr("программа прибора"));
   } else {
     cell(row, m.label, true).firstChild.title = m.key;
   }
@@ -624,7 +663,7 @@ function mapCells(row, m) {
   cell(row, m.value || "-");
   const a = document.createElement("a");
   a.href = "#" + m.section;
-  a.textContent = "Изменить";
+  a.textContent = tr("Изменить");
   row.insertCell().append(a);
 }
 
@@ -667,7 +706,7 @@ function bindCards(table) {
 function bindCopy(el) {
   const button = document.createElement("button");
   button.type = "button";
-  button.textContent = "Скопировать";
+  button.textContent = tr("Скопировать");
   const select = () => {
     if (el.tagName === "INPUT") {
       el.select();
@@ -683,12 +722,12 @@ function bindCopy(el) {
     const text = el.tagName === "INPUT" ? el.value : el.textContent;
     try {
       await navigator.clipboard.writeText(text);
-      button.textContent = "Скопировано";
+      button.textContent = tr("Скопировано");
     } catch {
       select();
-      button.textContent = "Выделено, скопируйте";
+      button.textContent = tr("Выделено, скопируйте");
     }
-    setTimeout(() => { button.textContent = "Скопировать"; }, 3000);
+    setTimeout(() => { button.textContent = tr("Скопировать"); }, 3000);
   });
   el.after(" ", button);
 }
@@ -758,7 +797,7 @@ function bindForms() {
     // «Проверить» отправляет форму режимов на другой адрес: её правка не сохраняется.
     const saves = form.method === "post" && !(e.submitter && e.submitter.hasAttribute("formaction"));
     const lost = Array.from(dirty).some((f) => f !== form || !saves);
-    if (lost && !window.confirm("На странице есть несохранённые правки. Уйти без них?")) {
+    if (lost && !window.confirm(tr("На странице есть несохранённые правки. Уйти без них?"))) {
       e.preventDefault();
       return;
     }
@@ -771,7 +810,7 @@ function bindForms() {
       form.querySelectorAll("button").forEach((b) => { b.disabled = true; });
       if (submitter && submitter.tagName === "BUTTON") {
         submitter.dataset.label = submitter.textContent;
-        submitter.textContent = "Подождите…";
+        submitter.textContent = tr("Подождите…");
       }
     }, 0);
   });
@@ -823,24 +862,25 @@ if (here && !here.classList.contains("tab")) {
   here.scrollIntoView();
 }
 document.querySelectorAll("select[data-theme-select]").forEach(bindTheme);
+document.querySelectorAll("select[data-lang-select]").forEach(bindLang);
 // bindMqtt обновляет страницу брокера из потока без перезагрузки.
 function bindMqtt(el) {
   const source = new EventSource(el.dataset.mqttStream);
   source.addEventListener("mqtt", (e) => {
     const s = JSON.parse(e.data);
-    fill(document.getElementById("mqtt-clients"), s.clients, "Клиентов нет.", 5, (row, c) => {
+    fill(document.getElementById("mqtt-clients"), s.clients, tr("Клиентов нет."), 5, (row, c) => {
       cell(row, c.id, true);
       cell(row, c.remote);
       cell(row, c.user);
       cell(row, c.version);
       cell(row, c.since);
     });
-    fill(document.getElementById("mqtt-failures"), s.failures, "Неудачных входов нет.", 3, (row, f) => {
+    fill(document.getElementById("mqtt-failures"), s.failures, tr("Неудачных входов нет."), 3, (row, f) => {
       cell(row, f.time);
       cell(row, f.remote);
       cell(row, f.user);
     });
-    fill(document.getElementById("mqtt-journal"), s.journal, "Сообщений пока не было.", 6, (row, j) => {
+    fill(document.getElementById("mqtt-journal"), s.journal, tr("Сообщений пока не было."), 6, (row, j) => {
       cell(row, j.time);
       cell(row, j.dir);
       cell(row, j.client, true);
@@ -848,7 +888,7 @@ function bindMqtt(el) {
       cell(row, j.payload);
       cell(row, j.flags).className = "muted";
     });
-    fill(document.getElementById("mqtt-values"), s.values, "Значений пока нет.", 5, (row, v) => {
+    fill(document.getElementById("mqtt-values"), s.values, tr("Значений пока нет."), 5, (row, v) => {
       cell(row, v.topic, true);
       cell(row, v.payload);
       cell(row, v.client, true);

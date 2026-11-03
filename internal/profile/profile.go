@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 )
@@ -38,6 +39,20 @@ type Profile struct {
 	Color      *Color     `yaml:"color"`
 	Properties []Property `yaml:"properties"`
 	Events     *Events    `yaml:"events"`
+	// Tile - показания на плитке прибора; nil - их выбирает шлюз. Алисе они не уходят.
+	Tile []TileItem `yaml:"tile,omitempty"`
+}
+
+// MaxTile - сколько показаний помещается на плитке прибора.
+const MaxTile = 3
+
+// TileItem - показание на плитке: то, что видит Алиса (Item, вида float/temperature), или значение
+// прибора (Status) с единицей Unit. Label заменяет обычную подпись.
+type TileItem struct {
+	Item   string `yaml:"item,omitempty"`
+	Status string `yaml:"status,omitempty"`
+	Label  string `yaml:"label,omitempty"`
+	Unit   string `yaml:"unit,omitempty"`
 }
 
 // Color - умение color_setting: цвет HSV, цветовая температура или оба. Пустой Color -
@@ -126,6 +141,11 @@ type Property struct {
 	// Scale и Offset - своя формула пересчёта для float: значение × Scale + Offset.
 	Scale  *float64 `yaml:"scale,omitempty"`
 	Offset *float64 `yaml:"offset,omitempty"`
+	// Volume - объём в литрах для пересчёта weight_to_percent; nil - DefaultVolume.
+	Volume *float64 `yaml:"volume,omitempty"`
+	// Min и Max - границы значения float для Алисы: значение за границей прилипает к ней.
+	Min *float64 `yaml:"min,omitempty"`
+	Max *float64 `yaml:"max,omitempty"`
 	// Values - для event: значение Home Connect -> значение Алисы.
 	Values map[string]string `yaml:"values,omitempty"`
 }
@@ -178,10 +198,27 @@ var Conversions = map[string]Conversion{
 	"hours_to_seconds":      {Scale: 3600},
 	"fahrenheit_to_celsius": {Scale: 5.0 / 9, Offset: -160.0 / 9},
 	"fraction_to_percent":   {Scale: 100},
+	WeightToPercent:         {Scale: 100 / (DefaultVolume * unitsPerLiter)},
 }
+
+const (
+	// WeightToPercent - пересчёт веса воды в проценты объёма: чайник сообщает вес, а Яндекс
+	// принимает уровень воды только в процентах.
+	WeightToPercent = "weight_to_percent"
+	// DefaultVolume - объём в литрах, если он не задан.
+	DefaultVolume = 1.7
+	// unitsPerLiter - сколько единиц веса в литре воды.
+	unitsPerLiter = 1000.0
+	// minVolume и maxVolume - пределы объёма в литрах: значение за ними - опечатка.
+	minVolume = 0.1
+	maxVolume = 10.0
+)
 
 // Formula - пересчёт свойства: готовый convert или scale и offset; без них - значение как есть.
 func (pr *Property) Formula() Conversion {
+	if pr.Convert == WeightToPercent && pr.Volume != nil {
+		return Conversion{Scale: 100 / (*pr.Volume * unitsPerLiter)}
+	}
 	if c, ok := Conversions[pr.Convert]; ok {
 		return c
 	}
@@ -196,13 +233,18 @@ func (pr *Property) Formula() Conversion {
 }
 
 // Value - значение для Алисы из значения прибора. Пересчитанное значение округляется до
-// сотых: у °F → °C иначе получались бы дроби вроде 21,111111.
+// сотых: у °F → °C иначе получались бы дроби вроде 21,111111. Границы применяются последними.
 func (pr *Property) Value(v float64) float64 {
-	c := pr.Formula()
-	if c == (Conversion{Scale: 1}) {
-		return v
+	if c := pr.Formula(); c != (Conversion{Scale: 1}) {
+		v = math.Round((v*c.Scale+c.Offset)*100) / 100
 	}
-	return math.Round((v*c.Scale+c.Offset)*100) / 100
+	if pr.Min != nil {
+		v = max(v, *pr.Min)
+	}
+	if pr.Max != nil {
+		v = min(v, *pr.Max)
+	}
+	return v
 }
 
 var (
@@ -210,11 +252,13 @@ var (
 	instanceRe = regexp.MustCompile(`^[a-z0-9_.]{1,64}$`)
 	// unitRe - единица Яндекса, например unit.time.seconds.
 	unitRe = regexp.MustCompile(`^unit(\.[a-z0-9_]{1,32}){1,4}$`)
+	// tileItemRe - показание на плитке: вид и instance.
+	tileItemRe = regexp.MustCompile(`^(float|event|range|mode|toggle|color_setting)/[a-z0-9_.]{1,64}$`)
 	// eventValueRe - значение свойства event, например long_press.
 	eventValueRe = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
 )
 
-// Events - отдельное устройство-датчик «<прибор> - события».
+// Events - отдельное устройство-датчик «<прибор> триггер».
 type Events struct {
 	// Button - событие прибора -> click, double_click или long_press. Ключ - имя события,
 	// шаблон с * (например *_IS_COMPLETE) или переход значения: состояние=значение.
@@ -291,6 +335,9 @@ func (p *Profile) apply(o *Profile) {
 	if o.Properties != nil {
 		p.Properties = slices.Clone(o.Properties)
 	}
+	if o.Tile != nil {
+		p.Tile = slices.Clone(o.Tile)
+	}
 	if o.Events != nil {
 		e := *o.Events
 		// Редактор задаёт только основные списки: остальное наследуется, иначе правка кнопки
@@ -344,6 +391,7 @@ func (p Profile) MarshalYAML() (any, error) {
 		{"ranges", p.Ranges != nil, p.Ranges},
 		{"toggles", p.Toggles != nil, p.Toggles},
 		{"color", p.Color != nil, p.Color},
+		{"tile", p.Tile != nil, p.Tile},
 		{"properties", p.Properties != nil, p.Properties},
 		{"events", p.Events != nil, p.Events},
 	})
@@ -394,6 +442,9 @@ func (p *Profile) ProgramMode() *Mode {
 func (p *Profile) Validate() error {
 	if p.YandexType == "" {
 		return errors.New("не задан yandex_type")
+	}
+	if err := checkTile(p.Tile); err != nil {
+		return err
 	}
 	if !slices.Contains(OnOffKinds, p.OnOff) {
 		return fmt.Errorf("on_off: %q, допустимо %v", p.OnOff, OnOffKinds)
@@ -601,9 +652,70 @@ func (p *Profile) HasEvents() bool {
 	return p.Events != nil && (len(p.Events.Button) > 0 || len(p.Events.FoodLevel) > 0 || len(p.Events.WaterLevel) > 0)
 }
 
+// checkTile проверяет показания на плитке.
+func checkTile(items []TileItem) error {
+	if len(items) > MaxTile {
+		return fmt.Errorf("tile: не больше %d показаний", MaxTile)
+	}
+	for _, t := range items {
+		switch {
+		case (t.Item == "") == (t.Status == ""):
+			return errors.New("tile: нужно либо item, либо status")
+		case t.Item != "" && !tileItemRe.MatchString(t.Item):
+			return fmt.Errorf("tile: item %q - вида float/temperature", t.Item)
+		case t.Item != "" && t.Unit != "":
+			return fmt.Errorf("tile %s: единица задаётся только для status", t.Item)
+		case len(t.Status) > maxTileStatus:
+			return fmt.Errorf("tile: status длиннее %d байт", maxTileStatus)
+		case utf8.RuneCountInString(t.Label) > maxTileLabel:
+			return fmt.Errorf("tile: подпись длиннее %d символов", maxTileLabel)
+		case t.Unit != "" && !unitRe.MatchString(t.Unit):
+			return fmt.Errorf("tile: единица %q - вида unit.percent", t.Unit)
+		}
+	}
+	return nil
+}
+
+const (
+	// maxTileStatus и maxTileLabel - пределы показания на плитке.
+	maxTileStatus = 256
+	maxTileLabel  = 32
+)
+
+// checkLimits проверяет границы значения свойства.
+func checkLimits(pr *Property) error {
+	if pr.Min == nil && pr.Max == nil {
+		return nil
+	}
+	if pr.Type != "float" {
+		return fmt.Errorf("properties %s: min и max - только у float", pr.Instance)
+	}
+	for _, v := range []*float64{pr.Min, pr.Max} {
+		if v != nil && (math.IsNaN(*v) || math.IsInf(*v, 0)) {
+			return fmt.Errorf("properties %s: min и max - числа", pr.Instance)
+		}
+	}
+	if pr.Min != nil && pr.Max != nil && *pr.Min > *pr.Max {
+		return fmt.Errorf("properties %s: min %v больше max %v", pr.Instance, *pr.Min, *pr.Max)
+	}
+	return nil
+}
+
 // checkFormula проверяет пересчёт свойства: он только у float, convert - из Conversions и
-// не вместе со scale и offset, множитель не 0, числа конечные.
+// не вместе со scale и offset, множитель не 0, числа конечные. Границы - только у float, конечные,
+// минимум не больше максимума.
 func checkFormula(pr *Property) error {
+	if err := checkLimits(pr); err != nil {
+		return err
+	}
+	if v := pr.Volume; v != nil {
+		if pr.Convert != WeightToPercent {
+			return fmt.Errorf("properties %s: volume - только с convert %s", pr.Instance, WeightToPercent)
+		}
+		if !(*v >= minVolume && *v <= maxVolume) {
+			return fmt.Errorf("properties %s: volume - от %v до %v литров", pr.Instance, minVolume, maxVolume)
+		}
+	}
 	custom := pr.Scale != nil || pr.Offset != nil
 	if pr.Convert == "" && !custom {
 		return nil

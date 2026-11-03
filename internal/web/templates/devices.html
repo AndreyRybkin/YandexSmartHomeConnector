@@ -6,8 +6,9 @@
 {{range .Rooms}}<section class="room">{{if .Room}}<h2>{{.Room}}</h2>{{else if gt (len $p.Data.Rooms) 1}}<h2>Без комнаты</h2>{{end}}
 <div class="tiles">
 {{range .Devices}}<article class="tile {{.Tone}}" id="d-{{.ID}}"{{if and $p.Data.Problems (not .Problem)}} hidden{{end}}>
-<a class="tile-head" href="/devices/{{.ID}}"><svg class="icon" aria-hidden="true"><use href="#i-{{.Icon}}"/></svg><span><span class="tile-name">{{.Name}}</span><span class="tech">{{source .Source}}</span></span></a>
+<a class="tile-head" href="/devices/{{.ID}}"><svg class="icon" aria-hidden="true"><use href="#i-{{.Icon}}"/></svg><span><span class="tile-name" translate="no">{{.Name}}</span><span class="tech">{{source .Source}}</span></span></a>
 <p class="state"><span class="chip {{.Tone}}">{{.State}}</span>{{with .Notice}}<span class="chip warn">{{.}}</span>{{end}}</p>
+<p class="vals"{{if not .Values}} hidden{{end}}>{{.Values}}</p>
 <div class="tile-foot"><form method="post" action="/devices/{{.ID}}/command"{{if not .Switch}} hidden{{end}}><input type="hidden" name="csrf" value="{{$p.CSRF}}"><input type="hidden" name="type" value="devices.capabilities.on_off"><input type="hidden" name="instance" value="on"><input type="hidden" name="from" value="list"><button class="switch{{if .On}} on{{end}}" name="value" value="{{if .On}}false{{else}}true{{end}}" role="switch" aria-checked="{{.On}}"><svg class="icon" aria-hidden="true"><use href="#i-power"/></svg><span>{{if .On}}Выключить{{else}}Включить{{end}}</span></button></form>
 <a class="icon-link" href="/devices/{{.ID}}/info" title="Всё о приборе" aria-label="Всё о приборе"><svg class="icon" aria-hidden="true"><use href="#i-info"/></svg></a></div>
 </article>{{end}}

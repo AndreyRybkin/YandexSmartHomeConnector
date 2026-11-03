@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 
 	"hcgateway/internal/auth"
 )
@@ -266,5 +267,30 @@ func TestFormOrigins(t *testing.T) {
 		"https://evil.example;script-src *", "javascript:alert(1)"})
 	if strings.Join(got, " ") != "https://social.yandex.net https://social.yandex.ru" {
 		t.Fatalf("сайты: %v", got)
+	}
+}
+
+// Страница привязки - на языке браузера: cookie языка сюда не доходит, потому что вход идёт со страницы Яндекса.
+func TestLinkingPageLanguage(t *testing.T) {
+	f := newFixture(t)
+	get := func(accept string) (string, *http.Response) {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodGet, f.url+"/auth/authorize?"+authForm("").Encode(), nil)
+		req.Header.Set("Accept-Language", accept)
+		resp, err := f.client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return string(body), resp
+	}
+	body, resp := get("en-US,en;q=0.9")
+	if !strings.Contains(body, `<html lang="en"`) || !strings.Contains(body, "Link") || resp.Header.Get("Content-Language") != "en" ||
+		strings.ContainsFunc(body, func(r rune) bool { return unicode.Is(unicode.Cyrillic, r) }) {
+		t.Fatalf("английская страница: %s", body)
+	}
+	if body, _ = get("ru"); !strings.Contains(body, `<html lang="ru"`) || !strings.Contains(body, "Привязать") {
+		t.Fatalf("русская страница: %s", body)
 	}
 }

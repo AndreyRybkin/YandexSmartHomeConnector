@@ -275,27 +275,73 @@ func (d *Device) IDs() []string {
 func (d *Device) Run(ctx context.Context, changed alice.Changed) {
 	d.Appliance.Run(ctx, func(events []string) {
 		st := d.Appliance.State()
-		events = append(slices.Clone(events), d.transitions(&st)...)
+		events = once(append(slices.Clone(events), d.transitions(&st)...))
 		for _, e := range events {
 			metrics.DeviceEvent(d.ID, e)
 		}
 		d.record(&st, events)
 		var urgent []alice.DeviceState
 		for _, b := range d.buttonFor(events) {
-			urgent = append(urgent, d.sensorState(&st, b))
+			urgent = append(urgent, buttonState(d.ID+eventsSuffix, b))
 		}
-		changed(urgent)
+		changed(append(urgent, d.pressed(events)...))
 	})
 }
 
-// transitions - переходы значений из профиля датчика, которые случились с прошлого изменения:
-// событие состояние=значение. Первое значение после запуска только запоминается, иначе прибор,
-// который уже закончил работу, сообщал бы об этом при каждом запуске шлюза.
+// once - события без повторов, в прежнем порядке: источник и переход значения могут сообщить об
+// одном и том же.
+func once(events []string) []string {
+	var out []string
+	for _, e := range events {
+		if !slices.Contains(out, e) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// buttonState - нажатие кнопки устройства id: только оно, без остальных свойств.
+func buttonState(id, value string) alice.DeviceState {
+	return alice.DeviceState{ID: id, Properties: []alice.CapState{{Type: alice.PropEvent,
+		State: alice.StateValue{Instance: alice.InstanceButton, Value: value}}}}
+}
+
+// pressed - нажатия кнопки самого прибора, например кнопки SmartThings: событие состояние=значение
+// для её свойства button.
+func (d *Device) pressed(events []string) []alice.DeviceState {
+	var out []alice.DeviceState
+	for i := range d.Profile.Properties {
+		pr := &d.Profile.Properties[i]
+		if pr.Type != "event" || pr.Instance != alice.InstanceButton {
+			continue
+		}
+		for _, e := range events {
+			if raw, ok := strings.CutPrefix(e, pr.Status+"="); ok {
+				if v, ok := pr.Values[raw]; ok {
+					out = append(out, buttonState(d.ID, v))
+				}
+			}
+		}
+	}
+	return out
+}
+
+// transitions - переходы значений из профиля датчика и свойств button, которые случились с прошлого
+// изменения: событие состояние=значение. Первое значение после запуска только запоминается, иначе
+// прибор, который уже закончил работу, сообщал бы об этом при каждом запуске шлюза.
 func (d *Device) transitions(st *appliance.State) []string {
-	if !d.Profile.HasEvents() || !st.Online {
+	if !st.Online {
 		return nil
 	}
-	watch := d.Profile.Events.Transitions()
+	watch := map[string][]string{}
+	if d.Profile.HasEvents() {
+		watch = d.Profile.Events.Transitions()
+	}
+	for i := range d.Profile.Properties {
+		if pr := &d.Profile.Properties[i]; pr.Type == "event" && pr.Instance == alice.InstanceButton {
+			watch[pr.Status] = append(watch[pr.Status], slices.Collect(maps.Keys(pr.Values))...)
+		}
+	}
 	if len(watch) == 0 {
 		return nil
 	}
@@ -367,12 +413,12 @@ func (d *Device) Info() []alice.DeviceInfo {
 	out := []alice.DeviceInfo{dev}
 	if p.HasEvents() {
 		sensor := alice.DeviceInfo{
-			ID: d.ID + eventsSuffix, Name: d.Name + " - события", Room: d.Room, Type: alice.TypeButton,
+			ID: d.ID + eventsSuffix, Name: d.Name + " триггер", Room: d.Room, Type: alice.TypeButton,
 			DeviceInfo: alice.Manufacturer{Manufacturer: d.manufacturer(), Model: desc.Type},
 		}
 		if values := buttonValues(p.Events); len(values) > 0 {
-			sensor.Properties = append(sensor.Properties, alice.Capability{Type: alice.PropEvent, Retrievable: true, Reportable: true,
-				Parameters: alice.EventParams{Instance: "button", Events: alice.Items(values)}})
+			sensor.Properties = append(sensor.Properties, alice.Capability{Type: alice.PropEvent, Reportable: true,
+				Parameters: alice.EventParams{Instance: alice.InstanceButton, Events: alice.Items(values)}})
 		}
 		for _, l := range levels(p.Events, &desc) {
 			values := []string{"low", "normal"}
@@ -434,7 +480,7 @@ func propertyInfo(pr *profile.Property) alice.Capability {
 	}
 	values := slices.Sorted(maps.Values(pr.Values))
 	values = slices.Compact(values)
-	return alice.Capability{Type: alice.PropEvent, Retrievable: true, Reportable: true,
+	return alice.Capability{Type: alice.PropEvent, Retrievable: pr.Instance != alice.InstanceButton, Reportable: true,
 		Parameters: alice.EventParams{Instance: pr.Instance, Events: alice.Items(values)}}
 }
 
@@ -492,7 +538,7 @@ func (d *Device) States() []alice.DeviceState {
 	}
 	out := []alice.DeviceState{d.mainState(&st)}
 	if d.Profile.HasEvents() {
-		out = append(out, d.sensorState(&st, ""))
+		out = append(out, d.sensorState(&st))
 	}
 	return out
 }
@@ -620,18 +666,15 @@ func (d *Device) rangeValue(r *profile.Range, desc *appliance.Description, st *a
 	return v, ok
 }
 
-// sensorState - состояние датчика событий. button - событие, которое нужно сообщить,
-// пусто - последнее известное.
-func (d *Device) sensorState(st *appliance.State, button string) alice.DeviceState {
+// sensorState - состояние датчика событий: последнее нажатие и уровни.
+func (d *Device) sensorState(st *appliance.State) alice.DeviceState {
 	ds := alice.DeviceState{ID: d.ID + eventsSuffix}
 	e := d.Profile.Events
-	if button == "" {
-		d.mu.Lock()
-		button = d.button
-		d.mu.Unlock()
-	}
+	d.mu.Lock()
+	button := d.button
+	d.mu.Unlock()
 	if button != "" {
-		ds.Properties = append(ds.Properties, alice.CapState{Type: alice.PropEvent, State: alice.StateValue{Instance: "button", Value: button}})
+		ds.Properties = append(ds.Properties, alice.CapState{Type: alice.PropEvent, State: alice.StateValue{Instance: alice.InstanceButton, Value: button}})
 	}
 	desc := d.Appliance.Describe()
 	for _, l := range levels(e, &desc) {

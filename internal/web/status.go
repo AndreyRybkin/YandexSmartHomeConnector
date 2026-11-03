@@ -70,10 +70,14 @@ func (s *Server) status(id string, d config.Device) status {
 	case st.Waiting:
 	case !st.Online:
 		st.Text = s.offlineText(id)
+	case st.Text == "" && st.Switch && st.On:
+		st.Text = "включён"
+	case st.Text == "" && st.Switch:
+		st.Text = "выключен"
 	case st.Text == "":
 		st.Text = "на связи"
 	}
-	st.Tone = stateTone(st.Online, working || !isHC && st.On, st.Waiting)
+	st.Tone = stateTone(st.Online, working || st.On, st.Waiting)
 	st.Problem, st.Notice = s.problem(id, d, &st)
 	return st
 }

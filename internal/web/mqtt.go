@@ -216,15 +216,16 @@ func (s *Server) mqttPublishPage(w http.ResponseWriter, r *http.Request, sess *s
 	if m.Payload == "" {
 		text = "Значение пустое."
 	}
+	var more []string
 	if m.Retain {
-		text += " Брокер сохранит сообщение и отдаст его новым подписчикам."
+		more = append(more, "Брокер сохранит сообщение и отдаст его новым подписчикам.")
 	}
-	text += " Прибор выполнит команду сразу."
+	more = append(more, "Прибор выполнит команду сразу.")
 	fields := []kv{{"topic", m.Topic}, {"payload", m.Payload}, {"qos", m.QoS}}
 	if m.Retain {
 		fields = append(fields, kv{"retain", "on"})
 	}
-	s.render(w, http.StatusOK, "confirm", s.newPage(sess, "mqtt", "MQTT", confirmView{Title: "Отправить сообщение в " + m.Topic + "?", Text: text,
+	s.render(w, http.StatusOK, "confirm", s.newPage(sess, "mqtt", "MQTT", confirmView{Title: "Отправить сообщение в " + m.Topic + "?", Text: text, More: more,
 		Action: "/mqtt/publish", Button: "Отправить", Back: "/mqtt#send", Fields: fields}))
 }
 

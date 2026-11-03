@@ -35,6 +35,9 @@ const (
 	StatusStep = "DeLonghi.Status.StepDescr"
 	// StatusDispensing - сколько процентов напитка налито.
 	StatusDispensing = "DeLonghi.Status.BeverageDispensing"
+	// StatusPouring - то же значение, но только во время налива: после него машина не сбрасывает
+	// StatusDispensing сразу.
+	StatusPouring = "DeLonghi.Status.Pouring"
 	// AlarmPrefix - тревоги: DeLonghi.Alarm.TankLevel = EventPresent, пока нет воды.
 	AlarmPrefix = "DeLonghi.Alarm."
 	// PeripheralPrefix - датчики: DeLonghi.Peripheral.WaterTankLow = true.
@@ -166,6 +169,9 @@ func (ap *Appliance) State() appliance.State {
 	st := appliance.State{Online: ap.conn != nil && ap.have, Values: maps.Clone(ap.values)}
 	if ap.brewing && ap.recipe > 0 {
 		st.ActiveProgram = ProgramPrefix + strconv.Itoa(ap.recipe)
+	}
+	if disp, _ := ap.values[StatusDispensing].(float64); ap.brewing && disp > 0 && disp < 100 {
+		st.Values[StatusPouring] = disp
 	}
 	return st
 }

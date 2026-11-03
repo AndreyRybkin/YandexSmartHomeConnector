@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -142,7 +143,7 @@ func TestDevicesList(t *testing.T) {
 		`"id":"oven","name":"oven","room":"Кухня","type":"devices.types.cooking"`,
 		`"instance":"program","modes":[{"value":"one"},{"value":"frying"},{"value":"baking"},{"value":"eco"},{"value":"pizza"},{"value":"preheat"},{"value":"slow_cook"},{"value":"normal"}]`,
 		`"instance":"temperature","unit":"unit.temperature.celsius","random_access":true,"range":{"min":30,"max":275,"precision":5}`,
-		`"id":"oven.events","name":"oven - события","room":"Кухня","type":"devices.types.sensor.button"`,
+		`"id":"oven.events","name":"oven триггер","room":"Кухня","type":"devices.types.sensor.button"`,
 		`"instance":"button","events":[{"value":"click"},{"value":"double_click"}]`,
 		`"instance":"dishwashing"`,
 		`"instance":"food_level","events":[{"value":"empty"},{"value":"low"},{"value":"normal"}]`,
@@ -358,7 +359,7 @@ func TestNotifications(t *testing.T) {
 		t.Fatalf("событие: %s", raw)
 	}
 	raw = got[2].body
-	if !bytes.Contains(raw, []byte(`"user_id":"owner"`)) || !bytes.Contains(raw, []byte(`"id":"oven","capabilities"`)) {
+	if !bytes.Contains(raw, []byte(`"user_id":"owner"`)) || !bytes.Contains(raw, []byte(`"id":"oven","status":"online","capabilities"`)) {
 		t.Fatalf("состояние: %s", raw)
 	}
 }
@@ -604,5 +605,154 @@ func TestNotificationsPerDevice(t *testing.T) {
 		if bytes.Contains(body, []byte(`"id":"oven"`)) && bytes.Contains(body, []byte(`"id":"dish"`)) {
 			t.Fatalf("два прибора в одном уведомлении: %s", body)
 		}
+	}
+}
+
+// notifierServer - сервер уведомлений: записывает тела принятых состояний и отвечает кодом status.
+func notifierServer(t *testing.T, status *atomic.Int32) (*Notifier, func() []string) {
+	t.Helper()
+	var (
+		mu  sync.Mutex
+		got []string
+	)
+	hs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var v struct {
+			Payload struct {
+				Devices json.RawMessage `json:"devices"`
+			} `json:"payload"`
+		}
+		json.Unmarshal(body, &v)
+		mu.Lock()
+		got = append(got, string(v.Payload.Devices))
+		mu.Unlock()
+		w.WriteHeader(int(status.Load()))
+	}))
+	t.Cleanup(hs.Close)
+	n := NewNotifier(hs.URL, "skill-1", "token", UserID, discard())
+	return n, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		out := got
+		got = nil
+		return out
+	}
+}
+
+// Уведомление о состоянии содержит только то, что изменилось; нажатие кнопки уходит только своим
+// уведомлением и каждый раз; полное состояние - после запуска, отказа, команды и нового списка.
+func TestNotifyChanges(t *testing.T) {
+	var status atomic.Int32
+	status.Store(http.StatusAccepted)
+	n, got := notifierServer(t, &status)
+	ctx := context.Background()
+	float := func(instance string, v float64) alice.CapState {
+		return alice.CapState{Type: alice.PropFloat, State: alice.StateValue{Instance: instance, Value: v}}
+	}
+	button := alice.CapState{Type: alice.PropEvent, State: alice.StateValue{Instance: alice.InstanceButton, Value: "click"}}
+	on := alice.CapState{Type: alice.CapOnOff, State: alice.StateValue{Instance: "on", Value: true}}
+	state := func(temp, hum float64) notifyJob {
+		return notifyJob{devices: []alice.DeviceState{{ID: "k", Capabilities: []alice.CapState{on},
+			Properties: []alice.CapState{float("temperature", temp), float("humidity", hum)}},
+			{ID: "k.events", Properties: []alice.CapState{button}}}}
+	}
+	const (
+		tempOnly = `[{"id":"k","properties":[{"type":"devices.properties.float","state":{"instance":"temperature","value":30}}]}]`
+		full     = `[{"id":"k","status":"online","capabilities":[{"type":"devices.capabilities.on_off","state":{"instance":"on","value":true}}],` +
+			`"properties":[{"type":"devices.properties.float","state":{"instance":"temperature","value":30}},{"type":"devices.properties.float","state":{"instance":"humidity","value":40}}]}]`
+	)
+	expect := func(what string, want ...string) {
+		t.Helper()
+		var have []string
+		for _, b := range got() {
+			b = strings.ReplaceAll(b, `{"id":"k.events","status":"online"},`, "")
+			b = strings.ReplaceAll(b, `,{"id":"k.events","status":"online"}`, "")
+			have = append(have, b)
+		}
+		if !slices.Equal(have, want) {
+			t.Fatalf("%s: %q, нужно %q", what, have, want)
+		}
+	}
+
+	first := `[{"id":"k","status":"online","capabilities":[{"type":"devices.capabilities.on_off","state":{"instance":"on","value":true}}],` +
+		`"properties":[{"type":"devices.properties.float","state":{"instance":"temperature","value":20}},{"type":"devices.properties.float","state":{"instance":"humidity","value":40}}]}]`
+	n.send(ctx, state(20, 40))
+	expect("после запуска - полное состояние без кнопки", first)
+	n.send(ctx, state(20, 40))
+	expect("без изменений уведомления нет")
+	n.send(ctx, state(30, 40))
+	expect("только изменившееся", tempOnly)
+
+	press := notifyJob{press: true, devices: []alice.DeviceState{{ID: "k.events", Properties: []alice.CapState{button}}}}
+	const pressed = `[{"id":"k.events","properties":[{"type":"devices.properties.event","state":{"instance":"button","value":"click"}}]}]`
+	n.send(ctx, press)
+	n.send(ctx, press)
+	expect("каждое нажатие - отдельно", pressed, pressed)
+	n.send(ctx, state(30, 40))
+	expect("нажатие не меняет память о принятом")
+
+	// Отказ: значение не считается принятым и уходит снова.
+	status.Store(http.StatusBadRequest)
+	n.send(ctx, state(20, 40))
+	status.Store(http.StatusAccepted)
+	got()
+	n.send(ctx, state(30, 40))
+	expect("старое значение Яндекс ещё помнит")
+	n.send(ctx, state(20, 40))
+	got()
+
+	n.Forget("k")
+	n.send(ctx, state(30, 40))
+	expect("после команды - полное состояние", full)
+
+	n.Reset()
+	n.send(ctx, state(30, 40))
+	expect("после нового списка - полное состояние", full)
+
+	// Связь: offline один раз, при возврате - online и всё состояние.
+	offline := notifyJob{devices: []alice.DeviceState{{ID: "k", ErrorCode: alice.CodeUnreachable}}}
+	n.send(ctx, offline)
+	n.send(ctx, offline)
+	expect("без связи - один раз", `[{"id":"k","status":"offline"}]`)
+	n.send(ctx, state(30, 40))
+	expect("возврат на связь - полное состояние", full)
+
+	// Новые настройки навыка: Яндекс мог ничего не знать.
+	n.Configure("skill-2", "token")
+	n.send(ctx, state(30, 40))
+	expect("после смены навыка - полное состояние", full)
+}
+
+// Цвет: значение сравнивается с тем, что ушло последним, даже если instance был другим.
+func TestNotifyColor(t *testing.T) {
+	var status atomic.Int32
+	status.Store(http.StatusAccepted)
+	n, got := notifierServer(t, &status)
+	ctx := context.Background()
+	color := func(instance string, v any) notifyJob {
+		return notifyJob{devices: []alice.DeviceState{{ID: "l", Capabilities: []alice.CapState{{Type: alice.CapColor,
+			State: alice.StateValue{Instance: instance, Value: v}}}}}}
+	}
+	n.send(ctx, color("temperature_k", 4000))
+	n.send(ctx, color("rgb", 255))
+	n.send(ctx, color("temperature_k", 4000))
+	if sent := got(); len(sent) != 3 {
+		t.Fatalf("уведомления о цвете: %q", sent)
+	}
+}
+
+// Запрос состояния не отвечает нажатием кнопки: у неё нет состояния.
+func TestQueryWithoutButton(t *testing.T) {
+	d := newDevice(t, "oven", "Oven")
+	m := manual{Demo: d.Appliance.(*appliance.Demo), notify: make(chan appliance.Notify, 1)}
+	d.Appliance = m
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go d.Run(ctx, func([]alice.DeviceState) {})
+	notify := <-m.notify
+	notify([]string{appliance.EventProgramFinished})
+	svc := NewService([]alice.Device{d}, &fakeTokens{}, nil, discard())
+	if st := svc.stateOf("oven.events"); len(st.Properties) != 0 {
+		t.Fatalf("состояние: %+v", st)
 	}
 }

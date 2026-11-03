@@ -28,6 +28,7 @@ import (
 	"hcgateway/internal/delonghi/dlfake"
 	"hcgateway/internal/gateway"
 	"hcgateway/internal/hcapi/hcfake"
+	"hcgateway/internal/i18n"
 	"hcgateway/internal/linking"
 	"hcgateway/internal/metrics"
 	"hcgateway/internal/statedb"
@@ -39,18 +40,20 @@ const (
 )
 
 type fixture struct {
-	t       *testing.T
-	dir     string
-	cfgPath string
-	auth    *auth.Auth
-	gw      *gateway.Gateway
-	state   *statedb.DB
-	ui      *Server
-	hs      *httptest.Server
-	client  *http.Client
-	cookie  string
-	csrf    string
-	version string
+	// accept и langCookie - заголовок Accept-Language и выбранный язык запросов.
+	accept, langCookie string
+	t                  *testing.T
+	dir                string
+	cfgPath            string
+	auth               *auth.Auth
+	gw                 *gateway.Gateway
+	state              *statedb.DB
+	ui                 *Server
+	hs                 *httptest.Server
+	client             *http.Client
+	cookie             string
+	csrf               string
+	version            string
 }
 
 // newFixture запускает интерфейс с настройками cfgText. before готовит каталог данных до запуска шлюза.
@@ -120,6 +123,12 @@ func (f *fixture) do(method, path string, form url.Values) (int, string, *http.R
 	}
 	if f.cookie != "" {
 		req.AddCookie(&http.Cookie{Name: sessionCookie, Value: f.cookie})
+	}
+	if f.accept != "" {
+		req.Header.Set("Accept-Language", f.accept)
+	}
+	if f.langCookie != "" {
+		req.AddCookie(&http.Cookie{Name: i18n.CookieName, Value: f.langCookie})
 	}
 	resp, err := f.client.Do(req)
 	if err != nil {
@@ -705,7 +714,7 @@ func TestThinQ(t *testing.T) {
 	f.writeUser(testPassword)
 	f.login()
 	_, body := f.get("/connections")
-	if !strings.Contains(body, `id="thinq"`) || !strings.Contains(body, `PAT</span>: не задан`) {
+	if !strings.Contains(body, `id="thinq"`) || !strings.Contains(body, `PAT</span>: <span>не задан`) {
 		t.Fatal("нет раздела LG ThinQ")
 	}
 	if status, _, _ := f.post("/connections/thinq", url.Values{"pat": {"test-pat"}, "country": {"xx"}, "api_url": {lg.URL}}); status != http.StatusSeeOther {
@@ -721,7 +730,7 @@ func TestThinQ(t *testing.T) {
 		t.Fatalf("в файле: %+v", c)
 	}
 	_, body = f.get("/connections")
-	if strings.Contains(body, "test-pat") || !strings.Contains(body, `PAT</span>: задан`) {
+	if strings.Contains(body, "test-pat") || !strings.Contains(body, `PAT</span>: <span>задан`) {
 		t.Fatal("PAT на странице или не отмечен")
 	}
 	// «Обновить список» загружает приборы аккаунта и их профили: у холодильника - строка на камеру.
@@ -876,7 +885,7 @@ func TestStrip(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	_, body = f.get("/devices/shelf")
-	if !strings.Contains(body, "Полка, esp32") || !strings.Contains(body, `type="color"`) || !strings.Contains(body, `<option value="party">`) {
+	if !strings.Contains(body, "Полка</span><span>, esp32") || !strings.Contains(body, `type="color"`) || !strings.Contains(body, `<option value="party">`) {
 		t.Fatal("нет сведений ленты или команд цвета и сцены")
 	}
 	if status, _, _ := f.post("/devices/shelf/command", url.Values{"type": {"devices.capabilities.color_setting"},
@@ -973,7 +982,7 @@ func TestCoffee(t *testing.T) {
 	}
 	f.post("/connections/delonghi/login", url.Values{"email": {dlfake.Email}, "password": {dlfake.Password}})
 	_, body = f.get("/connections")
-	if !strings.Contains(body, "Вход выполнен, пул CH") || !strings.Contains(body, `href="/?delonghi_serial=`+dlfake.Serial+`#add"`) ||
+	if !strings.Contains(body, "Вход выполнен<span>, пул CH") || !strings.Contains(body, `href="/?delonghi_serial=`+dlfake.Serial+`#add"`) ||
 		strings.Contains(body, dlfake.Password) {
 		t.Fatal("после входа нет машины аккаунта или на странице пароль")
 	}

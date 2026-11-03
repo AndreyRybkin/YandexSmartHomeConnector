@@ -272,6 +272,10 @@ func (c *Cloud) loadProfile(ctx context.Context, deviceID, deviceType string) er
 	if err != nil {
 		return fmt.Errorf("профиль прибора LG %s: %w", deviceID, err)
 	}
+	// Ответ, который не разбирается, не должен заменить рабочий профиль на диске.
+	if _, err := parseProfile(deviceType, raw, ""); err != nil {
+		return fmt.Errorf("профиль прибора LG %s: %w", deviceID, err)
+	}
 	st := &stored{DeviceType: deviceType, Profile: raw}
 	data, err := json.MarshalIndent(st, "", "  ")
 	if err == nil && len(data) > maxProfileFile {

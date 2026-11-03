@@ -2,6 +2,7 @@ package thinq
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -19,6 +20,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -130,6 +132,8 @@ type fakeAPI struct {
 	eventSubs []string
 	profiles  int
 	headers   http.Header
+	// badProfile - отвечать профилем, который не разбирается.
+	badProfile bool
 }
 
 func newAPI(t *testing.T, ca *testCA) *fakeAPI {
@@ -163,7 +167,12 @@ func newAPI(t *testing.T, ca *testCA) *fakeAPI {
 		if d, found := device(w, r); found {
 			f.mu.Lock()
 			f.profiles++
+			bad := f.badProfile
 			f.mu.Unlock()
+			if bad {
+				raw(w, `{"property":"сломан"}`)
+				return
+			}
 			raw(w, d.Profile)
 		}
 	})
@@ -628,6 +637,31 @@ func TestWasher(t *testing.T) {
 	api.mu.Unlock()
 	if clients != 1 || profiles != 1 {
 		t.Fatalf("регистраций клиента %d, загрузок профиля %d", clients, profiles)
+	}
+}
+
+// Ответ, который не разбирается, не заменяет рабочий профиль на диске.
+func TestBadProfileKeepsCopy(t *testing.T) {
+	ca := newCA(t)
+	api := newAPI(t, ca)
+	c := newCloud(t, t.TempDir(), api, ca)
+	ctx := context.Background()
+	if err := c.RefreshAccount(ctx); err != nil {
+		t.Fatal(err)
+	}
+	path := c.profilePath("dev-2")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	api.mu.Lock()
+	api.badProfile = true
+	api.mu.Unlock()
+	if err := c.RefreshAccount(ctx); err == nil {
+		t.Fatal("плохой профиль принят")
+	}
+	if after, err := os.ReadFile(path); err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("файл профиля изменился: %v", err)
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 
 	"hcgateway/internal/config"
 	"hcgateway/internal/gateway"
+	"hcgateway/internal/i18n"
 	"hcgateway/internal/smartthings"
 )
 
@@ -255,9 +256,10 @@ func (s *Server) stCallback(w http.ResponseWriter, r *http.Request) {
 		}()
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">`+
+	page := fmt.Sprintf(`<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">`+
 		`<title>SmartThings</title></head><body><p>%s</p><p><a href="/connections#smartthings">Вернуться к подключениям</a></p></body></html>`,
 		template.HTMLEscapeString(text))
+	_, _ = w.Write(i18n.HTML(langOf(w), []byte(page)))
 }
 
 func (s *Server) stLogout(w http.ResponseWriter, r *http.Request, sess *session) {
