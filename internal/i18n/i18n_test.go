@@ -3,6 +3,7 @@ package i18n
 import (
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -57,6 +58,8 @@ func TestTranslate(t *testing.T) {
 		"%s ч %s мин":           "%s h %s min",
 		"В комнате «%s» нет %s": "No %[2]s in room «%[1]s»",
 		"прибор":                "device",
+		"Заряд батареи":         "Battery level",
+		"С кавычкой":            `With "quote"`,
 		"заряд %s %":            "battery %s%",
 	})
 	for in, want := range map[string]string{
@@ -70,8 +73,11 @@ func TestTranslate(t *testing.T) {
 		"вода 65 %":                "water 65 %",
 		"62 °C · вода 65 %":        "62 °C · water 65 %",
 		"В комнате «Кухня» нет прибор": "No device in room «Кухня»",
-		"заряд 12 %":  "battery 12%",
-		"Чужой текст": "Чужой текст",
+		"заряд 12 %":      "battery 12%",
+		"Чужой текст":     "Чужой текст",
+		"«Заряд батареи»": `"Battery level"`,
+		"«Кухня»":         `"Кухня"`,
+		"«С кавычкой»":    `"With \"quote\""`,
 	} {
 		if got := c.translate(in, 0); got != want {
 			t.Errorf("%q: %q, нужно %q", in, got, want)
@@ -115,5 +121,28 @@ func TestJSON(t *testing.T) {
 	}
 	if got := string(JSON(EN, []byte(`не json`))); got != `не json` {
 		t.Fatalf("не JSON: %s", got)
+	}
+}
+
+// Каталог записан парами, поэтому повтор ключа компилятор не заметит. Перевод не теряет мест для значений
+// и не содержит русского текста.
+func TestCatalogPairs(t *testing.T) {
+	places := regexp.MustCompile(`%(\[\d\])?s`)
+	seen := map[string]bool{}
+	for _, p := range enPairs {
+		key, value := p[0], p[1]
+		if seen[key] {
+			t.Errorf("ключ повторяется: %q", key)
+		}
+		seen[key] = true
+		if value == "" || hasCyrillic(value) {
+			t.Errorf("перевод %q: %q", key, value)
+		}
+		if strings.Count(key, "%s") != len(places.FindAllString(value, -1)) {
+			t.Errorf("места для значений: %q -> %q", key, value)
+		}
+	}
+	if len(enTexts) != len(enPairs) {
+		t.Errorf("в словаре %d текстов, в каталоге %d", len(enTexts), len(enPairs))
 	}
 }

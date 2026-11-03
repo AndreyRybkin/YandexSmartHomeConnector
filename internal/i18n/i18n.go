@@ -132,6 +132,17 @@ func newCatalog(texts map[string]string) *catalog {
 	return c
 }
 
+// enTexts - английский каталог словарём: русский текст -> перевод.
+var enTexts = textsOf(enPairs)
+
+func textsOf(pairs [][2]string) map[string]string {
+	texts := make(map[string]string, len(pairs))
+	for _, p := range pairs {
+		texts[p[0]] = p[1]
+	}
+	return texts
+}
+
 var (
 	english     *catalog
 	englishOnce sync.Once
@@ -205,7 +216,8 @@ func (c *catalog) core(s string, depth int) string {
 	}
 	if inner, ok := strings.CutPrefix(s, "«"); ok {
 		if inner, ok = strings.CutSuffix(inner, "»"); ok && !strings.ContainsAny(inner, "«»") {
-			return `"` + c.translate(inner, depth+1) + `"`
+			// Кавычка внутри текста экранируется и не закрывает внешние кавычки раньше времени.
+			return strconv.Quote(c.translate(inner, depth+1))
 		}
 	}
 	for _, sep := range separators {
