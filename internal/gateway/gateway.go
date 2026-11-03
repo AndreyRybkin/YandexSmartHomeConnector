@@ -559,6 +559,10 @@ type TVLink struct {
 	// UPnP - громкость телевизора Samsung доступна по UPnP; у LG - всегда false.
 	UPnP bool
 	Err  string
+	// Cert - запомненный отпечаток сертификата; NewCert - другой, ждёт решения владельца; Plain -
+	// соединение без шифрования.
+	Cert, NewCert string
+	Plain         bool
 }
 
 // TV - телевизор в домашней сети: связь, «подключить заново» и «забыть ключ».
@@ -566,20 +570,24 @@ type TV interface {
 	Link() TVLink
 	Retry()
 	Forget() error
+	// AcceptCert запоминает новый отпечаток сертификата.
+	AcceptCert(fp string) error
 }
 
 type lgTV struct{ *webos.TV }
 
 func (t lgTV) Link() TVLink {
 	s := t.Status()
-	return TVLink{Paired: s.Paired, Prompt: s.Prompt, Connected: s.Connected, Model: s.Model, MAC: s.MAC, Err: s.Err}
+	return TVLink{Paired: s.Paired, Prompt: s.Prompt, Connected: s.Connected, Model: s.Model, MAC: s.MAC, Err: s.Err,
+		Cert: s.Cert, NewCert: s.NewCert, Plain: s.Plain}
 }
 
 type samsungTV struct{ *samsungtv.TV }
 
 func (t samsungTV) Link() TVLink {
 	s := t.Status()
-	return TVLink{Paired: s.Paired, Prompt: s.Prompt, Connected: s.Connected, Model: s.Model, MAC: s.MAC, UPnP: s.UPnP, Err: s.Err}
+	return TVLink{Paired: s.Paired, Prompt: s.Prompt, Connected: s.Connected, Model: s.Model, MAC: s.MAC, UPnP: s.UPnP, Err: s.Err,
+		Cert: s.Cert, NewCert: s.NewCert, Plain: s.Plain}
 }
 
 // Television - телевизор в домашней сети с идентификатором id, если прибор - телевизор.

@@ -533,7 +533,7 @@ func parseColor(raw json.RawMessage) (int, bool) {
 	}
 	var hex string
 	if json.Unmarshal(raw, &hex) == nil && len(hex) >= 6 {
-		if v, err := strconv.ParseUint(hex[:6], 16, 32); err == nil {
+		if v, err := strconv.ParseUint(hex[:6], 16, 24); err == nil {
 			return int(v), true
 		}
 	}

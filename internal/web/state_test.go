@@ -1,8 +1,12 @@
 package web
 
 import (
+	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +14,7 @@ import (
 	"time"
 
 	"hcgateway/internal/statedb"
+	"hcgateway/internal/tv"
 )
 
 const stateDevices = `
@@ -156,5 +161,51 @@ func TestWasherStateLabels(t *testing.T) {
 		if _, ok := stateNames[state]; !ok {
 			t.Errorf("нет подписи %s", state)
 		}
+	}
+}
+
+// Сертификат телевизора изменился: метка на плитке, отпечаток и кнопка на странице, решение владельца.
+func TestTVCertChanged(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+	want := tv.Fingerprint(srv.Certificate().Raw)
+	const old = "00112233445566778899AABBCCDDEEFF00112233445566778899AABBCCDDEEFF"
+	f := newFixture(t, "\ndevices:\n  tv:\n    name: Телевизор\n    source: webos\n    host: "+strings.TrimPrefix(srv.URL, "https://")+"\n", func(dir string) {
+		if err := os.MkdirAll(filepath.Join(dir, "webos"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "webos", "tv.json"), []byte(`{"client_key":"k","cert":"`+old+`"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	})
+	f.writeUser(testPassword)
+	f.login()
+	hc, ok := f.gw.HomeConnect("tv")
+	if !ok {
+		t.Fatal("нет телевизора")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go hc.Appliance.Run(ctx, func([]string) {})
+	set, _ := f.gw.Television("tv")
+	for end := time.Now().Add(5 * time.Second); set.Link().NewCert == ""; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(end) {
+			t.Fatal("шлюз не заметил чужой сертификат")
+		}
+	}
+	if _, body := f.get("/devices/tv"); !strings.Contains(body, "Сертификат телевизора изменился") || !strings.Contains(body, groups(want)) || !strings.Contains(body, "/devices/tv/tv/cert") {
+		t.Fatal("на странице прибора нет предупреждения")
+	}
+	if _, body := f.get("/"); !strings.Contains(body, "сертификат изменился, подтвердите") {
+		t.Fatal("на плитке нет метки")
+	}
+	if _, body := f.get("/devices/tv/tv/cert"); !strings.Contains(body, groups(want)) || !strings.Contains(body, want) {
+		t.Fatal("на странице подтверждения нет отпечатка")
+	}
+	if _, _, _ = f.post("/devices/tv/tv/cert", url.Values{"cert": {old}}); set.Link().Cert != old {
+		t.Fatal("принят не тот отпечаток")
+	}
+	if status, _, _ := f.post("/devices/tv/tv/cert", url.Values{"cert": {want}}); status != http.StatusSeeOther || set.Link().Cert != want || set.Link().NewCert != "" {
+		t.Fatalf("решение владельца: %d %+v", status, set.Link())
 	}
 }

@@ -1018,6 +1018,8 @@ func (s *Server) saveDevice(w http.ResponseWriter, r *http.Request, sess *sessio
 // кнопка действия и куда вернуться без него.
 type confirmView struct {
 	Title, Text, Action, Button, Back string
+	// Fields - скрытые поля формы.
+	Fields []kv
 }
 
 func (s *Server) deletePage(w http.ResponseWriter, r *http.Request, sess *session) {

@@ -6,7 +6,6 @@ package webos
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -121,6 +120,8 @@ type pairing struct {
 	MAC       string   `json:"mac,omitempty"`
 	Model     string   `json:"model,omitempty"`
 	Inputs    []string `json:"inputs,omitempty"`
+	// Cert - отпечаток сертификата, с которым шлюз отправляет ключ.
+	Cert string `json:"cert,omitempty"`
 }
 
 // Config - телевизор в настройках.
@@ -147,6 +148,10 @@ type Status struct {
 	Model, MAC                string
 	// Err - почему нет связи, словами; пусто - ошибки нет.
 	Err string
+	// Cert - запомненный отпечаток сертификата; NewCert - телевизор предъявил другой и ждёт решения
+	// владельца; Plain - соединение без шифрования: у модели нет wss.
+	Cert, NewCert string
+	Plain         bool
 }
 
 var _ appliance.Appliance = (*TV)(nil)
@@ -194,7 +199,7 @@ func New(cfg Config, log *slog.Logger) (*TV, error) {
 			return nil, fmt.Errorf("%s: файл телевизора не разобран: %w", t.path(), err)
 		}
 	}
-	t.status = Status{Paired: t.pair.ClientKey != "", Model: t.pair.Model, MAC: t.mac()}
+	t.status = Status{Paired: t.pair.ClientKey != "", Model: t.pair.Model, MAC: t.mac(), Cert: t.pair.Cert}
 	return t, nil
 }
 
@@ -240,8 +245,8 @@ func (t *TV) Retry() {
 // Forget забывает ключ: при следующем подключении телевизор снова спросит разрешение.
 func (t *TV) Forget() error {
 	t.mu.Lock()
-	t.pair.ClientKey = ""
-	t.status.Paired = false
+	t.pair.ClientKey, t.pair.Cert = "", ""
+	t.status.Paired, t.status.Cert, t.status.NewCert = false, "", ""
 	err := t.saveLocked()
 	conn := t.conn
 	t.mu.Unlock()
@@ -250,6 +255,51 @@ func (t *TV) Forget() error {
 	}
 	t.Retry()
 	return err
+}
+
+// AcceptCert запоминает новый отпечаток, который подтвердил владелец. Подойдёт только тот, что
+// показан на странице: если сертификат успел смениться ещё раз, решение устарело.
+func (t *TV) AcceptCert(fp string) error {
+	t.mu.Lock()
+	if fp == "" || fp != t.status.NewCert {
+		t.mu.Unlock()
+		return tv.ErrCertChanged
+	}
+	t.pair.Cert, t.status.Cert, t.status.NewCert = fp, fp, ""
+	err := t.saveLocked()
+	t.mu.Unlock()
+	t.Retry()
+	return err
+}
+
+// certSeen запоминает, как прошло соединение: первый отпечаток и шифрование.
+func (t *TV) certSeen(url string, check *tv.CertCheck) {
+	// Поиск в сети подключается без настроек прибора: ему запоминать нечего.
+	if t.cfg.ID == "" {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.status.Plain = !tv.Encrypted(url)
+	if !tv.Encrypted(url) || t.pair.Cert != "" {
+		return
+	}
+	t.pair.Cert, t.status.Cert = check.Seen(), check.Seen()
+	if err := t.saveLocked(); err != nil {
+		t.log.Warn("отпечаток сертификата телевизора не сохранён", "device", t.cfg.ID, "err", err)
+	}
+}
+
+// certChanged запоминает чужой сертификат для решения владельца.
+func (t *TV) certChanged(fp string) {
+	t.mu.Lock()
+	fresh := t.status.NewCert != fp
+	t.status.NewCert = fp
+	t.mu.Unlock()
+	if fresh {
+		t.log.Warn("сертификат телевизора изменился, ключ не отправлен", "device", t.cfg.ID)
+		t.changed()
+	}
 }
 
 func (t *TV) Describe() appliance.Description {
@@ -334,9 +384,8 @@ func (t *TV) setStatus(f func(s *Status)) {
 	t.changed()
 }
 
-// dial подключается к телевизору: без порта в адресе - wss 3001, затем ws 3000. Сертификат
-// у телевизора свой, без цепочки, поэтому шлюз его не проверяет, как и Home Assistant: ключ
-// клиента даёт управление только этим телевизором.
+// dial подключается к телевизору: без порта в адресе - wss 3001, затем ws 3000. Когда отпечаток
+// сертификата запомнен, остаётся только wss с этим отпечатком (tv.CertCheck).
 func (t *TV) dial(ctx context.Context) (*websocket.Conn, error) {
 	host, port, err := net.SplitHostPort(t.cfg.Host)
 	urls := []string{}
@@ -346,9 +395,16 @@ func (t *TV) dial(ctx context.Context) (*websocket.Conn, error) {
 		host = strings.Trim(t.cfg.Host, "[]")
 		urls = append(urls, "wss://"+net.JoinHostPort(host, wssPort), "ws://"+net.JoinHostPort(host, wsPort))
 	}
-	d := websocket.Dialer{HandshakeTimeout: dialTimeout, TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+	t.mu.Lock()
+	pin := t.pair.Cert
+	t.mu.Unlock()
+	check := tv.NewCertCheck(pin)
+	d := websocket.Dialer{HandshakeTimeout: dialTimeout, TLSClientConfig: check.TLSConfig()}
 	var last error
 	for _, u := range urls {
+		if pin != "" && !tv.Encrypted(u) {
+			continue
+		}
 		dctx, cancel := context.WithTimeout(ctx, dialTimeout)
 		ws, resp, err := d.DialContext(dctx, u, http.Header{})
 		cancel()
@@ -357,7 +413,12 @@ func (t *TV) dial(ctx context.Context) (*websocket.Conn, error) {
 		}
 		if err == nil {
 			ws.SetReadLimit(maxMessage)
+			t.certSeen(u, check)
 			return ws, nil
+		}
+		if errors.Is(err, tv.ErrCertChanged) {
+			t.certChanged(check.Seen())
+			return nil, err
 		}
 		last = err
 	}
@@ -822,10 +883,13 @@ func (t *TV) command(key string, value any) (string, map[string]any, error) {
 		return uriSetMute, map[string]any{"mute": b}, nil
 	case tv.Channel:
 		f, ok := value.(float64)
+		if !ok || f != math.Trunc(f) || f < 1 || f > tv.MaxChannel {
+			return "", nil, fmt.Errorf("%w: канала %v нет в списке телевизора", appliance.ErrInvalidValue, value)
+		}
 		t.mu.Lock()
 		id := t.numbers[int(f)]
 		t.mu.Unlock()
-		if !ok || f != math.Trunc(f) || id == "" {
+		if id == "" {
 			return "", nil, fmt.Errorf("%w: канала %v нет в списке телевизора", appliance.ErrInvalidValue, value)
 		}
 		return uriOpenChannel, map[string]any{"channelId": id}, nil

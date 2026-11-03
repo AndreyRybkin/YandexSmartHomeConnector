@@ -34,6 +34,8 @@ type tvView struct {
 	gateway.TVLink
 	// Samsung - телевизор Samsung: громкость - по UPnP.
 	Samsung bool
+	// CertText и NewCertText - отпечатки сертификата группами по два знака.
+	CertText, NewCertText string
 }
 
 func (s *Server) tvView(id string, source string) *tvView {
@@ -41,7 +43,8 @@ func (s *Server) tvView(id string, source string) *tvView {
 	if !ok {
 		return nil
 	}
-	return &tvView{TVLink: t.Link(), Samsung: source == config.SourceSamsungTV}
+	l := t.Link()
+	return &tvView{TVLink: l, Samsung: source == config.SourceSamsungTV, CertText: groups(l.Cert), NewCertText: groups(l.NewCert)}
 }
 
 // tvRetry подключается к телевизору заново сразу.
@@ -85,6 +88,46 @@ func (s *Server) tvForget(w http.ResponseWriter, r *http.Request, sess *session)
 	}
 	s.log.Info("ключ телевизора удалён", "device", id)
 	s.done(w, r, sess, "/devices/"+id+"#danger", "Ключ телевизора удалён. При следующем подключении телевизор спросит разрешение.")
+}
+
+// tvCertPage спрашивает подтверждение: новый сертификат получит ключ телевизора.
+func (s *Server) tvCertPage(w http.ResponseWriter, r *http.Request, sess *session) {
+	id := r.PathValue("id")
+	t, ok := s.gw.Television(id)
+	if !ok {
+		s.notFound(w, sess)
+		return
+	}
+	l := t.Link()
+	if l.NewCert == "" {
+		s.failed(w, r, sess, "/devices/"+id+"#tv", "Сертификат телевизора не менялся.")
+		return
+	}
+	cfg, _ := s.file.Current()
+	s.render(w, http.StatusOK, "confirm", s.newPage(sess, "devices", "Сертификат телевизора", confirmView{
+		Title: "Принять новый сертификат телевизора «" + cfg.Devices[id].Name + "»?",
+		Text: "Новый отпечаток: " + groups(l.NewCert) + ". Сертификат меняется после обновления прошивки или сброса телевизора. " +
+			"Если вы этого не делали, кто-то в домашней сети может подменять телевизор, и после подтверждения он получит ключ.",
+		Action: "/devices/" + id + "/tv/cert", Button: "Принять сертификат", Back: "/devices/" + id + "#tv",
+		Fields: []kv{{"cert", l.NewCert}}}))
+}
+
+// tvCert запоминает новый сертификат телевизора. Подойдёт только тот, что показан на странице.
+func (s *Server) tvCert(w http.ResponseWriter, r *http.Request, sess *session) {
+	id := r.PathValue("id")
+	t, ok := s.gw.Television(id)
+	if !ok {
+		s.notFound(w, sess)
+		return
+	}
+	to := "/devices/" + id + "#tv"
+	if err := t.AcceptCert(r.PostForm.Get("cert")); err != nil {
+		s.log.Warn("сертификат телевизора не принят", "device", id, "err", err)
+		s.failed(w, r, sess, to, "Отпечаток изменился или не сохранён: откройте страницу заново и сверьте его.")
+		return
+	}
+	s.log.Info("новый сертификат телевизора принят", "device", id)
+	s.done(w, r, sess, to, "Сертификат принят: шлюз подключается к телевизору.")
 }
 
 // stView - SmartThings на странице «Подключения».

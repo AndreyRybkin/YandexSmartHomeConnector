@@ -6,7 +6,6 @@ package samsungtv
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -87,6 +86,8 @@ type pairing struct {
 	Token  string `json:"token,omitempty"`
 	MAC    string `json:"mac,omitempty"`
 	Model  string `json:"model,omitempty"`
+	// Cert - отпечаток сертификата, с которым шлюз отправляет токен.
+	Cert string `json:"cert,omitempty"`
 }
 
 // Config - телевизор в настройках.
@@ -109,6 +110,10 @@ type Status struct {
 	// UPnP - громкость и звук доступны по UPnP.
 	UPnP bool
 	Err  string
+	// Cert - запомненный отпечаток сертификата; NewCert - телевизор предъявил другой и ждёт решения
+	// владельца; Plain - соединение без шифрования: у модели нет wss.
+	Cert, NewCert string
+	Plain         bool
 }
 
 var _ appliance.Appliance = (*TV)(nil)
@@ -162,7 +167,7 @@ func New(cfg Config, log *slog.Logger) (*TV, error) {
 			return nil, fmt.Errorf("%s: файл телевизора не разобран: %w", t.path(), err)
 		}
 	}
-	t.status = Status{Paired: t.pair.Paired, Model: t.pair.Model, MAC: t.mac()}
+	t.status = Status{Paired: t.pair.Paired, Model: t.pair.Model, MAC: t.mac(), Cert: t.pair.Cert}
 	return t, nil
 }
 
@@ -206,14 +211,55 @@ func (t *TV) Retry() {
 // Forget забывает токен: при следующем подключении телевизор снова спросит разрешение.
 func (t *TV) Forget() error {
 	t.mu.Lock()
-	t.pair.Paired, t.pair.Token = false, ""
-	t.status.Paired = false
+	t.pair.Paired, t.pair.Token, t.pair.Cert = false, "", ""
+	t.status.Paired, t.status.Cert, t.status.NewCert = false, "", ""
 	t.pairWait = time.Time{}
 	err := t.saveLocked()
 	t.mu.Unlock()
 	t.closeWS()
 	t.Retry()
 	return err
+}
+
+// AcceptCert запоминает новый отпечаток, который подтвердил владелец. Подойдёт только тот, что
+// показан на странице: если сертификат успел смениться ещё раз, решение устарело.
+func (t *TV) AcceptCert(fp string) error {
+	t.mu.Lock()
+	if fp == "" || fp != t.status.NewCert {
+		t.mu.Unlock()
+		return tv.ErrCertChanged
+	}
+	t.pair.Cert, t.status.Cert, t.status.NewCert = fp, fp, ""
+	err := t.saveLocked()
+	t.mu.Unlock()
+	t.Retry()
+	return err
+}
+
+// certSeen запоминает, как прошло соединение: первый отпечаток и шифрование.
+func (t *TV) certSeen(url string, check *tv.CertCheck) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.status.Plain = !tv.Encrypted(url)
+	if !tv.Encrypted(url) || t.pair.Cert != "" {
+		return
+	}
+	t.pair.Cert, t.status.Cert = check.Seen(), check.Seen()
+	if err := t.saveLocked(); err != nil {
+		t.log.Warn("отпечаток сертификата телевизора не сохранён", "device", t.cfg.ID, "err", err)
+	}
+}
+
+// certChanged запоминает чужой сертификат для решения владельца.
+func (t *TV) certChanged(fp string) {
+	t.mu.Lock()
+	fresh := t.status.NewCert != fp
+	t.status.NewCert = fp
+	t.mu.Unlock()
+	if fresh {
+		t.log.Warn("сертификат телевизора изменился, ключ не отправлен", "device", t.cfg.ID)
+		t.changed()
+	}
 }
 
 func (t *TV) Describe() appliance.Description {
@@ -442,14 +488,17 @@ func (t *TV) conn(ctx context.Context) (*websocket.Conn, error) {
 		return t.ws, nil
 	}
 	t.mu.Lock()
-	token, paired := t.pair.Token, t.pair.Paired
+	token, paired, pin := t.pair.Token, t.pair.Paired, t.pair.Cert
 	t.mu.Unlock()
 	name := base64.StdEncoding.EncodeToString([]byte(appName))
-	d := websocket.Dialer{HandshakeTimeout: requestTimeout, TLSClientConfig: &tls.Config{
-		// Сертификат телевизора самоподписанный: токен даёт управление только этим телевизором.
-		InsecureSkipVerify: true}}
-	var last error
+	check := tv.NewCertCheck(pin)
+	d := websocket.Dialer{HandshakeTimeout: requestTimeout, TLSClientConfig: check.TLSConfig()}
+	last := errors.New("у телевизора нет адреса wss")
 	for _, base := range t.wsURLs {
+		// С запомненным отпечатком - только wss: иначе токен ушёл бы открытым текстом.
+		if pin != "" && !tv.Encrypted(base) {
+			continue
+		}
 		q := url.Values{"name": {name}}
 		if token != "" {
 			q.Set("token", token)
@@ -458,11 +507,16 @@ func (t *TV) conn(ctx context.Context) (*websocket.Conn, error) {
 		if resp != nil && resp.Body != nil {
 			resp.Body.Close()
 		}
+		if errors.Is(err, tv.ErrCertChanged) {
+			t.certChanged(check.Seen())
+			return nil, err
+		}
 		if err != nil {
 			last = err
 			continue
 		}
 		ws.SetReadLimit(maxBody)
+		t.certSeen(base, check)
 		if !paired {
 			t.mu.Lock()
 			t.status.Prompt = true

@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -330,5 +331,106 @@ func TestProbe(t *testing.T) {
 	defer f.mu.Unlock()
 	if f.key != "" {
 		t.Fatal("проверка зарегистрировалась на телевизоре")
+	}
+}
+
+// Номер канала проверяется до поиска в списке телевизора: дробный, вне пределов и не число не проходят.
+func TestChannelCommand(t *testing.T) {
+	tvSet := &TV{numbers: map[int]string{5: "channel-5"}}
+	uri, payload, err := tvSet.command(tv.Channel, 5.0)
+	if err != nil || uri != uriOpenChannel || payload["channelId"] != "channel-5" {
+		t.Fatalf("канал 5: %q %v %v", uri, payload, err)
+	}
+	for _, bad := range []any{5.5, 0.0, -1.0, 6.0, float64(tv.MaxChannel + 1), 1e300, "5"} {
+		if _, _, err := tvSet.command(tv.Channel, bad); err == nil {
+			t.Errorf("канал %v принят", bad)
+		}
+	}
+}
+
+// Отпечаток сертификата: запоминается при первом подключении, чужой останавливает связь до решения
+// владельца, а запасной ws после этого не используется: ключ никуда не уходит.
+func TestCertPin(t *testing.T) {
+	f := newFakeTV(t)
+	dir := t.TempDir()
+	want := tv.Fingerprint(f.srv.Certificate().Raw)
+	set, stop := run(t, Config{ID: "tv", Host: f.host(), Dir: dir})
+	waitFor(t, "отпечаток", func() bool { return set.State().Online && set.Status().Cert == want })
+	if set.Status().Plain {
+		t.Fatal("wss считается соединением без шифрования")
+	}
+	stop()
+
+	// Тот же файл, другой сертификат: как будто в сети появился чужой телевизор.
+	data, err := os.ReadFile(filepath.Join(dir, "tv.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const old = "00112233445566778899AABBCCDDEEFF00112233445566778899AABBCCDDEEFF"
+	if !strings.Contains(string(data), want) {
+		t.Fatalf("файл без отпечатка: %s", data)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "tv.json"), []byte(strings.ReplaceAll(string(data), want, old)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before := len(f.requests())
+	set, stop = run(t, Config{ID: "tv", Host: f.host(), Dir: dir})
+	defer stop()
+	waitFor(t, "новый отпечаток", func() bool { return set.Status().NewCert == want })
+	if st := set.Status(); st.Connected || st.Cert != old {
+		t.Fatalf("связь с чужим сертификатом: %+v", st)
+	}
+	if len(f.requests()) != before {
+		t.Fatal("телевизор с чужим сертификатом получил запрос")
+	}
+	if err := set.AcceptCert(old); err == nil {
+		t.Fatal("принят не тот отпечаток, что показан")
+	}
+	if err := set.AcceptCert(want); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "связь после решения", func() bool { st := set.Status(); return st.Connected && st.Cert == want && st.NewCert == "" })
+	if err := set.Forget(); err != nil {
+		t.Fatal(err)
+	}
+	if st := set.Status(); st.Cert != "" && st.Connected {
+		t.Fatalf("после «Забыть» отпечаток остался: %+v", st)
+	}
+}
+
+// С запомненным отпечатком шлюз не идёт на ws, а модель только с ws работает без отпечатка.
+func TestCertPlain(t *testing.T) {
+	up := websocket.Upgrader{}
+	var hits atomic.Int32
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		ws, err := up.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		ws.Close()
+	}))
+	defer plain.Close()
+	host := strings.TrimPrefix(plain.URL, "http://")
+
+	free := &TV{cfg: Config{ID: "tv", Host: host, Dir: t.TempDir()}, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	ws, err := free.dial(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws.Close()
+	if st := free.Status(); !st.Plain || st.Cert != "" {
+		t.Fatalf("модель только с ws: %+v", st)
+	}
+
+	hits.Store(0)
+	pinned := &TV{cfg: Config{ID: "tv", Host: host, Dir: t.TempDir()}, log: free.log}
+	pinned.pair.Cert = "AA"
+	if ws, err := pinned.dial(context.Background()); err == nil {
+		ws.Close()
+		t.Fatal("с отпечатком шлюз подключился без шифрования")
+	}
+	if hits.Load() != 0 {
+		t.Fatal("с отпечатком шлюз обратился к порту без шифрования")
 	}
 }

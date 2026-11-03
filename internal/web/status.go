@@ -126,6 +126,8 @@ var problemLabels = []choice{{Value: "offline", Label: "без связи"}, {Va
 func (s *Server) problem(id string, d config.Device, st *status) (string, string) {
 	if t, ok := s.gw.Television(id); ok {
 		switch l := t.Link(); {
+		case l.NewCert != "":
+			return "pin", "сертификат изменился, подтвердите"
 		case l.Prompt:
 			return "tv", "ждёт разрешения на экране"
 		case !l.Paired:

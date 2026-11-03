@@ -128,6 +128,8 @@ func New(a *auth.Auth, gw *gateway.Gateway, file *config.File, start *config.Con
 	mux.HandleFunc("POST /devices/{id}/tv/retry", s.authed(s.tvRetry))
 	mux.HandleFunc("GET /devices/{id}/tv/forget", s.authed(s.tvForgetPage))
 	mux.HandleFunc("POST /devices/{id}/tv/forget", s.authed(s.tvForget))
+	mux.HandleFunc("GET /devices/{id}/tv/cert", s.authed(s.tvCertPage))
+	mux.HandleFunc("POST /devices/{id}/tv/cert", s.authed(s.tvCert))
 	mux.HandleFunc("POST /devices/{id}/pin", s.authed(s.confirmPin))
 	mux.HandleFunc("POST /devices/{id}/recipes", s.authed(s.loadRecipes))
 	mux.HandleFunc("POST /devices/{id}/probe", s.authed(s.probe))

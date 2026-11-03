@@ -43,12 +43,15 @@
 <button class="primary">Сохранить</button>
 </form></section>
 {{with .TV}}<section class="field" id="tv"><h2>Связь с телевизором</h2>
+{{with .NewCertText}}<p class="err">Сертификат телевизора изменился, поэтому шлюз не отправляет ему ключ и телевизором не управляет. Новый отпечаток: <code>{{.}}</code>.</p>
+<p><a class="button" href="/devices/{{$p.Data.ID}}/tv/cert">Принять новый сертификат</a></p>{{end}}
 {{if .Prompt}}<p class="notice">Телевизор спрашивает разрешение: нажмите «Разрешить» на его экране пультом.</p>
 {{else if .Connected}}<p>Телевизор на связи{{with .Model}}, модель {{.}}{{end}}.</p>
 {{else if .Paired}}<p>Телевизор выключен или не отвечает. Шлюз проверяет его раз в 10 с.</p>
 {{else}}<p class="notice">Телевизор ещё не разрешил подключение. Включите его: шлюз подключится сам, а телевизор спросит разрешение на экране.</p>{{end}}
 {{with .Err}}<p class="err">{{.}}</p>{{end}}
 <p>MAC для включения по сети: {{with .MAC}}<code>{{.}}</code>{{else}}ещё не известен - шлюз узнает его у включённого телевизора{{end}}.{{if .Samsung}} Громкость и звук {{if .UPnP}}шлюз меняет по UPnP{{else}}по UPnP недоступны: «громче» и «тише» идут кнопками пульта{{end}}.{{end}}</p>
+{{if .CertText}}<p class="muted">Отпечаток сертификата телевизора: <code>{{.CertText}}</code></p>{{else if and .Connected .Plain}}<p class="notice">Соединение без шифрования: у телевизора нет защищённого порта, и ключ передаётся открытым текстом.</p>{{end}}
 <form method="post" action="/devices/{{$p.Data.ID}}/tv/retry" class="cmd"><input type="hidden" name="csrf" value="{{$p.CSRF}}"><button>Подключить заново</button></form>
 </section>{{end}}
 {{with .Coffee}}<section class="field" id="coffee"><h2>Рецепты кофемашины</h2>

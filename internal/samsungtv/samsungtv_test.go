@@ -3,6 +3,7 @@ package samsungtv
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -220,5 +222,64 @@ func TestProbe(t *testing.T) {
 	}
 	if _, err := probe(context.Background(), http.DefaultClient, f.rest.URL+"/nothing/"); err == nil {
 		t.Fatal("не телевизор принят за телевизор")
+	}
+}
+
+// Отпечаток: запоминается, чужой сертификат останавливает токен, запасной ws после этого не используется.
+func TestCertPin(t *testing.T) {
+	f := newFakeTV(t)
+	dir := t.TempDir()
+	want := tv.Fingerprint(f.ws.Certificate().Raw)
+	set, err := New(Config{ID: "tv", Host: "127.0.0.1", Dir: dir}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	set.wsURLs = []string{"wss" + strings.TrimPrefix(f.ws.URL, "https") + "/api/v2/channels/samsung.remote.control"}
+	ctx := context.Background()
+	if _, err := set.conn(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if st := set.Status(); st.Cert != want || st.Plain {
+		t.Fatalf("после подключения: %+v", st)
+	}
+	set.closeWS()
+
+	var hits atomic.Int32
+	plain := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits.Add(1) }))
+	defer plain.Close()
+	wss := set.wsURLs[0]
+	set.wsURLs = []string{"ws" + strings.TrimPrefix(plain.URL, "http") + "/x"}
+	if ws, err := set.conn(ctx); err == nil {
+		t.Fatalf("с отпечатком шлюз подключился без шифрования: %v", ws)
+	}
+	if hits.Load() != 0 {
+		t.Fatal("с отпечатком токен ушёл на порт без шифрования")
+	}
+	set.wsURLs = []string{wss}
+
+	const other = "00112233445566778899AABBCCDDEEFF00112233445566778899AABBCCDDEEFF"
+	set.mu.Lock()
+	set.pair.Cert, set.status.Cert = other, other
+	set.mu.Unlock()
+	if _, err := set.conn(ctx); !errors.Is(err, tv.ErrCertChanged) {
+		t.Fatalf("чужой сертификат: %v", err)
+	}
+	if st := set.Status(); st.NewCert != want || st.Cert != other {
+		t.Fatalf("состояние: %+v", st)
+	}
+	if err := set.AcceptCert(other); err == nil {
+		t.Fatal("принят не тот отпечаток, что показан")
+	}
+	if err := set.AcceptCert(want); err != nil {
+		t.Fatal(err)
+	}
+	if ws, err := set.conn(ctx); err != nil || ws == nil {
+		t.Fatalf("после решения: %v", err)
+	}
+	if err := set.Forget(); err != nil {
+		t.Fatal(err)
+	}
+	if st := set.Status(); st.Cert != "" || st.NewCert != "" {
+		t.Fatalf("после «Забыть»: %+v", st)
 	}
 }
