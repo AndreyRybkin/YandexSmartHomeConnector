@@ -2,7 +2,7 @@
 # статический файл в distroless без оболочки, от пользователя nonroot.
 # Сборка под arm64: docker buildx build --platform linux/arm64 -t hcgateway .
 
-FROM --platform=$BUILDPLATFORM golang:1.26.4 AS build
+FROM --platform=$BUILDPLATFORM golang:1.26.10 AS build
 ARG TARGETOS TARGETARCH
 # VERSION - версия шлюза в журнале и в метрике hcgateway_build_info: --build-arg VERSION=...
 ARG VERSION=dev
