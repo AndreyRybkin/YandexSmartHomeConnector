@@ -14,6 +14,7 @@ import (
 	"hcgateway/internal/hcapi"
 	"hcgateway/internal/linking"
 	"hcgateway/internal/metrics"
+	"hcgateway/internal/mqttbroker"
 	"hcgateway/internal/statedb"
 	"hcgateway/internal/web"
 )
@@ -50,7 +51,18 @@ func serve(ctx context.Context, configPath string, log *slog.Logger) error {
 	metrics.SetBuildInfo(version)
 	metrics.Watch(metricsState{gw: gw, bans: login.Bans})
 	// Один порт: запросы Яндекса на /v1.0 и /auth, веб-интерфейс - на остальных адресах.
-	servers := []*http.Server{newServer(cfg.Listen, web.Handler(web.New(login, gw, file, cfg, log), gw.Handler()))}
+	ui := web.New(login, gw, file, cfg, log)
+	// Без пароля порт брокера закрыт. Логин и пароль берутся из применённых настроек: новый пароль
+	// действует сразу.
+	var broker *mqttbroker.Broker
+	if cfg.MQTT.Password != "" {
+		broker = mqttbroker.New(mqttbroker.Config{Listen: cfg.MQTT.Listen, Credentials: func() (string, string) {
+			c := gw.Config()
+			return c.MQTT.Username, c.MQTT.Password
+		}}, state, log)
+		ui.AttachBroker(broker)
+	}
+	servers := []*http.Server{newServer(cfg.Listen, web.Handler(ui, gw.Handler()))}
 	metricsAddr := "закрыт: не задан metrics.token"
 	if cfg.Metrics.Token != "" {
 		// Токен берётся из применённых настроек: новый токен из интерфейса действует сразу.
@@ -64,6 +76,13 @@ func serve(ctx context.Context, configPath string, log *slog.Logger) error {
 	go func() {
 		defer close(done)
 		gw.Run(runCtx)
+	}()
+	brokerDone := make(chan struct{})
+	go func() {
+		defer close(brokerDone)
+		if broker != nil {
+			broker.Run(runCtx)
+		}
 	}()
 
 	errc := make(chan error, len(servers))
@@ -82,6 +101,7 @@ func serve(ctx context.Context, configPath string, log *slog.Logger) error {
 		srv.Shutdown(shutdown)
 	}
 	cancel()
+	<-brokerDone
 	<-done
 	if errors.Is(err, http.ErrServerClosed) {
 		err = nil

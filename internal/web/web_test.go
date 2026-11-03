@@ -45,6 +45,7 @@ type fixture struct {
 	auth    *auth.Auth
 	gw      *gateway.Gateway
 	state   *statedb.DB
+	ui      *Server
 	hs      *httptest.Server
 	client  *http.Client
 	cookie  string
@@ -84,7 +85,8 @@ func newFixture(t *testing.T, cfgText string, before ...func(dir string)) *fixtu
 	if err := f.gw.Apply(cfg); err != nil {
 		t.Fatal(err)
 	}
-	f.hs = httptest.NewServer(New(f.auth, f.gw, file, cfg, log))
+	f.ui = New(f.auth, f.gw, file, cfg, log)
+	f.hs = httptest.NewServer(f.ui)
 	t.Cleanup(f.hs.Close)
 	f.client = &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	return f

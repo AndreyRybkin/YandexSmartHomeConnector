@@ -23,6 +23,7 @@ import (
 	"hcgateway/internal/delonghi"
 	"hcgateway/internal/gateway"
 	"hcgateway/internal/metrics"
+	"hcgateway/internal/mqttbroker"
 )
 
 // maxForm - предел тела формы.
@@ -67,6 +68,14 @@ type Server struct {
 	// statsMu и stats - рецепты кофемашин из облака по идентификатору прибора; в памяти.
 	statsMu sync.Mutex
 	stats   map[string][]delonghi.RecipeStat
+
+	// broker - встроенный брокер MQTT; nil - не запущен. Задаётся до начала работы сервера.
+	broker *mqttbroker.Broker
+}
+
+// AttachBroker подключает страницу /mqtt к встроенному брокеру.
+func (s *Server) AttachBroker(b *mqttbroker.Broker) {
+	s.broker = b
 }
 
 // New создаёт веб-интерфейс. start - настройки, с которыми запущен шлюз.
@@ -136,6 +145,12 @@ func New(a *auth.Auth, gw *gateway.Gateway, file *config.File, start *config.Con
 	mux.HandleFunc("GET /devices/{id}/info", s.authed(s.infoPage))
 	mux.HandleFunc("GET /devices/{id}/stream", s.authed(s.stream))
 	mux.HandleFunc("POST /theme", s.authed(s.setTheme))
+	mux.HandleFunc("GET /mqtt", s.authed(s.mqttPage))
+	mux.HandleFunc("GET /mqtt/stream", s.authed(s.mqttStream))
+	mux.HandleFunc("GET /mqtt/publish", s.authed(s.mqttPublishPage))
+	mux.HandleFunc("POST /mqtt/publish", s.authed(s.mqttPublish))
+	mux.HandleFunc("GET /mqtt/password", s.authed(s.mqttPasswordPage))
+	mux.HandleFunc("POST /mqtt/password", s.authed(s.mqttPassword))
 	mux.HandleFunc("GET /logins", s.authed(s.loginsPage))
 	mux.HandleFunc("POST /logins/lift", s.authed(s.lift))
 	s.mux = mux
@@ -385,6 +400,9 @@ func (s *Server) notices(cfg *config.Config) []string {
 	if cfg.Metrics.Token != "" && s.start.Metrics.Token == "" {
 		out = append(out, "Задан metrics.token: порт метрик откроется после перезапуска шлюза.")
 	}
+	if cfg.MQTT.Password != "" && s.start.MQTT.Password == "" {
+		out = append(out, "Задан пароль брокера MQTT: его порт откроется после перезапуска шлюза.")
+	}
 	return out
 }
 
@@ -399,6 +417,9 @@ func (s *Server) restartNeeded(cfg *config.Config) []string {
 	}
 	if cfg.Metrics.Listen != s.start.Metrics.Listen {
 		out = append(out, "metrics.listen")
+	}
+	if cfg.MQTT.Listen != s.start.MQTT.Listen {
+		out = append(out, "mqtt.listen")
 	}
 	if !slices.Equal(cfg.Proxies, s.start.Proxies) {
 		out = append(out, "trusted_proxies")
@@ -549,7 +570,7 @@ func (s *Server) reloadLocked() error {
 func parsePages() map[string]*template.Template {
 	base := template.Must(template.New("").Funcs(funcs).ParseFS(templateFiles, "templates/layout.html", "templates/editor.html"))
 	pages := map[string]*template.Template{}
-	for _, name := range []string{"login", "notfound", "devices", "device", "confirm", "profiles", "profile", "connections", "logins", "info", "move"} {
+	for _, name := range []string{"login", "notfound", "devices", "device", "confirm", "profiles", "profile", "connections", "logins", "info", "move", "mqtt"} {
 		pages[name] = template.Must(template.Must(base.Clone()).ParseFS(templateFiles, "templates/"+name+".html"))
 	}
 	return pages

@@ -24,7 +24,8 @@ COPY --from=build --chown=nonroot:nonroot /out/data /data
 VOLUME ["/data"]
 # 8080 - запросы Яндекса и веб-интерфейс под /ui, только через Traefik.
 # 8082 - метрики для Prometheus в сети Docker.
-EXPOSE 8080 8082
+# 1883 - встроенный брокер MQTT, только в домашнюю сеть: шифрования нет.
+EXPOSE 8080 8082 1883
 USER nonroot:nonroot
 ENTRYPOINT ["/hcgateway", "-config", "/config/config.yaml"]
 CMD ["serve"]

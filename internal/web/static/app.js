@@ -823,7 +823,45 @@ if (here && !here.classList.contains("tab")) {
   here.scrollIntoView();
 }
 document.querySelectorAll("select[data-theme-select]").forEach(bindTheme);
+// bindMqtt обновляет страницу брокера из потока без перезагрузки.
+function bindMqtt(el) {
+  const source = new EventSource(el.dataset.mqttStream);
+  source.addEventListener("mqtt", (e) => {
+    const s = JSON.parse(e.data);
+    fill(document.getElementById("mqtt-clients"), s.clients, "Клиентов нет.", 5, (row, c) => {
+      cell(row, c.id, true);
+      cell(row, c.remote);
+      cell(row, c.user);
+      cell(row, c.version);
+      cell(row, c.since);
+    });
+    fill(document.getElementById("mqtt-failures"), s.failures, "Неудачных входов нет.", 3, (row, f) => {
+      cell(row, f.time);
+      cell(row, f.remote);
+      cell(row, f.user);
+    });
+    fill(document.getElementById("mqtt-journal"), s.journal, "Сообщений пока не было.", 6, (row, j) => {
+      cell(row, j.time);
+      cell(row, j.dir);
+      cell(row, j.client, true);
+      cell(row, j.topic, true);
+      cell(row, j.payload);
+      cell(row, j.flags).className = "muted";
+    });
+    fill(document.getElementById("mqtt-values"), s.values, "Значений пока нет.", 5, (row, v) => {
+      cell(row, v.topic, true);
+      cell(row, v.payload);
+      cell(row, v.client, true);
+      cell(row, v.time);
+      cell(row, v.flags).className = "muted";
+    });
+    document.getElementById("mqtt-saved").textContent = s.saved;
+    document.getElementById("mqtt-unsaved").textContent = s.unsaved;
+  });
+}
+
 if (window.EventSource) {
+  document.querySelectorAll("[data-mqtt-stream]").forEach(bindMqtt);
   document.querySelectorAll("[data-stream]").forEach((el) => {
     if (el.id === "list") {
       bindDevices(el);

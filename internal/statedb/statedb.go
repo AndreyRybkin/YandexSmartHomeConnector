@@ -1,5 +1,5 @@
-// Package statedb - база состояния шлюза в файле SQLite: баны, связь приборов, последние значения
-// и история изменений. Вызовы шлюза меняют только копию в памяти, а отдельная горутина пишет
+// Package statedb - база состояния шлюза в файле SQLite: баны, связь приборов, последние значения,
+// история изменений и сохранённые сообщения брокера MQTT. Вызовы шлюза меняют только копию в памяти, а отдельная горутина пишет
 // изменившееся на диск: сбой базы не задерживает вход и команды Алисы.
 // Сломанную базу шлюз пересоздаёт сам и записывает в неё то, что лежит в памяти.
 // Все методы можно вызывать у nil: тогда шлюз работает без базы.
@@ -97,6 +97,13 @@ CREATE TABLE bans (
 	ended_by TEXT
 );
 CREATE INDEX bans_until ON bans (until);
+`, `
+CREATE TABLE mqtt_retained (
+	topic TEXT PRIMARY KEY,
+	payload BLOB NOT NULL,
+	qos INTEGER NOT NULL,
+	at INTEGER NOT NULL
+);
 `}
 
 // DB - база состояния и её копия в памяти.
@@ -128,6 +135,9 @@ type DB struct {
 	dropped map[string]bool
 	active  map[string]Ban
 	banOps  []banOp
+	// retained - сохранённые сообщения брокера MQTT; retainedGone - стёртые, но ещё лежащие в базе.
+	retained     map[string]*retained
+	retainedGone map[string]bool
 }
 
 // Open открывает базу path: при запуске шлюз читает из неё сохранённое. Ошибка не мешает шлюзу:
@@ -138,7 +148,8 @@ func Open(path string, log *slog.Logger) *DB {
 
 func open(path string, log *slog.Logger, now func() time.Time) *DB {
 	d := &DB{path: path, log: log, now: now, wake: make(chan struct{}, 1),
-		devices: map[string]*device{}, dropped: map[string]bool{}, active: map[string]Ban{}}
+		devices: map[string]*device{}, dropped: map[string]bool{}, active: map[string]Ban{},
+		retained: map[string]*retained{}, retainedGone: map[string]bool{}}
 	d.writeMu.Lock()
 	defer d.writeMu.Unlock()
 	if err := d.connect(); err != nil {

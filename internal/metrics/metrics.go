@@ -119,11 +119,23 @@ var (
 		Name: "hcgateway_store_recreated_total",
 		Help: "Сколько раз шлюз пересоздал сломанную базу состояния.",
 	})
+	mqttMessages = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "hcgateway_mqtt_messages_total",
+		Help: "Сообщения встроенного брокера MQTT: in - от клиентов, out - от шлюза.",
+	}, []string{"direction"})
+	mqttAuthFailures = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "hcgateway_mqtt_auth_failures_total",
+		Help: "Неудачные входы во встроенный брокер MQTT.",
+	})
+	mqttClients = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "hcgateway_mqtt_clients",
+		Help: "Клиенты встроенного брокера MQTT сейчас.",
+	})
 	state = &stateCollector{}
 
 	// own - свои метрики шлюза, без метрик Go и процесса.
 	own = []prometheus.Collector{yandexRequests, yandexDuration, actions, notifications, deviceEvents,
-		webLogins, linkingLogins, bans, configSaves, sourceRequests, sourceConnected, sourceReconnects, tokenRefreshes, buildInfo, storeErrors, storeRecreated, state}
+		webLogins, linkingLogins, bans, configSaves, sourceRequests, sourceConnected, sourceReconnects, tokenRefreshes, buildInfo, storeErrors, storeRecreated, mqttMessages, mqttAuthFailures, mqttClients, state}
 )
 
 func init() {
@@ -183,6 +195,21 @@ func StoreError() {
 // StoreRecreated считает пересоздание сломанной базы состояния.
 func StoreRecreated() {
 	storeRecreated.Inc()
+}
+
+// MQTTMessage считает сообщение встроенного брокера.
+func MQTTMessage(direction string) {
+	mqttMessages.WithLabelValues(direction).Inc()
+}
+
+// MQTTAuthFailure считает неудачный вход во встроенный брокер.
+func MQTTAuthFailure() {
+	mqttAuthFailures.Inc()
+}
+
+// MQTTClients задаёт число клиентов встроенного брокера.
+func MQTTClients(n int) {
+	mqttClients.Set(float64(n))
 }
 
 // ConfigSave считает сохранение настроек.

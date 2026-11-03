@@ -3,6 +3,9 @@ package web
 import (
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -13,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"hcgateway/internal/mqttbroker"
 	"hcgateway/internal/statedb"
 	"hcgateway/internal/tv"
 )
@@ -207,5 +211,76 @@ func TestTVCertChanged(t *testing.T) {
 	}
 	if status, _, _ := f.post("/devices/tv/tv/cert", url.Values{"cert": {want}}); status != http.StatusSeeOther || set.Link().Cert != want || set.Link().NewCert != "" {
 		t.Fatalf("решение владельца: %d %+v", status, set.Link())
+	}
+}
+
+// Страница брокера: порт закрыт без пароля, пароль создаётся с подтверждением, сообщение уходит
+// с подтверждением и видно в журнале и фильтре, а неверное отклоняется до брокера.
+func TestMQTTPage(t *testing.T) {
+	f := newFixture(t, "")
+	f.writeUser(testPassword)
+	f.login()
+	if _, body := f.get("/mqtt"); !strings.Contains(body, "Порт закрыт") || !strings.Contains(body, "не задан") {
+		t.Fatal("страница без пароля")
+	}
+	if status, body := f.get("/mqtt/password"); status != http.StatusOK || !strings.Contains(body, "Создать пароль") {
+		t.Fatalf("подтверждение пароля: %d", status)
+	}
+	if status, _, _ := f.post("/mqtt/password", url.Values{}); status != http.StatusSeeOther {
+		t.Fatalf("создание пароля: %d", status)
+	}
+	password := f.config().MQTT.Password
+	if len(password) < 32 {
+		t.Fatalf("пароль: %d знаков", len(password))
+	}
+	if _, body := f.get("/mqtt"); !strings.Contains(body, password) || !strings.Contains(body, "откроется после перезапуска") {
+		t.Fatal("страница не показывает пароль и что порт закрыт")
+	}
+
+	addr := func() string {
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer l.Close()
+		return l.Addr().String()
+	}()
+	b := mqttbroker.New(mqttbroker.Config{Listen: addr, Credentials: func() (string, string) { return "hcgateway", password }}, f.state, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		b.Run(ctx)
+	}()
+	defer func() { cancel(); <-done }()
+	for end := time.Now().Add(5 * time.Second); !b.Status("").Open; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(end) {
+			t.Fatal("брокер не открыл порт")
+		}
+	}
+	f.ui.AttachBroker(b)
+	q := url.Values{"topic": {"polaris/1/control/mode"}, "payload": {"<1>"}, "qos": {"1"}, "retain": {"on"}}
+	if status, body := f.get("/mqtt/publish?" + q.Encode()); status != http.StatusOK || !strings.Contains(body, "polaris/1/control/mode") || !strings.Contains(body, `name="retain"`) || !strings.Contains(body, "выполнит команду") {
+		t.Fatalf("подтверждение: %d", status)
+	}
+	if status, _, _ := f.post("/mqtt/publish", q); status != http.StatusSeeOther {
+		t.Fatalf("отправка: %d", status)
+	}
+	_, body := f.get("/mqtt?topic=polaris/")
+	for _, want := range []string{"порт открыт", "от шлюза", "polaris/1/control/mode", "&lt;1&gt;", "сохраняется"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("на странице нет %q", want)
+		}
+	}
+	if _, body := f.get("/mqtt?topic=other/"); strings.Contains(body, "от шлюза") {
+		t.Fatal("фильтр не сработал")
+	}
+	for _, bad := range []url.Values{{"topic": {""}}, {"topic": {"a/#"}}, {"topic": {"$SYS/x"}}, {"topic": {"a"}, "qos": {"3"}}, {"topic": {"a"}, "payload": {strings.Repeat("x", mqttbroker.MaxPayloadBytes+1)}}} {
+		if status, body, _ := f.post("/mqtt/publish", bad); status == http.StatusSeeOther && strings.Contains(body, "отправлено") {
+			t.Fatalf("принято %v", bad)
+		}
+	}
+	if st := b.Status(""); len(st.Journal) != 1 {
+		t.Fatalf("неверные сообщения дошли до брокера: %+v", st.Journal)
 	}
 }

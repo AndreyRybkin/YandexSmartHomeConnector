@@ -1,0 +1,47 @@
+{{define "content"}}{{$p := .}}{{with .Data}}
+<h1>MQTT</h1>
+<div data-mqtt-stream="{{.Stream}}">
+<section class="field" id="broker"><h2>Брокер</h2>
+{{if .Err}}<p class="err">Порт не открылся: {{.Err}}</p>
+{{else if .Open}}<p><span class="chip run">порт открыт</span> <code>{{.Listen}}</code></p>
+{{else if .Pending}}<p class="notice">Пароль задан: порт {{.Listen}} откроется после перезапуска шлюза.</p>
+{{else}}<p class="notice">Порт закрыт: сначала создайте пароль.</p>{{end}}
+<p class="muted">Брокер встроен в шлюз и принимает любые топики. Шифрования нет: пароль и сообщения идут открытым текстом, поэтому порт можно публиковать только в домашнюю сеть.</p>
+<div class="wrap"><table>
+<tr><th>Логин</th><td><code data-copy>{{.Username}}</code></td></tr>
+<tr><th>Пароль</th><td>{{with .Password}}<code data-copy>{{.}}</code>{{else}}не задан{{end}}</td></tr>
+</table></div>
+<p><a class="button" href="/mqtt/password">{{if .Password}}Создать новый пароль{{else}}Создать пароль{{end}}</a></p>
+</section>
+<section class="field" id="clients"><h2>Подключения</h2>
+<div class="wrap"><table><thead><tr><th>Клиент</th><th>Адрес</th><th>Логин</th><th>Версия</th><th>На связи с</th></tr></thead><tbody id="mqtt-clients">
+{{range .Live.Clients}}<tr><td><code>{{.ID}}</code></td><td>{{.Remote}}</td><td>{{.User}}</td><td>{{.Version}}</td><td>{{.Since}}</td></tr>{{else}}<tr><td colspan="5">Клиентов нет.</td></tr>{{end}}
+</tbody></table></div>
+<h3>Неудачные входы</h3>
+<div class="wrap"><table><thead><tr><th>Время</th><th>Адрес</th><th>Логин</th></tr></thead><tbody id="mqtt-failures">
+{{range .Live.Failures}}<tr><td>{{.Time}}</td><td>{{.Remote}}</td><td>{{.User}}</td></tr>{{else}}<tr><td colspan="3">Неудачных входов нет.</td></tr>{{end}}
+</tbody></table></div>
+</section>
+<form method="get" action="/mqtt" class="field"><label>Показывать топики, начинающиеся с <input name="topic" value="{{.Filter}}" maxlength="256" placeholder="polaris/"></label> <button>Показать</button>{{if .Filter}} <a href="/mqtt">Все топики</a>{{end}}</form>
+<section class="field" id="journal"><h2>Журнал сообщений</h2>
+<p class="muted">До 200 последних сообщений в памяти шлюза, новые первыми. Длинные значения обрезаны.</p>
+<div class="wrap"><table><thead><tr><th>Время</th><th>Откуда</th><th>Клиент</th><th>Топик</th><th>Значение</th><th></th></tr></thead><tbody id="mqtt-journal">
+{{range .Live.Journal}}<tr><td>{{.Time}}</td><td>{{.Dir}}</td><td><code>{{.Client}}</code></td><td><code>{{.Topic}}</code></td><td>{{.Payload}}</td><td class="muted">{{.Flags}}</td></tr>{{else}}<tr><td colspan="6">Сообщений пока не было.</td></tr>{{end}}
+</tbody></table></div>
+</section>
+<section class="field" id="values"><h2>Текущие значения</h2>
+<p class="muted">Сохранённых сообщений в базе: <span id="mqtt-saved">{{.Live.Saved}}</span> из 1000. Не сохранено из-за предела: <span id="mqtt-unsaved">{{.Live.Unsaved}}</span>.</p>
+<div class="wrap"><table><thead><tr><th>Топик</th><th>Значение</th><th>Клиент</th><th>Время</th><th></th></tr></thead><tbody id="mqtt-values">
+{{range .Live.Values}}<tr><td><code>{{.Topic}}</code></td><td>{{.Payload}}</td><td><code>{{.Client}}</code></td><td>{{.Time}}</td><td class="muted">{{.Flags}}</td></tr>{{else}}<tr><td colspan="5">Значений пока нет.</td></tr>{{end}}
+</tbody></table></div>
+</section>
+</div>
+<form method="get" action="/mqtt/publish" class="field" id="send"><h2>Отправить сообщение</h2>
+<p class="muted">Сообщение уходит от имени шлюза. Прибор выполнит команду сразу: чайник, например, начнёт греть воду. Перед отправкой шлюз спросит подтверждение. Пустое сохраняемое сообщение стирает сохранённое значение топика.</p>
+<label>Топик <input name="topic" value="{{.Send.Topic}}" maxlength="256" required placeholder="polaris/&lt;id&gt;/control/mode"></label>
+<label>Значение <textarea name="payload" rows="2" maxlength="16384">{{.Send.Payload}}</textarea></label>
+<label>QoS <select name="qos"><option>0</option><option>1</option><option>2</option></select></label>
+<label><input type="checkbox" name="retain"> Сохранить в брокере</label>
+<button class="primary">Отправить…</button>
+</form>
+{{end}}{{end}}

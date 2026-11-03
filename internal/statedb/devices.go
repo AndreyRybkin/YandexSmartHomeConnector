@@ -291,6 +291,10 @@ func (d *DB) markAll() {
 	for _, b := range d.active {
 		d.banOps = append(d.banOps, banOp{start: true, ban: b})
 	}
+	d.retainedGone = map[string]bool{}
+	for _, r := range d.retained {
+		r.dirty = true
+	}
 }
 
 // batch - одна запись на диск.
@@ -304,6 +308,9 @@ type batch struct {
 	bans    []banOp
 	alive   bool
 	prune   bool
+	// retained и retainedGone - сообщения брокера MQTT.
+	retained     []retainedRow
+	retainedGone []string
 }
 
 type linkRow struct {
@@ -324,7 +331,7 @@ type changeRows struct {
 
 func (b *batch) empty() bool {
 	return len(b.dropped) == 0 && len(b.links) == 0 && len(b.values) == 0 && len(b.removed) == 0 &&
-		len(b.changes) == 0 && len(b.bans) == 0 && !b.alive && !b.prune
+		len(b.changes) == 0 && len(b.bans) == 0 && len(b.retained) == 0 && len(b.retainedGone) == 0 && !b.alive && !b.prune
 }
 
 // take забирает изменения в запись. Только под mu.
@@ -335,6 +342,7 @@ func (d *DB) take(now time.Time, alive, prune bool) *batch {
 		b.dropped = append(b.dropped, id)
 	}
 	d.dropped = map[string]bool{}
+	d.takeRetained(b)
 	for k, ban := range d.active {
 		if !now.Before(ban.Until) {
 			delete(d.active, k)
@@ -377,6 +385,7 @@ func (d *DB) take(now time.Time, alive, prune bool) *batch {
 
 // restore возвращает несохранённое в очередь после сбоя записи. Только под mu.
 func (d *DB) restore(b *batch) {
+	d.restoreRetained(b)
 	d.banOps = append(b.bans, d.banOps...)
 	if n := len(d.banOps) - MaxBans; n > 0 {
 		d.banOps = d.banOps[n:]
@@ -471,6 +480,9 @@ func (b *batch) write(db *sql.DB) error {
 	if err := writeBans(ctx, tx, b.bans); err != nil {
 		return err
 	}
+	if err := writeRetained(ctx, tx, b); err != nil {
+		return err
+	}
 	if b.alive {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO meta (key, value) VALUES ('alive_at', ?)
 			ON CONFLICT (key) DO UPDATE SET value = excluded.value`, b.now.UnixMilli()); err != nil {
@@ -490,6 +502,8 @@ type loaded struct {
 	alive   time.Time
 	devices map[string]*device
 	active  []Ban
+	// retained - сохранённые сообщения брокера MQTT.
+	retained map[string]*retained
 }
 
 // load читает сохранённое при открытии базы.
@@ -572,6 +586,9 @@ func load(db *sql.DB, now time.Time) (*loaded, error) {
 	if l.active, err = activeBans(ctx, db, now); err != nil {
 		return nil, err
 	}
+	if l.retained, err = loadRetained(ctx, db); err != nil {
+		return nil, err
+	}
 	return l, nil
 }
 
@@ -587,6 +604,11 @@ func (d *DB) merge(l *loaded) {
 	for _, b := range l.active {
 		if _, ok := d.active[b.Prefix.String()]; !ok {
 			d.active[b.Prefix.String()] = b
+		}
+	}
+	for t, r := range l.retained {
+		if _, ok := d.retained[t]; !ok {
+			d.retained[t] = r
 		}
 	}
 }

@@ -118,6 +118,7 @@ type Config struct {
 	// Listen - адрес HTTP-сервера: запросы Яндекса и веб-интерфейс, за Traefik.
 	Listen  string  `yaml:"listen,omitempty"`
 	Metrics Metrics `yaml:"metrics,omitempty"`
+	MQTT    MQTT    `yaml:"mqtt,omitempty"`
 	// HomeConnect - облако Home Connect.
 	HomeConnect HomeConnect `yaml:"homeconnect,omitempty"`
 	// ThinQ - облако LG ThinQ Connect.
@@ -178,6 +179,16 @@ type Metrics struct {
 	Listen string `yaml:"listen,omitempty"`
 	// Token - токен Prometheus. Без него порт метрик не открывается.
 	Token string `yaml:"token,omitempty"`
+}
+
+// MQTT - встроенный брокер MQTT для приборов и других клиентов домашней сети.
+type MQTT struct {
+	// Listen - адрес брокера. Порт можно публиковать только в домашнюю сеть: шифрования нет.
+	Listen string `yaml:"listen,omitempty"`
+	// Username - логин клиентов брокера.
+	Username string `yaml:"username,omitempty"`
+	// Password - пароль клиентов брокера. Без него порт не открывается.
+	Password string `yaml:"password,omitempty"`
 }
 
 // HomeConnect - приложение на портале разработчика Home Connect и адрес облака.
@@ -292,6 +303,7 @@ func defaults() *Config {
 		DataDir:     "/data",
 		Listen:      ":8080",
 		Metrics:     Metrics{Listen: ":8082"},
+		MQTT:        MQTT{Listen: ":1883", Username: "hcgateway"},
 		HomeConnect: HomeConnect{APIURL: homeConnectURL},
 		SmartThings: SmartThings{APIURL: smartThingsURL},
 		Yandex:      Yandex{RedirectURIs: []string{yandexRedirect, yandexRedirectRU}},
@@ -373,7 +385,7 @@ func (c *Config) validate() error {
 	y := c.Yandex
 	h := c.HomeConnect
 	for name, v := range map[string]string{"yandex.skill_id": y.SkillID, "yandex.callback_token": y.CallbackToken,
-		"yandex.client_id": y.ClientID, "yandex.client_secret": y.ClientSecret, "metrics.token": c.Metrics.Token,
+		"yandex.client_id": y.ClientID, "yandex.client_secret": y.ClientSecret, "metrics.token": c.Metrics.Token, "mqtt.username": c.MQTT.Username, "mqtt.password": c.MQTT.Password,
 		"homeconnect.client_id": h.ClientID, "homeconnect.client_secret": h.ClientSecret, "homeconnect.api_url": h.APIURL,
 		"thinq.pat": c.ThinQ.PAT, "thinq.api_url": c.ThinQ.APIURL, "delonghi.gigya_url": c.DeLonghi.GigyaURL,
 		"delonghi.api_url": c.DeLonghi.APIURL, "delonghi.iot_url": c.DeLonghi.IoTURL,
@@ -743,6 +755,14 @@ func (c *Config) ValidateServe() error {
 		return errors.New("metrics.listen: совпадает с listen, метрикам нужен свой порт")
 	case c.Metrics.Token != "" && len(c.Metrics.Token) < minMetricsTokenLen:
 		return fmt.Errorf("metrics.token: нужно не меньше %d символов", minMetricsTokenLen)
+	case c.MQTT.Listen == "":
+		return errors.New("mqtt.listen: не задан")
+	case c.MQTT.Listen == c.Listen || c.MQTT.Listen == c.Metrics.Listen:
+		return errors.New("mqtt.listen: совпадает с listen или metrics.listen, брокеру нужен свой порт")
+	case c.MQTT.Username == "":
+		return errors.New("mqtt.username: не задан")
+	case c.MQTT.Password != "" && len(c.MQTT.Password) < minSecretLen:
+		return fmt.Errorf("mqtt.password: нужно не меньше %d символов", minSecretLen)
 	case (y.ClientID == "") != (y.ClientSecret == ""):
 		return errors.New("yandex: client_id и client_secret задаются вместе")
 	case y.ClientSecret != "" && len(y.ClientSecret) < minSecretLen:
@@ -810,6 +830,12 @@ func (c *Config) marshal() ([]byte, error) {
 	}
 	if v.Metrics.Listen == d.Metrics.Listen {
 		v.Metrics.Listen = ""
+	}
+	if v.MQTT.Listen == d.MQTT.Listen {
+		v.MQTT.Listen = ""
+	}
+	if v.MQTT.Username == d.MQTT.Username {
+		v.MQTT.Username = ""
 	}
 	if v.HomeConnect.APIURL == d.HomeConnect.APIURL {
 		v.HomeConnect.APIURL = ""
