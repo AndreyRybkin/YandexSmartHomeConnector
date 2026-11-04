@@ -655,7 +655,11 @@ function mapCells(row, m) {
   if (m.program) {
     cell(row, tr("программа прибора"));
   } else {
-    cell(row, m.label, true).firstChild.title = m.key;
+    const name = cell(row, m.label, true);
+    name.firstChild.title = m.key;
+    if (m.note) {
+      name.append(" ", span("muted", m.note));
+    }
   }
   cell(row, m.now || "-");
   cell(row, m.convert || "-");

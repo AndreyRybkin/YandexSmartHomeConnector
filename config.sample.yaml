@@ -82,7 +82,8 @@ devices:
     # delonghi - кофемашина De'Longhi в домашней сети, webos и samsung-tv - телевизоры LG и Samsung
     # в домашней сети, smartthings - устройство из облака SmartThings.
     source: demo
-    # Тип демо-прибора: Oven или Dishwasher. Программа идёт 2 минуты.
+    # Тип демо-прибора: Oven, Dishwasher или AllInOne - все свойства и кнопка в одном устройстве для
+    # проверки у Яндекса. Программа идёт 2 минуты.
     demo: Oven
   # Лента WLED в домашней сети: адрес и сопоставление пресетов ленты сценам Алисы.
   # strip:

@@ -41,7 +41,7 @@ var typeNames = map[string]string{
 	"CoffeeMaker": "Кофемашина", "Hob": "Варочная панель", "Hood": "Вытяжка", "CleaningRobot": "Робот-пылесос",
 	"CookProcessor": "Кухонный процессор", "WarmingDrawer": "Шкаф для подогрева",
 	"AirConditioner": "Кондиционер", "Microwave": "Микроволновая печь",
-	profile.PolarisKettleType: "Чайник Polaris", profile.DeLonghiType: "Кофемашина De'Longhi", profile.LGTVType: "Телевизор LG", profile.SamsungTVType: "Телевизор Samsung",
+	profile.AllInOneType: "Все свойства в одном приборе", profile.PolarisKettleType: "Чайник Polaris", profile.DeLonghiType: "Кофемашина De'Longhi", profile.LGTVType: "Телевизор LG", profile.SamsungTVType: "Телевизор Samsung",
 
 	"DEVICE_AIR_CONDITIONER": "Кондиционер LG", "DEVICE_AIR_PURIFIER": "Очиститель воздуха LG",
 	"DEVICE_AIR_PURIFIER_FAN": "Очиститель-вентилятор LG", "DEVICE_CEILING_FAN": "Потолочный вентилятор LG",
@@ -194,6 +194,38 @@ var stateNames = map[string]string{
 
 	"RESERVED": "отложенный старт", "END": "работа закончена", "ERROR": "ошибка",
 	"COOL_DOWN": "охлаждение", "RINSE_HOLD": "ожидание после полоскания", "REFRESHING": "освежение", "SLEEP": "спящий режим",
+}
+
+// alarmNames - что значит тревога кофемашины De'Longhi, в порядке на метке прибора: сначала сбои, затем
+// то, что может сделать владелец. Описания протокола нет: смысл взят из имён и списка тревог старых
+// машин. Чего здесь нет, метка показывает по имени.
+var alarmNames = []kv{
+	{"BrokenGrinder", "сбой кофемолки"},
+	{"HeaterNTC", "сбой датчика нагревателя"},
+	{"Fan", "сбой вентилятора"},
+	{"General", "общая ошибка машины"},
+	{"Infuser", "проверьте заварочный блок"},
+	{"Bubble", "воздух в контуре воды"},
+	{"Waste", "очистите контейнер гущи"},
+	{"Drain", "опорожните поддон"},
+	{"Descale", "удалите накипь"},
+	{"Filter", "замените фильтр"},
+	{"GroundFine", "помол слишком мелкий"},
+	{"BrewUnitClean", "очистите заварочный блок"},
+	{"Clean", "нужна очистка"},
+	{"NoCoffee", "нет зёрен"},
+	{"TankLevel", "мало воды"},
+	{"TankPresence", "бак снят"},
+}
+
+// alarmName - что значит тревога кофемашины; пусто - шлюз её не знает.
+func alarmName(alarm string) string {
+	for _, a := range alarmNames {
+		if a.Key == alarm {
+			return a.Value
+		}
+	}
+	return ""
 }
 
 // nameOr - подпись из names или само имя, если подписи нет.

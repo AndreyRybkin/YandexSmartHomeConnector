@@ -23,7 +23,7 @@ const (
 var _ Appliance = (*Demo)(nil)
 
 // DemoKinds - типы демо-приборов.
-var DemoKinds = []string{"Oven", "Dishwasher"}
+var DemoKinds = []string{"Oven", "Dishwasher", DemoAllInOne}
 
 // roomTemperature - температура в камере выключенной демо-духовки.
 const roomTemperature = 22.0
@@ -41,6 +41,7 @@ type Demo struct {
 	state   State
 	elapsed time.Duration
 	preheat bool
+	step    int
 	notify  Notify
 }
 
@@ -82,10 +83,15 @@ func NewDemo(kind string, duration time.Duration) (*Demo, error) {
 		}
 		values[EventSaltNearlyEmpty] = EventOff
 		values[EventRinseAidNearlyEmpty] = EventOff
+	case DemoAllInOne:
+		d.desc = allInOneDescription()
 	default:
 		return nil, fmt.Errorf("нет демо-прибора типа %q", kind)
 	}
 	d.state = State{Online: true, Values: values}
+	if kind == DemoAllInOne {
+		d.setAllInOneStep(0)
+	}
 	return d, nil
 }
 
@@ -138,6 +144,11 @@ func (d *Demo) advance(dt time.Duration) {
 			d.preheat = true
 			d.state.Values[EventPreheatFinished] = EventPresent
 			events = append(events, EventPreheatFinished)
+		}
+	}
+	if d.desc.Type == DemoAllInOne {
+		if step := min(allInOneSteps, int(allInOneSteps*d.elapsed/d.duration)); step > d.step {
+			d.setAllInOneStep(step)
 		}
 	}
 	if d.elapsed >= d.duration {
@@ -216,6 +227,9 @@ func (d *Demo) Start(ctx context.Context, program string, options map[string]any
 	if d.desc.Type == "Oven" {
 		d.state.Values[EventPreheatFinished] = EventOff
 	}
+	if d.desc.Type == DemoAllInOne {
+		d.setAllInOneStep(0)
+	}
 	d.changedLocked(nil)
 	return nil
 }
@@ -230,6 +244,9 @@ func (d *Demo) Stop(ctx context.Context) error {
 	d.state.Values[StatusOperationState] = OperationReady
 	if d.desc.Type == "Oven" {
 		d.state.Values[StatusCavityTemperature] = roomTemperature
+	}
+	if d.desc.Type == DemoAllInOne {
+		d.setAllInOneStep(0)
 	}
 	d.changedLocked(nil)
 	return nil

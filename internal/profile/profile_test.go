@@ -335,3 +335,31 @@ func TestBuiltinEventNames(t *testing.T) {
 		t.Errorf("уровень воды духовки пропал: %+v", merged.Events)
 	}
 }
+
+// Кофемашина De'Longhi: 17 тревог дают нажатие double_click, а уровни воды и зёрен остаются уровнями.
+func TestDeLonghiAlarms(t *testing.T) {
+	p, err := Resolve(DeLonghiType, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for k, v := range p.Events.Button {
+		if v == "double_click" {
+			n++
+			if !strings.HasPrefix(k, deLonghiAlarmPrefix) || !strings.HasSuffix(k, "="+deLonghiPresent) {
+				t.Errorf("не тревога: %s", k)
+			}
+		}
+	}
+	if n != 17 {
+		t.Fatalf("тревог с нажатием: %d", n)
+	}
+	for _, level := range []string{"NoCoffee", "TankLevel", "TankPresence"} {
+		if _, ok := p.Events.Button[deLonghiAlarmPrefix+level+"="+deLonghiPresent]; ok {
+			t.Errorf("%s даёт нажатие", level)
+		}
+	}
+	if !slices.Contains(p.Events.WaterLevel, deLonghiAlarmPrefix+"TankPresence") || !slices.Contains(p.Events.Empty, deLonghiAlarmPrefix+"TankPresence") {
+		t.Fatalf("снятый бак: %+v", p.Events)
+	}
+}

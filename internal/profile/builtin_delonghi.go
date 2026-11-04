@@ -18,6 +18,26 @@ var (
 	DeLonghiDrink   = "americano"
 )
 
+const (
+	// deLonghiAlarmPrefix и deLonghiPresent - имя тревоги машины и её значение, пока она есть.
+	deLonghiAlarmPrefix = "DeLonghi.Alarm."
+	deLonghiPresent     = "BSH.Common.EnumType.EventPresentState.Present"
+)
+
+// deLonghiServiceAlarms - тревоги, о которых датчик сообщает нажатием double_click: машина просит
+// обслуживания или сообщает о сбое. У кнопки Яндекса три значения, поэтому оно одно на все тревоги.
+var deLonghiServiceAlarms = []string{"BrewUnitClean", "BrokenGrinder", "Bubble", "Clean", "Descale", "Drain", "Fan", "Filter", "Fridge",
+	"General", "GroundFine", "HeaterNTC", "Imbocco", "Infuser", "MotorPos", "UIMemory", "Waste"}
+
+// deLonghiButtons - нажатия датчика: конец налива, нужен вход и появление тревоги.
+func deLonghiButtons() map[string]string {
+	buttons := map[string]string{"DeLonghi.Event.BeverageFinished": "click", "DeLonghi.Event.LoginRequired": "long_press"}
+	for _, alarm := range deLonghiServiceAlarms {
+		buttons[deLonghiAlarmPrefix+alarm+"="+deLonghiPresent] = "double_click"
+	}
+	return buttons
+}
+
 func init() {
 	builtin[DeLonghiType] = &Profile{
 		YandexType: "cooking.coffee_maker",
@@ -32,10 +52,11 @@ func init() {
 		// Значение есть только во время налива.
 		Tile: []TileItem{{Status: "DeLonghi.Status.Pouring", Label: "налито", Unit: percent}},
 		Events: &Events{
-			Button:     map[string]string{"DeLonghi.Event.BeverageFinished": "click", "DeLonghi.Event.LoginRequired": "long_press"},
-			FoodLevel:  []string{"DeLonghi.Alarm.NoCoffee"},
-			WaterLevel: []string{"DeLonghi.Alarm.TankLevel"},
-			Empty:      []string{"DeLonghi.Alarm.NoCoffee"},
+			Button:    deLonghiButtons(),
+			FoodLevel: []string{deLonghiAlarmPrefix + "NoCoffee"},
+			// Без бака воды нет: уровень empty, а не low.
+			WaterLevel: []string{deLonghiAlarmPrefix + "TankLevel", deLonghiAlarmPrefix + "TankPresence"},
+			Empty:      []string{deLonghiAlarmPrefix + "NoCoffee", deLonghiAlarmPrefix + "TankPresence"},
 		},
 	}
 }

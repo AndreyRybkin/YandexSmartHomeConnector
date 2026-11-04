@@ -133,3 +133,45 @@ func TestDemoRunStops(t *testing.T) {
 	cancel()
 	<-done
 }
+
+// AllInOne за программу меняет показания и нажимает кнопку на шагах 2, 3 и 4; новый запуск и
+// остановка возвращают начальные значения.
+func TestDemoAllInOneSteps(t *testing.T) {
+	d, err := NewDemo(DemoAllInOne, 4*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	start := d.State()
+	if err := d.Start(ctx, "Demo.Program.One", map[string]any{allInOneOption: 60.0}); err != nil {
+		t.Fatal(err)
+	}
+	for step, press := range []string{allInOneNoPress, "double_click", "long_press", "click"} {
+		d.advance(time.Second)
+		st := d.State()
+		if st.Values[allInOneButton] != press {
+			t.Fatalf("шаг %d: кнопка %v, ждём %s", step+1, st.Values[allInOneButton], press)
+		}
+		for status := range allInOneFloats {
+			if st.Values[status] == start.Values[status] {
+				t.Fatalf("шаг %d: %s не изменилось", step+1, status)
+			}
+		}
+	}
+	if d.State().Running() {
+		t.Fatal("программа не закончилась")
+	}
+	if err := d.Start(ctx, "Demo.Program.Two", nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := d.State().Values[allInOneButton]; got != allInOneNoPress {
+		t.Fatalf("после нового запуска кнопка %v", got)
+	}
+	d.advance(2 * time.Second)
+	if err := d.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if st := d.State(); st.Values["Demo.Status.Temperature"] != start.Values["Demo.Status.Temperature"] || st.Values[allInOneButton] != allInOneNoPress {
+		t.Fatalf("после остановки: %+v", st.Values)
+	}
+}

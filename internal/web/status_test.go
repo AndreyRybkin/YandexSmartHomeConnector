@@ -2,11 +2,15 @@ package web
 
 import (
 	"context"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
 
 	"hcgateway/internal/alice"
+	"hcgateway/internal/appliance"
+	"hcgateway/internal/delonghi/dlfake"
+	"hcgateway/internal/profile"
 )
 
 // fakeDevice - устройство Алисы с заданными состояниями.
@@ -98,4 +102,124 @@ func TestAttention(t *testing.T) {
 	if _, body = g.get("/"); !strings.Contains(body, `id="attention" data-problems="offline:без связи|`) || !strings.Contains(body, `hidden><svg class="icon" aria-hidden="true"><use href="#i-alert"/>`) {
 		t.Fatal("полоса без проблем не скрыта")
 	}
+}
+
+// Метка тревог кофемашины: первая словами и сколько ещё, сначала сбои. Уровни воды и зёрен сюда не входят.
+func TestAlarmNotice(t *testing.T) {
+	p, err := profile.Resolve(profile.DeLonghiType, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alarm := func(names ...string) map[string]any {
+		v := map[string]any{"DeLonghi.Status.CurrMode": 7.0, "DeLonghi.Alarm.Filter": appliance.EventOff}
+		for _, n := range names {
+			v["DeLonghi.Alarm."+n] = appliance.EventPresent
+		}
+		return v
+	}
+	for _, c := range []struct {
+		names []string
+		want  string
+	}{
+		{nil, ""},
+		{[]string{"TankLevel", "NoCoffee", "TankPresence"}, ""},
+		{[]string{"Descale"}, "удалите накипь"},
+		{[]string{"Descale", "TankLevel"}, "удалите накипь"},
+		{[]string{"Descale", "BrokenGrinder", "Imbocco"}, "сбой кофемолки и ещё 2"},
+		{[]string{"Imbocco"}, "тревога машины: Imbocco"},
+		{[]string{"Новая", "Imbocco"}, "тревога машины: Imbocco и ещё 1"},
+	} {
+		if got := alarmNotice(p, alarm(c.names...)); got != c.want {
+			t.Errorf("%v: %q, нужно %q", c.names, got, c.want)
+		}
+	}
+	// Что значит событие в сводке: у тревоги - имя и слова вместо Present.
+	for key, want := range map[string][2]string{
+		"DeLonghi.Alarm.Waste=" + appliance.EventPresent:   {"Waste", "очистите контейнер гущи"},
+		"DeLonghi.Alarm.Imbocco=" + appliance.EventPresent: {"Imbocco", ""},
+		"DeLonghi.Alarm.TankLevel":                         {"TankLevel", "мало воды"},
+		"run.state=END":                                    {"state=END", ""},
+		"mode=0":                                           {"mode=0", ""},
+		"BSH.Common.Event.ProgramFinished":                 {"ProgramFinished", ""},
+	} {
+		if label, note := eventLabel(key); label != want[0] || note != want[1] {
+			t.Errorf("%s: %q, %q", key, label, note)
+		}
+	}
+	// Кто берёт значение: и датчик, и что значит тревога.
+	m := mappings(p)
+	if got := m["DeLonghi.Alarm.Descale"]; got != "датчик: button double_click; удалите накипь" {
+		t.Errorf("кто берёт Descale: %q", got)
+	}
+	if got := m["DeLonghi.Alarm.TankPresence"]; got != "датчик: water_level; бак снят" {
+		t.Errorf("кто берёт TankPresence: %q", got)
+	}
+}
+
+// Настоящая связь с машиной: тревога видна на плитке и в полосе «Требует внимания», а снятый бак вместе с
+// ней - в той же метке. На английском - те же слова по каталогу.
+func TestCoffeeAlarmOnTile(t *testing.T) {
+	cloud := dlfake.NewCloud()
+	defer cloud.Close()
+	machine := dlfake.NewMachine(cloud)
+	defer machine.Close()
+	gigya, api, iot := cloud.URLs()
+	f := newFixture(t, "delonghi:\n  gigya_url: "+gigya+"\n  api_url: "+api+"\n  iot_url: "+iot+"\n"+
+		"devices:\n  coffee:\n    name: Кофе\n    source: delonghi\n    host: "+machine.Host()+"\n    serial: "+dlfake.Serial+"\n    pin: "+machine.Pin()+"\n")
+	f.writeUser(testPassword)
+	f.login()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	defer func() {
+		cancel()
+		<-done
+	}()
+	go func() {
+		defer close(done)
+		f.gw.Run(ctx)
+	}()
+	f.get("/connections")
+	f.post("/connections/delonghi/login", url.Values{"email": {dlfake.Email}, "password": {dlfake.Password}})
+	wait := func(what string, ok func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(10 * time.Second)
+		for !ok() {
+			if time.Now().After(deadline) {
+				t.Fatalf("не дождался: %s", what)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	wait("вход в машину", func() bool { return machine.Connected() == 1 })
+	shows := func(want ...string) func() bool {
+		return func() bool {
+			_, body := f.get("/")
+			for _, w := range want {
+				if !strings.Contains(body, w) {
+					return false
+				}
+			}
+			return true
+		}
+	}
+	status := func(alarms map[string]any) {
+		machine.Status(map[string]any{"CurrMode": 7.0, "Status": "Idle", "BeverageDispensing": 0.0, "alarms": alarms})
+	}
+	status(map[string]any{"Descale": true, "TankLevel": false})
+	wait("метка тревоги", shows(`<span class="chip warn">удалите накипь</span>`, "требуют обслуживания: 1"))
+	if _, body := f.get("/devices/coffee"); !strings.Contains(body, `>Descale</code> <span class="muted">удалите накипь</span>`) {
+		t.Fatal("в сводке нет подписи тревоги")
+	}
+	status(map[string]any{"Descale": true, "TankLevel": true})
+	wait("тревога и нехватка воды", shows(`<span class="chip warn">нужно пополнить, удалите накипь</span>`))
+	f.accept = "en"
+	wait("метка на английском", shows(`<span class="chip warn">needs refilling, descale the machine</span>`, "need service: 1"))
+	f.accept = ""
+	status(map[string]any{"Descale": false, "TankLevel": true})
+	wait("только нехватка воды", shows(`<span class="chip warn">нужно пополнить</span>`, "нужно пополнить: 1"))
+	status(map[string]any{"Descale": false, "TankLevel": false})
+	wait("метка пропала", func() bool {
+		_, body := f.get("/")
+		return !strings.Contains(body, `<span class="chip warn">`)
+	})
 }

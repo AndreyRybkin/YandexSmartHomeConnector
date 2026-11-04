@@ -367,6 +367,11 @@ func mappings(p *profile.Profile) map[string]string {
 			out[k] = v
 		}
 	}
+	for k := range out {
+		if alarm, ok := strings.CutPrefix(k, delonghi.AlarmPrefix); ok && alarmName(alarm) != "" {
+			out[k] += "; " + alarmName(alarm)
+		}
+	}
 	return out
 }
 

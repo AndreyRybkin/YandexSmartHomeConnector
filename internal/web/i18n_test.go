@@ -381,13 +381,16 @@ func TestEnglishComposite(t *testing.T) {
 	for in, want := range map[string]string{
 		"работает, Выпечка, осталось 1 ч 25 мин":  "running, Baking, 1 h 25 min left",
 		"выключен, выбрана программа Экономичный": "off, program Eco selected",
-		"нет связи 5 мин":                        "offline 5 min",
-		"62.4 °C · вода 65 % · цель 80 °C":       "62.4 °C · water 65 % · target 80 °C",
-		"дверца открыта · задано 4 °C":           "door open · set to 4 °C",
-		"вход первый · громкость 20 % · канал 5": "input first · volume 20 % · channel 5",
-		"скорость второй":                        "speed second",
-		"заряд 12 %":                             "battery 12 %",
-		"Прибора oven нет в настройках":          "Device oven is not in the settings",
+		"нет связи 5 мин":                             "offline 5 min",
+		"62.4 °C · вода 65 % · цель 80 °C":            "62.4 °C · water 65 % · target 80 °C",
+		"дверца открыта · задано 4 °C":                "door open · set to 4 °C",
+		"вход первый · громкость 20 % · канал 5":      "input first · volume 20 % · channel 5",
+		"скорость второй":                             "speed second",
+		"заряд 12 %":                                  "battery 12 %",
+		"Прибора oven нет в настройках":               "Device oven is not in the settings",
+		"нужно пополнить, удалите накипь и ещё 1":     "needs refilling, descale the machine and 1 more",
+		"тревога машины: Imbocco":                     "machine alarm: Imbocco",
+		"датчик: button double_click; удалите накипь": "sensor: button double_click; descale the machine",
 	} {
 		if got := i18n.Translate(i18n.EN, in); got != want {
 			t.Errorf("%q: %q, нужно %q", in, got, want)

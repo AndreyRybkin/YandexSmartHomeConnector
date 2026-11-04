@@ -8,6 +8,7 @@ import (
 
 	"hcgateway/internal/alice"
 	"hcgateway/internal/appliance"
+	"hcgateway/internal/delonghi"
 	"hcgateway/internal/profile"
 )
 
@@ -19,8 +20,10 @@ import (
 // пусто - без пересчёта; Alice и Value - умение Алисы и что Алиса видит сейчас; Section -
 // раздел редактора для «Изменить».
 type mapRow struct {
-	Key     string `json:"key"`
-	Label   string `json:"label"`
+	Key   string `json:"key"`
+	Label string `json:"label"`
+	// Note - что значит функция словами: у тревоги кофемашины.
+	Note    string `json:"note"`
 	Program bool   `json:"program"`
 	Now     string `json:"now"`
 	Convert string `json:"convert"`
@@ -104,7 +107,8 @@ func mapRows(p *profile.Profile, st *appliance.State, dev alice.Device) []mapRow
 	}
 	if e := p.Events; e != nil {
 		for _, k := range slices.Sorted(maps.Keys(e.Button)) {
-			out = append(out, mapRow{Key: k, Label: short(k), Alice: itemLabel(alice.PropEvent, "button"),
+			label, note := eventLabel(k)
+			out = append(out, mapRow{Key: k, Label: label, Note: note, Alice: itemLabel(alice.PropEvent, "button"),
 				Value: nameOr(eventValueNames, e.Button[k]), Section: "events"})
 		}
 		level := func(instance string, always, ifKnown []string) {
@@ -113,7 +117,8 @@ func mapRows(p *profile.Profile, st *appliance.State, dev alice.Device) []mapRow
 				if slices.Contains(e.Empty, k) {
 					value = "пусто"
 				}
-				out = append(out, mapRow{Key: k, Label: short(k), Alice: itemLabel(alice.PropEvent, instance), Value: value, Section: "events"})
+				label, note := eventLabel(k)
+				out = append(out, mapRow{Key: k, Label: label, Note: note, Alice: itemLabel(alice.PropEvent, instance), Value: value, Section: "events"})
 			}
 			for _, k := range always {
 				row(k)
@@ -128,6 +133,19 @@ func mapRows(p *profile.Profile, st *appliance.State, dev alice.Device) []mapRow
 		level("water_level", e.WaterLevel, e.WaterLevelIfKnown)
 	}
 	return out
+}
+
+// eventLabel - событие датчика коротко и что оно значит. У перехода - имя и значение: state=END, а у
+// тревоги кофемашины только её имя: значение у неё всегда одно.
+func eventLabel(key string) (label, note string) {
+	state, value, transition := strings.Cut(key, "=")
+	if alarm, ok := strings.CutPrefix(state, delonghi.AlarmPrefix); ok {
+		return alarm, alarmName(alarm)
+	}
+	if transition {
+		return short(state) + "=" + short(value), ""
+	}
+	return short(key), ""
 }
 
 // shortValue - значение прибора коротко: у перечисления Home Connect - последняя часть

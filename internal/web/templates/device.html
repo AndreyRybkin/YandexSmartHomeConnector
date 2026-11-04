@@ -118,7 +118,7 @@
 {{with .Mappings}}<section class="field" id="summary"><h2>Сводка сопоставлений</h2>
 <p class="muted">Откуда Алиса берёт каждое умение и что видит сейчас.</p>
 <div class="wrap"><table><thead><tr><th>Функция прибора</th><th>Сейчас</th><th>Пересчёт</th><th>Умение Алисы</th><th>Алиса видит</th><th></th></tr></thead><tbody id="mappings">
-{{range .}}<tr><td>{{if .Program}}программа прибора{{else}}<code title="{{.Key}}">{{.Label}}</code>{{end}}</td><td>{{or .Now "-"}}</td><td>{{or .Convert "-"}}</td><td>{{.Alice}}</td><td>{{or .Value "-"}}</td><td><a href="#{{.Section}}">Изменить</a></td></tr>{{end}}
+{{range .}}<tr><td>{{if .Program}}программа прибора{{else}}<code title="{{.Key}}">{{.Label}}</code>{{with .Note}} <span class="muted">{{.}}</span>{{end}}{{end}}</td><td>{{or .Now "-"}}</td><td>{{or .Convert "-"}}</td><td>{{.Alice}}</td><td>{{or .Value "-"}}</td><td><a href="#{{.Section}}">Изменить</a></td></tr>{{end}}
 </tbody></table></div></section>{{end}}
 {{with .Unmapped}}<section class="field" id="unmapped"><h2>Не сопоставлено</h2>
 <p class="muted">Эти значения прибор сообщает, но их не берёт ни Алиса, ни сам шлюз.</p>

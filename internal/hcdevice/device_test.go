@@ -548,3 +548,110 @@ func TestButtonProperty(t *testing.T) {
 		t.Fatalf("описание кнопки: %+v", info[0].Properties[0])
 	}
 }
+
+// Тревоги кофемашины: тревога, которая была при запуске, события не даёт, появление тревоги - нажатие
+// double_click, повторное сообщение о ней - нет. Снятый бак - уровень воды empty, без нажатия.
+func TestCoffeeAlarms(t *testing.T) {
+	const (
+		waste = "DeLonghi.Alarm.Waste"
+		tank  = "DeLonghi.Alarm.TankPresence"
+	)
+	a := newProps(map[string]any{"DeLonghi.Status.CurrMode": 7.0, waste: appliance.EventPresent, tank: appliance.EventOff})
+	a.desc = appliance.Description{Type: profile.DeLonghiType}
+	p, err := profile.Resolve(profile.DeLonghiType, nil, profile.DeLonghiLayer(nil, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &Device{ID: "coffee", Profile: p, Appliance: a}
+	got := make(chan []alice.DeviceState, 4)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go d.Run(ctx, func(events []alice.DeviceState) { got <- events })
+	notify := <-a.notify
+	quiet := func(what string) {
+		t.Helper()
+		notify(nil)
+		if ev := <-got; len(ev) != 0 {
+			t.Fatalf("%s: %+v", what, ev)
+		}
+	}
+	quiet("тревога при запуске")
+	a.state.Values[waste] = appliance.EventOff
+	quiet("тревога прошла")
+	a.state.Values[waste] = appliance.EventPresent
+	notify(nil)
+	const press = `[{"id":"coffee.events","properties":[{"type":"devices.properties.event","state":{"instance":"button","value":"double_click"}}]}]`
+	if raw, _ := json.Marshal(<-got); string(raw) != press {
+		t.Fatalf("появление тревоги: %s", raw)
+	}
+	quiet("повторное сообщение о той же тревоге")
+	level := func() any {
+		t.Helper()
+		for _, c := range d.States()[1].Properties {
+			if sv := c.State.(alice.StateValue); sv.Instance == "water_level" {
+				return sv.Value
+			}
+		}
+		return nil
+	}
+	if got := level(); got != "normal" {
+		t.Fatalf("уровень воды с баком: %v", got)
+	}
+	a.state.Values[tank] = appliance.EventPresent
+	quiet("снятый бак")
+	if got := level(); got != "empty" {
+		t.Fatalf("уровень воды без бака: %v", got)
+	}
+}
+
+// AllInOne: одно устройство без датчика, все свойства встроенных профилей в списке и состоянии,
+// все три нажатия кнопки уходят от него самого.
+func TestAllInOne(t *testing.T) {
+	a, err := appliance.NewDemo(appliance.DemoAllInOne, 4*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := profile.Resolve(profile.AllInOneType, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &Device{ID: "all", Name: "all", Room: "Кухня", Profile: p, Appliance: a}
+	if ids := d.IDs(); len(ids) != 1 || ids[0] != "all" {
+		t.Fatalf("устройства %v, ждём одно без датчика", ids)
+	}
+	info := d.Info()
+	if len(info) != 1 || len(info[0].Properties) != 19 || len(info[0].Capabilities) != 4 {
+		t.Fatalf("описание: %+v", info)
+	}
+	states := d.States()
+	// До первого нажатия кнопке сообщать нечего.
+	if len(states) != 1 || len(states[0].Properties) != 18 {
+		t.Fatalf("состояние: %+v", states)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	presses := make(chan string, 16)
+	go d.Run(ctx, func(changed []alice.DeviceState) {
+		for _, s := range changed {
+			for _, pr := range s.Properties {
+				if v, ok := pr.State.(alice.StateValue); ok && v.Instance == alice.InstanceButton {
+					presses <- s.ID + " " + fmt.Sprint(v.Value)
+				}
+			}
+		}
+	})
+	time.Sleep(100 * time.Millisecond)
+	if err := a.Start(ctx, "Demo.Program.One", nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"all double_click", "all long_press", "all click"} {
+		select {
+		case got := <-presses:
+			if got != want {
+				t.Fatalf("нажатие %q, ждём %q", got, want)
+			}
+		case <-ctx.Done():
+			t.Fatalf("нет нажатия %q", want)
+		}
+	}
+}

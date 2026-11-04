@@ -1,14 +1,17 @@
 package web
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"hcgateway/internal/alice"
+	"hcgateway/internal/appliance"
 	"hcgateway/internal/config"
 	"hcgateway/internal/delonghi"
 	"hcgateway/internal/hcdevice"
+	"hcgateway/internal/profile"
 )
 
 // Состояние прибора одной меткой и что в нём требует внимания: для плитки, страницы прибора
@@ -124,7 +127,7 @@ func ago(d time.Duration) string {
 // problemLabels - что требует внимания, в порядке полосы над комнатами.
 var problemLabels = []choice{{Value: "offline", Label: "без связи"}, {Value: "waiting", Label: "ждут данных облака"},
 	{Value: "tv", Label: "ждут разрешения телевизора"}, {Value: "pin", Label: "ждут подтверждения сертификата"},
-	{Value: "battery", Label: "разряжены"}, {Value: "food", Label: "нужно пополнить"}}
+	{Value: "battery", Label: "разряжены"}, {Value: "service", Label: "требуют обслуживания"}, {Value: "food", Label: "нужно пополнить"}}
 
 // problem - что в приборе требует внимания: ключ из problemLabels и слова для метки прибора.
 // Телевизору без разрешения и кофемашине без подтверждённого сертификата шлюз не может
@@ -158,10 +161,59 @@ func (s *Server) problem(id string, d config.Device, st *status) (string, string
 	if level, ok := battery(dev, id); ok && level <= batteryLow {
 		return "battery", "заряд " + formatValue(level) + " %"
 	}
-	if foodLow(dev) {
+	alarm := ""
+	if hc, ok := s.gw.HomeConnect(id); ok {
+		alarm = alarmNotice(hc.Profile, hc.Appliance.State().Values)
+	}
+	switch low := foodLow(dev); {
+	case alarm != "" && low:
+		return "service", "нужно пополнить, " + alarm
+	case alarm != "":
+		return "service", alarm
+	case low:
 		return "food", "нужно пополнить"
 	}
 	return "", ""
+}
+
+// alarmNotice - тревоги кофемашины, которые есть сейчас, для метки прибора: первая словами и сколько
+// ещё. Тревоги, которые дают уровень воды или зёрен, сюда не входят: это причина «нужно пополнить».
+func alarmNotice(p *profile.Profile, values map[string]any) string {
+	var known, unknown []string
+	for k, v := range values {
+		alarm, isAlarm := strings.CutPrefix(k, delonghi.AlarmPrefix)
+		if !isAlarm || v != appliance.EventPresent || levelEvent(p, k) {
+			continue
+		}
+		if alarmName(alarm) != "" {
+			known = append(known, alarm)
+		} else {
+			unknown = append(unknown, alarm)
+		}
+	}
+	var names []string
+	for _, a := range alarmNames {
+		if slices.Contains(known, a.Key) {
+			names = append(names, a.Value)
+		}
+	}
+	slices.Sort(unknown)
+	for _, alarm := range unknown {
+		names = append(names, "тревога машины: "+alarm)
+	}
+	switch len(names) {
+	case 0:
+		return ""
+	case 1:
+		return names[0]
+	}
+	return names[0] + " и ещё " + strconv.Itoa(len(names)-1)
+}
+
+// levelEvent сообщает, что событие профиль показывает уровнем воды или зёрен.
+func levelEvent(p *profile.Profile, key string) bool {
+	e := p.Events
+	return e != nil && slices.Contains(slices.Concat(e.FoodLevel, e.FoodLevelIfKnown, e.WaterLevel, e.WaterLevelIfKnown), key)
 }
 
 // battery - заряд прибора в процентах, если прибор его сообщает.
