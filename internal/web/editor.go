@@ -30,7 +30,7 @@ var profileFields = []struct{ name, title string }{
 	{"toggles", "Переключатели"},
 	{"color", "Цвет"},
 	{"properties", "Свойства"},
-	{"events", "Датчик событий"},
+	{"events", "События прибора"},
 	{"tile", "На плитке"},
 }
 

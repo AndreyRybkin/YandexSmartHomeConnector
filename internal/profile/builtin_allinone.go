@@ -1,7 +1,7 @@
 package profile
 
-// AllInOneType - демо-прибор для проверки у Яндекса: все свойства встроенных профилей и кнопка
-// в одном устройстве. Раздела событий нет, поэтому отдельного датчика у прибора тоже нет.
+// AllInOneType - демо-прибор для проверки у Яндекса: все свойства из документации Яндекса и кнопка
+// в одном устройстве. Кнопка и уровни заданы свойствами, без раздела events.
 // Значения свойств равны значениям Алисы; имена - как у прибора в пакете appliance.
 const AllInOneType = "AllInOne"
 
@@ -40,12 +40,23 @@ func init() {
 			demoFloat("voltage", "Voltage", "unit.volt"),
 			// Главный вопрос проверки: water_level и числом, и событием в одном устройстве.
 			demoFloat("water_level", "WaterLevelFloat", percent),
+			demoFloat("amperage", "Amperage", "unit.ampere"),
+			demoFloat("food_level", "FoodLevelFloat", percent),
+			demoFloat("gas_meter", "GasMeter", "unit.cubic_meter"),
+			demoFloat("heat_meter", "HeatMeter", "unit.gigacalorie"),
+			demoFloat("meter", "Meter", ""),
+			demoFloat("pressure", "Pressure", "unit.pressure.mmhg"),
+			demoFloat("tvoc", "TVOC", density),
+			demoFloat("water_meter", "WaterMeter", "unit.cubic_meter"),
 			demoEvent("water_level", "WaterLevel", "empty", "low", "normal"),
 			demoEvent("food_level", "FoodLevel", "empty", "low", "normal"),
 			demoEvent("open", "Open", "opened", "closed"),
 			demoEvent("motion", "Motion", "detected", "not_detected"),
 			demoEvent("water_leak", "WaterLeak", "dry", "leak"),
-			demoEvent("smoke", "Smoke", "detected", "not_detected"),
+			demoEvent("smoke", "Smoke", "detected", "not_detected", "high"),
+			demoEvent("gas", "Gas", "detected", "not_detected", "high"),
+			demoEvent("vibration", "Vibration", "tilt", "fall", "vibration"),
+			demoEvent("battery_level", "Battery", "low", "normal"),
 			demoEvent("button", "Button", "click", "double_click", "long_press"),
 		},
 	}

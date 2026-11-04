@@ -24,7 +24,7 @@ type unmappedRow struct {
 
 // unmapped - значения прибора, которые не берёт ни одно поле профиля и не читает сам шлюз.
 // Раздел выбирается по виду значения: перечисление - режим, число - range, флаг -
-// переключатель, событие - датчик. Питание Home Connect - в раздел «включи».
+// переключатель, событие - раздел событий. Питание Home Connect - в раздел «включи».
 func unmapped(st *appliance.State, p *profile.Profile, desc *appliance.Description) []unmappedRow {
 	used := mappings(p)
 	var out []unmappedRow
@@ -43,7 +43,7 @@ func unmapped(st *appliance.State, p *profile.Profile, desc *appliance.Descripti
 			}
 			switch {
 			case x == appliance.EventPresent || x == appliance.EventOff || x == appliance.EventConfirmed:
-				row.Section, row.Label = "events", "событие датчика"
+				row.Section, row.Label = "events", "событие"
 			case isOption && len(o.Values) > 0:
 				row.Section, row.Label = "modes", "режим"
 			default:
@@ -150,7 +150,7 @@ func previewOf(next, cur []alice.DeviceInfo, raw string) *previewView {
 		delete(old, info.ID)
 		v.Devices = append(v.Devices, d)
 	}
-	// Устройства, которых после сохранения не будет: например, датчик событий без событий.
+	// Устройства, которых после сохранения не будет.
 	for _, info := range cur {
 		if _, ok := old[info.ID]; !ok {
 			continue

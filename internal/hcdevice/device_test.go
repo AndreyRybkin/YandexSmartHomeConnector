@@ -49,36 +49,39 @@ func TestRunEvents(t *testing.T) {
 	go d.Run(ctx, func(events []alice.DeviceState) { got <- events })
 	notify := <-m.notify
 
-	// Окончание программы - событие датчика, которое нужно отправить сразу.
+	// Окончание программы - нажатие кнопки, которое нужно отправить сразу.
 	events := func() float64 {
 		return metrics.Value("hcgateway_device_events_total", "device", "oven", "event", appliance.EventProgramFinished)
 	}
 	before := events()
 	notify([]string{appliance.EventProgramFinished})
 	raw, _ := json.Marshal(<-got)
-	want := `[{"id":"oven.events","properties":[{"type":"devices.properties.event","state":{"instance":"button","value":"click"}}]}]`
+	want := `[{"id":"oven","properties":[{"type":"devices.properties.event","state":{"instance":"button","value":"click"}}]}]`
 	if string(raw) != want {
 		t.Fatalf("событие: %s", raw)
 	}
 	if events() != before+1 {
 		t.Fatal("событие не посчитано в метриках")
 	}
-	// Изменение без событий датчика провайдер отправит сам после паузы.
+	// Изменение без нажатий провайдер отправит сам после паузы.
 	notify(nil)
 	if events := <-got; len(events) != 0 {
 		t.Fatalf("срочных состояний %d", len(events))
 	}
-	// Последнее событие датчик помнит и в обычном состоянии.
-	if st := d.States(); len(st) != 2 || len(st[1].Properties) != 1 {
+	// Последнее нажатие прибор помнит и в обычном состоянии.
+	st := d.States()
+	if len(st) != 1 || !slices.ContainsFunc(st[0].Properties, func(c alice.CapState) bool {
+		return c.State == alice.StateValue{Instance: alice.InstanceButton, Value: "click"}
+	}) {
 		t.Fatalf("состояния %+v", st)
 	}
 }
 
-func TestActSensor(t *testing.T) {
+func TestActOtherID(t *testing.T) {
 	d := newDevice(t, "oven", "Oven")
 	a := alice.Action{Type: alice.CapOnOff, State: alice.ActionState{Instance: "on", Value: true}}
-	if c := d.Act(context.Background(), "oven.events", &a); c != alice.CodeInvalidAction {
-		t.Fatalf("команда датчику: %q", c)
+	if c := d.Act(context.Background(), "other", &a); c != alice.CodeInvalidAction {
+		t.Fatalf("команда чужому устройству: %q", c)
 	}
 	if d.Appliance.State().Running() {
 		t.Fatal("прибор не должен получить команду")
@@ -98,8 +101,14 @@ func TestDeviceWithoutEvents(t *testing.T) {
 	if states := d.States(); len(states) != 1 || states[0].ID != "hood" {
 		t.Fatalf("состояния %+v", states)
 	}
-	if infos := d.Info(); len(infos) != 1 {
-		t.Fatalf("устройств %d, датчик событий не нужен", len(infos))
+	infos := d.Info()
+	if len(infos) != 1 {
+		t.Fatalf("устройств %d", len(infos))
+	}
+	for _, c := range infos[0].Properties {
+		if params, ok := c.Parameters.(alice.EventParams); ok && (params.Instance == alice.InstanceButton || params.Instance == "food_level" || params.Instance == "water_level") {
+			t.Fatalf("раздел events пуст, а есть свойство %s", params.Instance)
+		}
 	}
 }
 
@@ -268,7 +277,9 @@ func TestTransitions(t *testing.T) {
 		}
 	}
 	// Флаг как значение события: true - opened.
-	if st := d.States()[0]; len(st.Properties) != 1 || st.Properties[0].State.(alice.StateValue).Value != "opened" {
+	if st := d.States()[0]; !slices.ContainsFunc(st.Properties, func(c alice.CapState) bool {
+		return c.State == alice.StateValue{Instance: "open", Value: "opened"}
+	}) {
 		t.Fatalf("свойство: %+v", st)
 	}
 }
@@ -580,14 +591,14 @@ func TestCoffeeAlarms(t *testing.T) {
 	quiet("тревога прошла")
 	a.state.Values[waste] = appliance.EventPresent
 	notify(nil)
-	const press = `[{"id":"coffee.events","properties":[{"type":"devices.properties.event","state":{"instance":"button","value":"double_click"}}]}]`
+	const press = `[{"id":"coffee","properties":[{"type":"devices.properties.event","state":{"instance":"button","value":"double_click"}}]}]`
 	if raw, _ := json.Marshal(<-got); string(raw) != press {
 		t.Fatalf("появление тревоги: %s", raw)
 	}
 	quiet("повторное сообщение о той же тревоге")
 	level := func() any {
 		t.Helper()
-		for _, c := range d.States()[1].Properties {
+		for _, c := range d.States()[0].Properties {
 			if sv := c.State.(alice.StateValue); sv.Instance == "water_level" {
 				return sv.Value
 			}
@@ -604,7 +615,7 @@ func TestCoffeeAlarms(t *testing.T) {
 	}
 }
 
-// AllInOne: одно устройство без датчика, все свойства встроенных профилей в списке и состоянии,
+// AllInOne: одно устройство, все свойства из документации Яндекса в списке и состоянии,
 // все три нажатия кнопки уходят от него самого.
 func TestAllInOne(t *testing.T) {
 	a, err := appliance.NewDemo(appliance.DemoAllInOne, 4*time.Second)
@@ -617,15 +628,15 @@ func TestAllInOne(t *testing.T) {
 	}
 	d := &Device{ID: "all", Name: "all", Room: "Кухня", Profile: p, Appliance: a}
 	if ids := d.IDs(); len(ids) != 1 || ids[0] != "all" {
-		t.Fatalf("устройства %v, ждём одно без датчика", ids)
+		t.Fatalf("устройства %v, ждём одно", ids)
 	}
 	info := d.Info()
-	if len(info) != 1 || len(info[0].Properties) != 19 || len(info[0].Capabilities) != 4 {
+	if len(info) != 1 || len(info[0].Properties) != 30 || len(info[0].Capabilities) != 4 {
 		t.Fatalf("описание: %+v", info)
 	}
 	states := d.States()
 	// До первого нажатия кнопке сообщать нечего.
-	if len(states) != 1 || len(states[0].Properties) != 18 {
+	if len(states) != 1 || len(states[0].Properties) != 29 {
 		t.Fatalf("состояние: %+v", states)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -653,5 +664,82 @@ func TestAllInOne(t *testing.T) {
 		case <-ctx.Done():
 			t.Fatalf("нет нажатия %q", want)
 		}
+	}
+}
+
+// eventProps - свойства event с этим instance в описании устройства.
+func eventProps(info alice.DeviceInfo, instance string) []alice.Capability {
+	var out []alice.Capability
+	for _, c := range info.Properties {
+		if params, ok := c.Parameters.(alice.EventParams); ok && params.Instance == instance {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// Кнопка и уровни раздела events - свойства самого прибора: кнопка приходит только уведомлением,
+// уровень можно запросить. Отдельного устройства нет.
+func TestEventsInDevice(t *testing.T) {
+	d := newDevice(t, "dish", "Dishwasher")
+	if ids := d.IDs(); !slices.Equal(ids, []string{"dish"}) {
+		t.Fatalf("устройства %v", ids)
+	}
+	info := d.Info()
+	if len(info) != 1 || info[0].Type != alice.TypePrefix+"dishwasher" {
+		t.Fatalf("описание: %+v", info)
+	}
+	button := eventProps(info[0], alice.InstanceButton)
+	if len(button) != 1 || button[0].Retrievable || !button[0].Reportable {
+		t.Fatalf("кнопка: %+v", button)
+	}
+	for _, instance := range []string{"food_level", "water_level"} {
+		level := eventProps(info[0], instance)
+		if len(level) != 1 || !level[0].Retrievable || !level[0].Reportable {
+			t.Fatalf("%s: %+v", instance, level)
+		}
+	}
+	states := d.States()
+	if len(states) != 1 || !slices.ContainsFunc(states[0].Properties, func(c alice.CapState) bool {
+		return c.State == alice.StateValue{Instance: "food_level", Value: "normal"}
+	}) {
+		t.Fatalf("состояние: %+v", states)
+	}
+}
+
+// Свойство из properties главнее раздела events: одно свойство в устройстве и одно нажатие на событие.
+func TestOwnPropertyOverEvents(t *testing.T) {
+	d := newDevice(t, "dish", "Dishwasher")
+	const rinse, finish = "Rinse.Status", "Finish.Status"
+	p, err := profile.Resolve("Dishwasher", nil, &profile.Profile{Properties: []profile.Property{
+		{Type: "event", Instance: "water_level", Status: rinse, Values: map[string]string{"empty": "empty"}},
+		{Type: "event", Instance: alice.InstanceButton, Status: finish, Values: map[string]string{"done": "double_click"}},
+	}, Events: &profile.Events{Button: map[string]string{finish + "=done": "click"}, FoodLevel: []string{"Salt"}, WaterLevel: []string{"Rinse"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Profile = p
+	info := d.Info()[0]
+	for _, instance := range []string{"water_level", "food_level", alice.InstanceButton} {
+		if got := eventProps(info, instance); len(got) != 1 {
+			t.Fatalf("%s: %+v", instance, got)
+		}
+	}
+	if got := eventProps(info, alice.InstanceButton)[0].Parameters.(alice.EventParams).Events; len(got) != 1 || got[0].Value != "double_click" {
+		t.Fatalf("значения кнопки: %+v", got)
+	}
+	if got := d.buttonFor([]string{finish + "=done"}); len(got) != 0 {
+		t.Fatalf("нажатие из раздела events: %v", got)
+	}
+	if got := d.pressed([]string{finish + "=done"}); len(got) != 1 {
+		t.Fatalf("нажатия свойства: %+v", got)
+	}
+	desc := d.Appliance.Describe()
+	active := ActiveProfile(p, &desc)
+	if active.Events.Button != nil || active.Events.WaterLevel != nil || len(active.Events.FoodLevel) == 0 {
+		t.Fatalf("раздел events без перекрытого: %+v", active.Events)
+	}
+	if p.Events.Button == nil {
+		t.Fatal("исходный профиль изменён")
 	}
 }

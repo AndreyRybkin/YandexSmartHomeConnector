@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -76,7 +77,8 @@ type Notifier struct {
 	token   string
 	// sent - что Яндекс принял по устройствам. Нет записи - следующее уведомление полное.
 	sent map[string]*accepted
-	// forgot и forgotAll - что забыто, пока идёт отправка: её итог запоминать нельзя.
+	// forgot и forgotAll - что забыто, пока идёт отправка: из её итога у forgot запоминаются только
+	// свойства и связь, при forgotAll не запоминается ничего.
 	forgot    map[string]bool
 	forgotAll bool
 }
@@ -116,12 +118,28 @@ func (n *Notifier) resetLocked() {
 	n.forgotAll = true
 }
 
-// Forget забывает, что принял Яндекс об устройстве id: следующее уведомление о нём полное.
+// Forget забывает, что принял Яндекс об умениях устройства id: следующее уведомление сообщит их все.
+// Свойства команда не меняет. Память о них остаётся: иначе каждая команда заново отправляла бы, например,
+// «мало воды», и сценарий на этот уровень мог бы сработать повторно.
 func (n *Notifier) Forget(id string) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	delete(n.sent, id)
 	n.forgot[id] = true
+	// Без связи умений в памяти нет, а второй раз offline отправлять незачем.
+	if prev := n.sent[id]; prev != nil && !prev.offline {
+		n.sent[id] = onlyProperties(prev)
+	}
+}
+
+// onlyProperties - память о принятом без умений.
+func onlyProperties(a *accepted) *accepted {
+	kept := &accepted{values: map[string]string{}}
+	for k, v := range a.values {
+		if strings.HasPrefix(k, alice.PropEvent) || strings.HasPrefix(k, alice.PropFloat) {
+			kept.values[k] = v
+		}
+	}
+	return kept
 }
 
 // Enabled сообщает, задан ли навык.
@@ -322,9 +340,11 @@ func (n *Notifier) remember(next map[string]*accepted) {
 		return
 	}
 	for id, a := range next {
-		if !n.forgot[id] {
-			n.sent[id] = a
+		// Команда пришла во время отправки: Яндекс принял уведомление, но умения снова нужно сообщить.
+		if n.forgot[id] && !a.offline {
+			a = onlyProperties(a)
 		}
+		n.sent[id] = a
 	}
 }
 

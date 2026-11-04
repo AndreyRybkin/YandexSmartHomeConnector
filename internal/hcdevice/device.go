@@ -21,9 +21,6 @@ import (
 	"hcgateway/internal/profile"
 )
 
-// eventsSuffix - окончание идентификатора датчика событий прибора.
-const eventsSuffix = ".events"
-
 var _ alice.Device = (*Device)(nil)
 
 // Device - прибор Home Connect и его профиль в Алисе.
@@ -46,9 +43,9 @@ type Device struct {
 	mu sync.Mutex
 	// pending - параметры, заданные голосом, пока программа не идёт; применяются при запуске.
 	pending map[string]any
-	// button - последнее событие датчика: click, double_click или long_press.
+	// button - последнее нажатие кнопки прибора: click, double_click или long_press.
 	button string
-	// last - последние значения состояний, переходы которых датчик сообщает событием.
+	// last - последние значения состояний, переходы которых прибор сообщает нажатием.
 	last map[string]string
 	// seen и online - значения и связь при прошлом изменении; history - последние изменения.
 	seen    map[string]string
@@ -262,16 +259,13 @@ func toggleValue(t *profile.Toggle, on bool) any {
 	return t.Off
 }
 
-// IDs - сам прибор и, если профиль сообщает о событиях, его датчик событий.
+// IDs - устройство Алисы прибора: кнопка и уровни входят в него же.
 func (d *Device) IDs() []string {
-	if d.Profile.HasEvents() {
-		return []string{d.ID, d.ID + eventsSuffix}
-	}
 	return []string{d.ID}
 }
 
 // Run держит связь с прибором и сообщает об изменениях, пока ctx не отменён.
-// Событие датчика уходит в changed отдельно: Яндексу его нужно отправить сразу.
+// Нажатие кнопки уходит в changed отдельно: Яндексу его нужно отправить сразу.
 func (d *Device) Run(ctx context.Context, changed alice.Changed) {
 	d.Appliance.Run(ctx, func(events []string) {
 		st := d.Appliance.State()
@@ -282,7 +276,7 @@ func (d *Device) Run(ctx context.Context, changed alice.Changed) {
 		d.record(&st, events)
 		var urgent []alice.DeviceState
 		for _, b := range d.buttonFor(events) {
-			urgent = append(urgent, buttonState(d.ID+eventsSuffix, b))
+			urgent = append(urgent, buttonState(d.ID, b))
 		}
 		changed(append(urgent, d.pressed(events)...))
 	})
@@ -326,7 +320,7 @@ func (d *Device) pressed(events []string) []alice.DeviceState {
 	return out
 }
 
-// transitions - переходы значений из профиля датчика и свойств button, которые случились с прошлого
+// transitions - переходы значений из раздела events и свойств button, которые случились с прошлого
 // изменения: событие состояние=значение. Первое значение после запуска только запоминается, иначе
 // прибор, который уже закончил работу, сообщал бы об этом при каждом запуске шлюза.
 func (d *Device) transitions(st *appliance.State) []string {
@@ -366,7 +360,7 @@ func (d *Device) transitions(st *appliance.State) []string {
 	return out
 }
 
-// Info - описание устройств для списка устройств: сам прибор и, если нужно, датчик событий.
+// Info - описание устройства для списка устройств: умения, свойства, кнопка и уровни из раздела events.
 func (d *Device) Info() []alice.DeviceInfo {
 	desc := d.Appliance.Describe()
 	p := d.Profile
@@ -410,42 +404,67 @@ func (d *Device) Info() []alice.DeviceInfo {
 		}
 		dev.Properties = append(dev.Properties, propertyInfo(&pr))
 	}
-	out := []alice.DeviceInfo{dev}
 	if p.HasEvents() {
-		sensor := alice.DeviceInfo{
-			ID: d.ID + eventsSuffix, Name: d.Name + " триггер", Room: d.Room, Type: alice.TypeButton,
-			DeviceInfo: alice.Manufacturer{Manufacturer: d.manufacturer(), Model: desc.Type},
-		}
-		if values := buttonValues(p.Events); len(values) > 0 {
-			sensor.Properties = append(sensor.Properties, alice.Capability{Type: alice.PropEvent, Reportable: true,
+		if values := buttonValues(p.Events); len(values) > 0 && !ownEvent(p, &desc, alice.InstanceButton) {
+			dev.Properties = append(dev.Properties, alice.Capability{Type: alice.PropEvent, Reportable: true,
 				Parameters: alice.EventParams{Instance: alice.InstanceButton, Events: alice.Items(values)}})
 		}
-		for _, l := range levels(p.Events, &desc) {
+		for _, l := range levels(p, &desc) {
 			values := []string{"low", "normal"}
 			if slices.ContainsFunc(l.keys, func(k string) bool { return slices.Contains(p.Events.Empty, k) }) {
 				values = []string{"empty", "low", "normal"}
 			}
-			sensor.Properties = append(sensor.Properties, alice.Capability{Type: alice.PropEvent, Retrievable: true, Reportable: true,
+			dev.Properties = append(dev.Properties, alice.Capability{Type: alice.PropEvent, Retrievable: true, Reportable: true,
 				Parameters: alice.EventParams{Instance: l.instance, Events: alice.Items(values)}})
 		}
-		out = append(out, sensor)
 	}
-	return out
+	return []alice.DeviceInfo{dev}
 }
 
-// level - свойство уровня датчика и события «заканчивается», которые его задают.
+// ownEvent сообщает, что в properties есть свойство event с этим instance и прибор его сообщает. Оно
+// главнее раздела events: иначе в одном устройстве окажутся два одинаковых свойства, память об
+// уведомлениях спутает их значения, а кнопка сработает дважды на одно событие.
+func ownEvent(p *profile.Profile, desc *appliance.Description, instance string) bool {
+	return slices.ContainsFunc(p.Properties, func(pr profile.Property) bool {
+		return pr.Type == "event" && pr.Instance == instance && desc.Knows(pr.Status)
+	})
+}
+
+// ActiveProfile - профиль, каким его видит Алиса: без частей раздела events, которые перекрыты свойствами
+// (см. ownEvent). Интерфейс показывает по нему, что на самом деле влияет на устройство.
+func ActiveProfile(p *profile.Profile, desc *appliance.Description) *profile.Profile {
+	if p.Events == nil {
+		return p
+	}
+	e := *p.Events
+	if ownEvent(p, desc, alice.InstanceButton) {
+		e.Button = nil
+	}
+	if ownEvent(p, desc, "food_level") {
+		e.FoodLevel, e.FoodLevelIfKnown = nil, nil
+	}
+	if ownEvent(p, desc, "water_level") {
+		e.WaterLevel, e.WaterLevelIfKnown = nil, nil
+	}
+	active := *p
+	active.Events = &e
+	return &active
+}
+
+// level - свойство уровня прибора и события «заканчивается», которые его задают.
 type level struct {
 	instance string
 	keys     []string
 }
 
-// levels - уровни этого прибора: сухое и жидкости.
-func levels(e *profile.Events, desc *appliance.Description) []level {
+// levels - уровни этого прибора из раздела events: сухое и жидкости.
+func levels(p *profile.Profile, desc *appliance.Description) []level {
+	e := p.Events
 	var out []level
-	if keys := knownKeys(e.FoodLevel, e.FoodLevelIfKnown, desc); len(keys) > 0 {
+	if keys := knownKeys(e.FoodLevel, e.FoodLevelIfKnown, desc); len(keys) > 0 && !ownEvent(p, desc, "food_level") {
 		out = append(out, level{"food_level", keys})
 	}
-	if keys := knownKeys(e.WaterLevel, e.WaterLevelIfKnown, desc); len(keys) > 0 {
+	if keys := knownKeys(e.WaterLevel, e.WaterLevelIfKnown, desc); len(keys) > 0 && !ownEvent(p, desc, "water_level") {
 		out = append(out, level{"water_level", keys})
 	}
 	return out
@@ -526,21 +545,13 @@ func rangeLimits(r *profile.Range, desc *appliance.Description) (alice.RangeLimi
 	return lim, (known || (r.Min != nil && r.Max != nil)) && lim.Min < lim.Max
 }
 
-// States - состояния прибора и его датчика событий.
+// States - состояние прибора.
 func (d *Device) States() []alice.DeviceState {
 	st := d.Appliance.State()
 	if !st.Online {
-		out := []alice.DeviceState{{ID: d.ID, ErrorCode: alice.CodeUnreachable}}
-		if d.Profile.HasEvents() {
-			out = append(out, alice.DeviceState{ID: d.ID + eventsSuffix, ErrorCode: alice.CodeUnreachable})
-		}
-		return out
+		return []alice.DeviceState{{ID: d.ID, ErrorCode: alice.CodeUnreachable}}
 	}
-	out := []alice.DeviceState{d.mainState(&st)}
-	if d.Profile.HasEvents() {
-		out = append(out, d.sensorState(&st))
-	}
-	return out
+	return []alice.DeviceState{d.mainState(&st)}
 }
 
 func (d *Device) mainState(st *appliance.State) alice.DeviceState {
@@ -639,6 +650,9 @@ func (d *Device) mainState(st *appliance.State) alice.DeviceState {
 		}
 		ds.Properties = append(ds.Properties, alice.CapState{Type: typeOf(&pr), State: alice.StateValue{Instance: pr.Instance, Value: v}})
 	}
+	if p.HasEvents() {
+		ds.Properties = append(ds.Properties, d.eventProperties(st, &desc)...)
+	}
 	return ds
 }
 
@@ -666,18 +680,17 @@ func (d *Device) rangeValue(r *profile.Range, desc *appliance.Description, st *a
 	return v, ok
 }
 
-// sensorState - состояние датчика событий: последнее нажатие и уровни.
-func (d *Device) sensorState(st *appliance.State) alice.DeviceState {
-	ds := alice.DeviceState{ID: d.ID + eventsSuffix}
+// eventProperties - значения из раздела events: последнее нажатие и уровни.
+func (d *Device) eventProperties(st *appliance.State, desc *appliance.Description) []alice.CapState {
+	var out []alice.CapState
 	e := d.Profile.Events
 	d.mu.Lock()
 	button := d.button
 	d.mu.Unlock()
 	if button != "" {
-		ds.Properties = append(ds.Properties, alice.CapState{Type: alice.PropEvent, State: alice.StateValue{Instance: alice.InstanceButton, Value: button}})
+		out = append(out, alice.CapState{Type: alice.PropEvent, State: alice.StateValue{Instance: alice.InstanceButton, Value: button}})
 	}
-	desc := d.Appliance.Describe()
-	for _, l := range levels(e, &desc) {
+	for _, l := range levels(d.Profile, desc) {
 		value := "normal"
 		for _, key := range l.keys {
 			if st.Values[key] != appliance.EventPresent {
@@ -689,14 +702,19 @@ func (d *Device) sensorState(st *appliance.State) alice.DeviceState {
 			}
 			value = "low"
 		}
-		ds.Properties = append(ds.Properties, alice.CapState{Type: alice.PropEvent, State: alice.StateValue{Instance: l.instance, Value: value}})
+		out = append(out, alice.CapState{Type: alice.PropEvent, State: alice.StateValue{Instance: l.instance, Value: value}})
 	}
-	return ds
+	return out
 }
 
-// buttonFor переводит события прибора в событие датчика и запоминает его.
+// buttonFor переводит события прибора в нажатия кнопки и запоминает последнее. Если в properties
+// есть своё свойство button, нажатия сообщает оно.
 func (d *Device) buttonFor(events []string) []string {
 	if !d.Profile.HasEvents() {
+		return nil
+	}
+	desc := d.Appliance.Describe()
+	if ownEvent(d.Profile, &desc, alice.InstanceButton) {
 		return nil
 	}
 	var out []string
@@ -714,7 +732,6 @@ func (d *Device) buttonFor(events []string) []string {
 }
 
 // Act выполняет одну команду Алисы и возвращает код ошибки Яндекса или пустую строку.
-// У датчика событий умений нет.
 func (d *Device) Act(ctx context.Context, id string, a *alice.Action) string {
 	if id != d.ID {
 		return alice.CodeInvalidAction

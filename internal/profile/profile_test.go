@@ -94,6 +94,10 @@ func TestValidateErrors(t *testing.T) {
 			}
 		})
 	}
+	// Кнопка из раздела events - свойство самого устройства, и такой профиль законный.
+	if err := (&Profile{YandexType: "other", OnOff: "none", Events: &Events{Button: map[string]string{"E": "click"}}}).Validate(); err != nil {
+		t.Fatalf("профиль только с кнопкой: %v", err)
+	}
 	if err := (&Profile{YandexType: "cooking", OnOff: "none"}).Validate(); err == nil || !strings.Contains(err.Error(), "нет ни умений") {
 		t.Fatalf("пустое устройство: %v", err)
 	}
@@ -361,5 +365,34 @@ func TestDeLonghiAlarms(t *testing.T) {
 	}
 	if !slices.Contains(p.Events.WaterLevel, deLonghiAlarmPrefix+"TankPresence") || !slices.Contains(p.Events.Empty, deLonghiAlarmPrefix+"TankPresence") {
 		t.Fatalf("снятый бак: %+v", p.Events)
+	}
+}
+
+// AllInOne проверяет у Яндекса весь список из документации: каждое свойство и каждое значение события.
+func TestAllInOneCoversYandexLists(t *testing.T) {
+	floats, events := map[string]bool{}, map[string][]string{}
+	for _, pr := range BuiltinProfile(AllInOneType).Properties {
+		if pr.Type == "float" {
+			floats[pr.Instance] = true
+			if units := FloatUnits[pr.Instance]; len(units) > 0 && !slices.Contains(units, pr.Unit) {
+				t.Errorf("float %s: единица %q, допустимо %v", pr.Instance, pr.Unit, units)
+			}
+			continue
+		}
+		for v := range pr.Values {
+			events[pr.Instance] = append(events[pr.Instance], v)
+		}
+	}
+	for instance := range FloatUnits {
+		if !floats[instance] {
+			t.Errorf("нет float %s", instance)
+		}
+	}
+	for instance, values := range EventValues {
+		for _, v := range values {
+			if !slices.Contains(events[instance], v) {
+				t.Errorf("нет event %s значения %s", instance, v)
+			}
+		}
 	}
 }

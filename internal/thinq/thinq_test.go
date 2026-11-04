@@ -559,7 +559,7 @@ func TestWasher(t *testing.T) {
 		t.Fatalf("подписка на события: %v", subs)
 	}
 	info := d.Info()
-	if info[0].Type != "devices.types.washing_machine" || info[0].DeviceInfo.Manufacturer != "LG" || len(info) != 2 {
+	if info[0].Type != "devices.types.washing_machine" || info[0].DeviceInfo.Manufacturer != "LG" || len(info) != 1 {
 		t.Fatalf("устройство Алисы: %+v", info)
 	}
 	if st := d.States(); st[0].Capabilities[0].State.(alice.StateValue).Value != false {
@@ -580,7 +580,7 @@ func TestWasher(t *testing.T) {
 		t.Fatalf("команда: %s %v", control, h)
 	}
 
-	// Состояние по MQTT: стирка идёт, затем закончилась - событие датчика уходит сразу.
+	// Состояние по MQTT: стирка идёт, затем закончилась - нажатие кнопки уходит сразу.
 	b.publish(`{"pushType":"DEVICE_STATUS","deviceId":"dev-1","report":{"location":{"locationName":"MAIN"},"runState":{"currentState":"RUNNING"}}}`)
 	eventually(t, "стирка", func() bool { return a.State().Values["runState.currentState"] == "RUNNING" })
 	if st := d.States(); st[0].Capabilities[0].State.(alice.StateValue).Value != true {
@@ -601,7 +601,7 @@ func TestWasher(t *testing.T) {
 		select {
 		case ev := <-urgent:
 			raw, _ := json.Marshal(ev)
-			if string(raw) != `[{"id":"washer.events","properties":[{"type":"devices.properties.event","state":{"instance":"button","value":"`+value+`"}}]}]` {
+			if string(raw) != `[{"id":"washer","properties":[{"type":"devices.properties.event","state":{"instance":"button","value":"`+value+`"}}]}]` {
 				t.Fatalf("событие: %s", raw)
 			}
 		case <-time.After(5 * time.Second):

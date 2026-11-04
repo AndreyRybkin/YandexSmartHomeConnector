@@ -136,14 +136,13 @@ func TestDevicesList(t *testing.T) {
 	}
 	payload := out["payload"].(map[string]any)
 	devices := payload["devices"].([]any)
-	if payload["user_id"] != UserID || len(devices) != 4 {
+	if payload["user_id"] != UserID || len(devices) != 2 {
 		t.Fatalf("устройств %d: %v", len(devices), payload)
 	}
 	for _, want := range []string{
 		`"id":"oven","name":"oven","room":"Кухня","type":"devices.types.cooking"`,
 		`"instance":"program","modes":[{"value":"one"},{"value":"frying"},{"value":"baking"},{"value":"eco"},{"value":"pizza"},{"value":"preheat"},{"value":"slow_cook"},{"value":"normal"}]`,
 		`"instance":"temperature","unit":"unit.temperature.celsius","random_access":true,"range":{"min":30,"max":275,"precision":5}`,
-		`"id":"oven.events","name":"oven триггер","room":"Кухня","type":"devices.types.sensor.button"`,
 		`"instance":"button","events":[{"value":"click"},{"value":"double_click"}]`,
 		`"instance":"dishwashing"`,
 		`"instance":"food_level","events":[{"value":"empty"},{"value":"low"},{"value":"normal"}]`,
@@ -152,12 +151,15 @@ func TestDevicesList(t *testing.T) {
 			t.Errorf("нет %s", want)
 		}
 	}
+	if bytes.Contains(raw, []byte(`.events`)) || bytes.Contains(raw, []byte(`sensor.button`)) {
+		t.Errorf("отдельное устройство кнопки: %s", raw)
+	}
 }
 
 func TestQuery(t *testing.T) {
 	f := newFixture(t)
 	status, _, raw := f.callRaw(t, http.MethodPost, "/v1.0/user/devices/query", "good",
-		`{"devices":[{"id":"oven"},{"id":"dish.events"},{"id":"nope"}]}`)
+		`{"devices":[{"id":"oven"},{"id":"dish"},{"id":"dish.events"},{"id":"nope"}]}`)
 	if status != http.StatusOK {
 		t.Fatal(status)
 	}
@@ -166,7 +168,8 @@ func TestQuery(t *testing.T) {
 		`{"type":"devices.capabilities.range","state":{"instance":"temperature","value":180}}`,
 		`{"type":"devices.properties.event","state":{"instance":"open","value":"closed"}}`,
 		`{"type":"devices.properties.float","state":{"instance":"temperature","value":22}}`,
-		`{"id":"dish.events","properties":[{"type":"devices.properties.event","state":{"instance":"food_level","value":"normal"}},{"type":"devices.properties.event","state":{"instance":"water_level","value":"normal"}}]}`,
+		`{"type":"devices.properties.event","state":{"instance":"food_level","value":"normal"}},{"type":"devices.properties.event","state":{"instance":"water_level","value":"normal"}}]}`,
+		`{"id":"dish.events","error_code":"DEVICE_NOT_FOUND"}`,
 		`{"id":"nope","error_code":"DEVICE_NOT_FOUND"}`,
 	} {
 		if !bytes.Contains(raw, []byte(want)) {
@@ -323,7 +326,7 @@ func TestNotifications(t *testing.T) {
 		close(done)
 	}()
 
-	// Окончание программы: событие датчика сразу и состояние после паузы debounce.
+	// Окончание программы: нажатие кнопки сразу и состояние после паузы debounce.
 	notify := <-m.notify
 	m.Start(context.Background(), hotAir, nil)
 	notify([]string{appliance.EventProgramFinished})
@@ -355,7 +358,7 @@ func TestNotifications(t *testing.T) {
 	}
 	raw := got[1].body
 	if got[1].path != "/api/v1/skills/skill-1/callback/state" ||
-		!bytes.Contains(raw, []byte(`{"id":"oven.events","properties":[{"type":"devices.properties.event","state":{"instance":"button","value":"click"}}]}`)) {
+		!bytes.Contains(raw, []byte(`{"id":"oven","properties":[{"type":"devices.properties.event","state":{"instance":"button","value":"click"}}]}`)) {
 		t.Fatalf("событие: %s", raw)
 	}
 	raw = got[2].body
@@ -427,7 +430,7 @@ func TestSetDevices(t *testing.T) {
 	}
 	_, out := f.call(t, http.MethodGet, "/v1.0/user/devices", "good", "")
 	devices := out["payload"].(map[string]any)["devices"].([]any)
-	if len(devices) != 2 || devices[0].(map[string]any)["id"] != "dish" {
+	if len(devices) != 1 || devices[0].(map[string]any)["id"] != "dish" {
 		t.Fatalf("список после замены: %v", devices)
 	}
 
@@ -640,7 +643,8 @@ func notifierServer(t *testing.T, status *atomic.Int32) (*Notifier, func() []str
 }
 
 // Уведомление о состоянии содержит только то, что изменилось; нажатие кнопки уходит только своим
-// уведомлением и каждый раз; полное состояние - после запуска, отказа, команды и нового списка.
+// уведомлением и каждый раз; полное состояние - после запуска, возврата на связь и нового списка,
+// после команды - все умения.
 func TestNotifyChanges(t *testing.T) {
 	var status atomic.Int32
 	status.Store(http.StatusAccepted)
@@ -653,8 +657,7 @@ func TestNotifyChanges(t *testing.T) {
 	on := alice.CapState{Type: alice.CapOnOff, State: alice.StateValue{Instance: "on", Value: true}}
 	state := func(temp, hum float64) notifyJob {
 		return notifyJob{devices: []alice.DeviceState{{ID: "k", Capabilities: []alice.CapState{on},
-			Properties: []alice.CapState{float("temperature", temp), float("humidity", hum)}},
-			{ID: "k.events", Properties: []alice.CapState{button}}}}
+			Properties: []alice.CapState{float("temperature", temp), float("humidity", hum), button}}}}
 	}
 	const (
 		tempOnly = `[{"id":"k","properties":[{"type":"devices.properties.float","state":{"instance":"temperature","value":30}}]}]`
@@ -663,12 +666,7 @@ func TestNotifyChanges(t *testing.T) {
 	)
 	expect := func(what string, want ...string) {
 		t.Helper()
-		var have []string
-		for _, b := range got() {
-			b = strings.ReplaceAll(b, `{"id":"k.events","status":"online"},`, "")
-			b = strings.ReplaceAll(b, `,{"id":"k.events","status":"online"}`, "")
-			have = append(have, b)
-		}
+		have := got()
 		if !slices.Equal(have, want) {
 			t.Fatalf("%s: %q, нужно %q", what, have, want)
 		}
@@ -683,8 +681,8 @@ func TestNotifyChanges(t *testing.T) {
 	n.send(ctx, state(30, 40))
 	expect("только изменившееся", tempOnly)
 
-	press := notifyJob{press: true, devices: []alice.DeviceState{{ID: "k.events", Properties: []alice.CapState{button}}}}
-	const pressed = `[{"id":"k.events","properties":[{"type":"devices.properties.event","state":{"instance":"button","value":"click"}}]}]`
+	press := notifyJob{press: true, devices: []alice.DeviceState{{ID: "k", Properties: []alice.CapState{button}}}}
+	const pressed = `[{"id":"k","properties":[{"type":"devices.properties.event","state":{"instance":"button","value":"click"}}]}]`
 	n.send(ctx, press)
 	n.send(ctx, press)
 	expect("каждое нажатие - отдельно", pressed, pressed)
@@ -702,8 +700,9 @@ func TestNotifyChanges(t *testing.T) {
 	got()
 
 	n.Forget("k")
-	n.send(ctx, state(30, 40))
-	expect("после команды - полное состояние", full)
+	n.send(ctx, state(20, 40))
+	expect("после команды - все умения, неизменные свойства не повторяются",
+		`[{"id":"k","capabilities":[{"type":"devices.capabilities.on_off","state":{"instance":"on","value":true}}]}]`)
 
 	n.Reset()
 	n.send(ctx, state(30, 40))
@@ -752,7 +751,116 @@ func TestQueryWithoutButton(t *testing.T) {
 	notify := <-m.notify
 	notify([]string{appliance.EventProgramFinished})
 	svc := NewService([]alice.Device{d}, &fakeTokens{}, nil, discard())
-	if st := svc.stateOf("oven.events"); len(st.Properties) != 0 {
+	st := svc.stateOf("oven")
+	if st.ErrorCode != "" || len(st.Properties) == 0 {
 		t.Fatalf("состояние: %+v", st)
+	}
+	for _, c := range st.Properties {
+		if c.State.(alice.StateValue).Instance == alice.InstanceButton {
+			t.Fatalf("нажатие в ответе на запрос: %+v", st)
+		}
+	}
+}
+
+// Команда во время отправки: память о принятом совпадает с тем, что знает Яндекс, и возврат на связь
+// не теряется. Повторный offline после команды не уходит.
+func TestForgetWhileSending(t *testing.T) {
+	var (
+		mu     sync.Mutex
+		bodies []string
+		gate   chan struct{}
+	)
+	entered := make(chan struct{}, 4)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Payload struct {
+				Devices json.RawMessage `json:"devices"`
+			} `json:"payload"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		mu.Lock()
+		bodies = append(bodies, string(req.Payload.Devices))
+		g := gate
+		mu.Unlock()
+		if g != nil {
+			entered <- struct{}{}
+			<-g
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+	take := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		out := bodies
+		bodies = nil
+		return out
+	}
+	on := alice.CapState{Type: alice.CapOnOff, State: alice.StateValue{Instance: "on", Value: true}}
+	online := func(level string) notifyJob {
+		return notifyJob{devices: []alice.DeviceState{{ID: "k", Capabilities: []alice.CapState{on},
+			Properties: []alice.CapState{{Type: alice.PropEvent, State: alice.StateValue{Instance: "water_level", Value: level}}}}}}
+	}
+	offline := notifyJob{devices: []alice.DeviceState{{ID: "k", ErrorCode: alice.CodeUnreachable}}}
+	ctx := context.Background()
+	start := func() *Notifier {
+		n := NewNotifier(srv.URL, "s", "t", "u", discard())
+		n.send(ctx, online("normal"))
+		take()
+		return n
+	}
+	during := func(n *Notifier, job notifyJob) {
+		mu.Lock()
+		g := make(chan struct{})
+		gate = g
+		mu.Unlock()
+		done := make(chan struct{})
+		go func() {
+			n.send(ctx, job)
+			close(done)
+		}()
+		<-entered
+		n.Forget("k")
+		mu.Lock()
+		gate = nil
+		mu.Unlock()
+		close(g)
+		<-done
+		take()
+	}
+	const onlyCaps = `[{"id":"k","capabilities":[{"type":"devices.capabilities.on_off","state":{"instance":"on","value":true}}]}]`
+	const backOnline = `[{"id":"k","status":"online","capabilities":[{"type":"devices.capabilities.on_off","state":{"instance":"on","value":true}}],` +
+		`"properties":[{"type":"devices.properties.event","state":{"instance":"water_level","value":"normal"}}]}]`
+	const levelNormal = `[{"id":"k","capabilities":[{"type":"devices.capabilities.on_off","state":{"instance":"on","value":true}}],` +
+		`"properties":[{"type":"devices.properties.event","state":{"instance":"water_level","value":"normal"}}]}]`
+
+	n := start()
+	during(n, offline)
+	n.send(ctx, online("normal"))
+	if got := take(); len(got) != 1 || got[0] != backOnline {
+		t.Fatalf("возврат на связь после команды во время offline: %q", got)
+	}
+
+	n = start()
+	during(n, online("low"))
+	n.send(ctx, online("low"))
+	if got := take(); len(got) != 1 || got[0] != onlyCaps {
+		t.Fatalf("принятый уровень повторён: %q", got)
+	}
+
+	n = start()
+	during(n, online("low"))
+	n.send(ctx, online("normal"))
+	if got := take(); len(got) != 1 || got[0] != levelNormal {
+		t.Fatalf("уровень не вернулся к normal: %q", got)
+	}
+
+	n = start()
+	n.send(ctx, offline)
+	take()
+	n.Forget("k")
+	n.send(ctx, offline)
+	if got := take(); len(got) != 0 {
+		t.Fatalf("offline второй раз: %q", got)
 	}
 }

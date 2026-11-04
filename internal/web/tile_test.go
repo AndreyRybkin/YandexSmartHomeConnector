@@ -57,6 +57,9 @@ func TestTileText(t *testing.T) {
 	}{
 		{"чайник греет: температура, вода, цель", builtin(profile.PolarisKettleType), kettle, status{Online: true, Switch: true, On: true},
 			"62.4 °C · вода 65 % · цель 80 °C"},
+		{"чайник с тревогой воды: уровень только в метке", builtin(profile.PolarisKettleType),
+			map[string]any{"sensor/temperature": 62.4, "weight": 1105.0, "mode": "3", "temperature": 80.0, "Polaris.Alarm.Water": appliance.EventPresent},
+			status{Online: true, Switch: true, On: true}, "62.4 °C · вода 65 % · цель 80 °C"},
 		{"чайник выключен: без цели", builtin(profile.PolarisKettleType), kettle, status{Online: true, Switch: true},
 			"62.4 °C · вода 65 %"},
 		{"нет связи: показаний нет", builtin(profile.PolarisKettleType), kettle, status{}, ""},

@@ -124,14 +124,14 @@
 {{template "buttons" .}}</form></section>{{end}}
 
 {{with .Sections.events}}<section class="field" id="events">{{template "head" .}}
-<p class="muted">Отдельное устройство Алисы: сообщает о событиях прибора нажатием кнопки. Событие - имя, шаблон с * или переход состояние=значение.</p>
+<p class="muted">Прибор сообщает Алисе о своих событиях нажатием кнопки. Событие - имя, шаблон с * или переход состояние=значение. Свойство с тем же назначением в разделе «Свойства» главнее.</p>
 <form method="post" action="{{.Action}}">{{template "keys" $e}}
 <div class="wrap"><table><tr><th>Событие прибора</th><th>Нажатие кнопки</th></tr>
 {{range $e.Buttons}}<tr><td><input name="b.{{.Index}}.k" value="{{.Key}}" list="dl-events" size="50" data-map></td><td><select name="b.{{.Index}}.v">{{template "opts" .Choices}}</select></td></tr>{{end}}
 </table></div>
-<p>События «заканчивается» сухого, например соль или зёрна: если есть хотя бы одно, «Уровень корма» (food_level) датчика - «низкий».</p>
+<p>События «заканчивается» сухого, например соль или зёрна: если есть хотя бы одно, «Уровень корма» (food_level) прибора - «низкий».</p>
 {{range $e.FoodLevel}}<input name="f.{{.Index}}" value="{{.Key}}" list="dl-events" size="50" data-map><br>{{end}}
-<p>События «заканчивается» жидкости, например вода или ополаскиватель: если есть хотя бы одно, «Уровень воды» (water_level) датчика - «низкий».</p>
+<p>События «заканчивается» жидкости, например вода или ополаскиватель: если есть хотя бы одно, «Уровень воды» (water_level) прибора - «низкий».</p>
 {{range $e.WaterLevel}}<input name="w.{{.Index}}" value="{{.Key}}" list="dl-events" size="50" data-map><br>{{end}}
 {{template "buttons" .}}</form></section>{{end}}
 

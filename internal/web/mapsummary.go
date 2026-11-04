@@ -135,7 +135,7 @@ func mapRows(p *profile.Profile, st *appliance.State, dev alice.Device) []mapRow
 	return out
 }
 
-// eventLabel - событие датчика коротко и что оно значит. У перехода - имя и значение: state=END, а у
+// eventLabel - событие прибора коротко и что оно значит. У перехода - имя и значение: state=END, а у
 // тревоги кофемашины только её имя: значение у неё всегда одно.
 func eventLabel(key string) (label, note string) {
 	state, value, transition := strings.Cut(key, "=")

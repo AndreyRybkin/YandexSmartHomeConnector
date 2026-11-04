@@ -111,7 +111,7 @@ func autoTile(hc *hcdevice.Device, states []alice.DeviceState, units map[string]
 			}
 			switch c.Type {
 			case alice.PropEvent:
-				if sv.Instance == alice.InstanceButton || !sensor && slices.Contains(tileCalm, formatValue(sv.Value)) {
+				if sv.Instance == alice.InstanceButton || !sensor && (slices.Contains(tileCalm, formatValue(sv.Value)) || tileLevelEvent(sv.Instance)) {
 					continue
 				}
 				events = append(events, tileEntry{text: tileValue(c.Type, sv, "", p, sensor)})
@@ -153,6 +153,12 @@ func autoTile(hc *hcdevice.Device, states []alice.DeviceState, units map[string]
 		}
 	}
 	return parts[:min(len(parts), profile.MaxTile)]
+}
+
+// tileLevelEvent сообщает, что событие - уровень: о нём уже говорит метка «нужно пополнить», а слово
+// «низкий» на плитке без подписи непонятно и вытесняет показания.
+func tileLevelEvent(instance string) bool {
+	return instance == "food_level" || instance == "water_level"
 }
 
 // tileEntry - значение плитки и его место в группе.

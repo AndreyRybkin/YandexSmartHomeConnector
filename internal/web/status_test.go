@@ -22,17 +22,17 @@ func (d fakeDevice) States() []alice.DeviceState                       { return 
 func (d fakeDevice) Act(context.Context, string, *alice.Action) string { return "" }
 func (d fakeDevice) Run(context.Context, alice.Changed)                {}
 
-// Заряд - свойство самого устройства, «заканчивается» - событие его датчика.
+// Заряд и «заканчивается» - свойства самого устройства.
 func TestBatteryAndFood(t *testing.T) {
 	dev := fakeDevice{states: []alice.DeviceState{
-		{ID: "sensor", Properties: []alice.CapState{{Type: alice.PropFloat, State: alice.StateValue{Instance: "battery_level", Value: 12.0}}}},
-		{ID: "sensor.events", Properties: []alice.CapState{{Type: alice.PropEvent, State: alice.StateValue{Instance: "food_level", Value: "low"}}}},
+		{ID: "sensor", Properties: []alice.CapState{{Type: alice.PropFloat, State: alice.StateValue{Instance: "battery_level", Value: 12.0}},
+			{Type: alice.PropEvent, State: alice.StateValue{Instance: "food_level", Value: "low"}}}},
 	}}
 	if v, ok := battery(dev, "sensor"); !ok || v != 12 {
 		t.Fatalf("заряд: %v %v", v, ok)
 	}
-	if _, ok := battery(dev, "sensor.events"); ok {
-		t.Fatal("заряд у датчика событий")
+	if _, ok := battery(dev, "other"); ok {
+		t.Fatal("заряд у другого устройства")
 	}
 	if !foodLow(dev) {
 		t.Fatal("нет «заканчивается»")
@@ -146,12 +146,12 @@ func TestAlarmNotice(t *testing.T) {
 			t.Errorf("%s: %q, %q", key, label, note)
 		}
 	}
-	// Кто берёт значение: и датчик, и что значит тревога.
+	// Кто берёт значение: раздел событий и что значит тревога.
 	m := mappings(p)
-	if got := m["DeLonghi.Alarm.Descale"]; got != "датчик: button double_click; удалите накипь" {
+	if got := m["DeLonghi.Alarm.Descale"]; got != "события: button double_click; удалите накипь" {
 		t.Errorf("кто берёт Descale: %q", got)
 	}
-	if got := m["DeLonghi.Alarm.TankPresence"]; got != "датчик: water_level; бак снят" {
+	if got := m["DeLonghi.Alarm.TankPresence"]; got != "события: water_level; бак снят" {
 		t.Errorf("кто берёт TankPresence: %q", got)
 	}
 }

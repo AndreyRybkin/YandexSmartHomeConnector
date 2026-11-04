@@ -1,6 +1,6 @@
 package appliance
 
-// DemoAllInOne - демо-прибор для проверки у Яндекса: все свойства встроенных профилей и кнопка
+// DemoAllInOne - демо-прибор для проверки у Яндекса: все свойства из документации Яндекса и кнопка
 // в одном устройстве. Значения меняются за программу allInOneSteps раз, чтобы уведомления
 // Яндексу содержали каждое свойство.
 const DemoAllInOne = "AllInOne"
@@ -27,6 +27,14 @@ var allInOneFloats = map[string]struct{ start, step float64 }{
 	"Demo.Status.ElectricityMeter": {1, 0.5},
 	"Demo.Status.Voltage":          {220, 1},
 	"Demo.Status.WaterLevelFloat":  {100, -20},
+	"Demo.Status.Amperage":         {1, 0.5},
+	"Demo.Status.FoodLevelFloat":   {100, -20},
+	"Demo.Status.GasMeter":         {10, 0.5},
+	"Demo.Status.HeatMeter":        {5, 0.5},
+	"Demo.Status.Meter":            {100, 1},
+	"Demo.Status.Pressure":         {740, 5},
+	"Demo.Status.TVOC":             {50, 10},
+	"Demo.Status.WaterMeter":       {20, 0.5},
 }
 
 // allInOneEvents - показания-события: значения идут по кругу, первое - в начале программы.
@@ -34,7 +42,10 @@ var allInOneEvents = map[string][]string{
 	"Demo.Status.Open":       {"closed", "opened"},
 	"Demo.Status.Motion":     {"not_detected", "detected"},
 	"Demo.Status.WaterLeak":  {"dry", "leak"},
-	"Demo.Status.Smoke":      {"not_detected", "detected"},
+	"Demo.Status.Smoke":      {"not_detected", "detected", "high"},
+	"Demo.Status.Gas":        {"not_detected", "detected", "high"},
+	"Demo.Status.Vibration":  {"tilt", "fall", "vibration"},
+	"Demo.Status.Battery":    {"normal", "low"},
 	"Demo.Status.FoodLevel":  {"normal", "low", "empty"},
 	"Demo.Status.WaterLevel": {"normal", "low", "empty"},
 }

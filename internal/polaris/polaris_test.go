@@ -174,7 +174,7 @@ func TestKettleInAlice(t *testing.T) {
 	}
 	d := &hcdevice.Device{ID: "kettle", Name: "Чайник", Profile: p, Appliance: a, Manufacturer: "Polaris"}
 	info := d.Info()
-	if len(info) != 2 || info[0].Type != alice.TypePrefix+"cooking.kettle" {
+	if len(info) != 1 || info[0].Type != alice.TypePrefix+"cooking.kettle" {
 		t.Fatalf("устройства: %+v", info)
 	}
 	caps := map[string]bool{}
@@ -214,28 +214,25 @@ func TestKettleInAlice(t *testing.T) {
 		t.Fatal("температура 150 принята")
 	}
 
-	// Уровень воды у чайника - проценты, у датчика событий - мало или нормально.
-	water := func(id string) any {
+	// Уровень воды у чайника двумя свойствами: число - проценты, событие - мало или нормально.
+	water := func(kind string) any {
 		for _, ds := range d.States() {
-			if ds.ID != id {
-				continue
-			}
 			for _, p := range ds.Properties {
-				if sv, ok := p.State.(alice.StateValue); ok && sv.Instance == "water_level" {
+				if sv, ok := p.State.(alice.StateValue); ok && p.Type == kind && sv.Instance == "water_level" {
 					return sv.Value
 				}
 			}
 		}
 		return nil
 	}
-	if got := water("kettle"); got != 64.71 {
+	if got := water(alice.PropFloat); got != 64.71 {
 		t.Fatalf("уровень воды в процентах: %v", got)
 	}
-	if got := water("kettle.events"); got != "normal" {
+	if got := water(alice.PropEvent); got != "normal" {
 		t.Fatalf("уровень воды: %v", got)
 	}
 	f.state("error/code", "01")
-	waitFor(t, "мало воды", func() bool { return water("kettle.events") == "low" })
+	waitFor(t, "мало воды", func() bool { return water(alice.PropEvent) == "low" })
 	f.state("error/empty_base", "true")
 	waitFor(t, "подставка", func() bool { return a.State().Values["error/empty_base"] == true })
 

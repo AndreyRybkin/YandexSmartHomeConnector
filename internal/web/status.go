@@ -163,7 +163,8 @@ func (s *Server) problem(id string, d config.Device, st *status) (string, string
 	}
 	alarm := ""
 	if hc, ok := s.gw.HomeConnect(id); ok {
-		alarm = alarmNotice(hc.Profile, hc.Appliance.State().Values)
+		desc := hc.Appliance.Describe()
+		alarm = alarmNotice(hcdevice.ActiveProfile(hc.Profile, &desc), hc.Appliance.State().Values)
 	}
 	switch low := foodLow(dev); {
 	case alarm != "" && low:

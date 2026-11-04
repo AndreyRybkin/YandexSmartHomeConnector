@@ -24,12 +24,12 @@ const (
 	deLonghiPresent     = "BSH.Common.EnumType.EventPresentState.Present"
 )
 
-// deLonghiServiceAlarms - тревоги, о которых датчик сообщает нажатием double_click: машина просит
+// deLonghiServiceAlarms - тревоги, о которых прибор сообщает нажатием double_click: машина просит
 // обслуживания или сообщает о сбое. У кнопки Яндекса три значения, поэтому оно одно на все тревоги.
 var deLonghiServiceAlarms = []string{"BrewUnitClean", "BrokenGrinder", "Bubble", "Clean", "Descale", "Drain", "Fan", "Filter", "Fridge",
 	"General", "GroundFine", "HeaterNTC", "Imbocco", "Infuser", "MotorPos", "UIMemory", "Waste"}
 
-// deLonghiButtons - нажатия датчика: конец налива, нужен вход и появление тревоги.
+// deLonghiButtons - нажатия кнопки: конец налива, нужен вход и появление тревоги.
 func deLonghiButtons() map[string]string {
 	buttons := map[string]string{"DeLonghi.Event.BeverageFinished": "click", "DeLonghi.Event.LoginRequired": "long_press"}
 	for _, alarm := range deLonghiServiceAlarms {

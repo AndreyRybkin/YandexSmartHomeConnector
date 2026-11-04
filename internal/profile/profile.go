@@ -258,7 +258,8 @@ var (
 	eventValueRe = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
 )
 
-// Events - отдельное устройство-датчик «<прибор> триггер».
+// Events - кнопка и уровни самого прибора, которые шлюз считает из его событий и переходов значений.
+// Свойство event с тем же instance в Properties главнее: раздел для него не действует.
 type Events struct {
 	// Button - событие прибора -> click, double_click или long_press. Ключ - имя события,
 	// шаблон с * (например *_IS_COMPLETE) или переход значения: состояние=значение.
@@ -452,7 +453,7 @@ func (p *Profile) Validate() error {
 	if p.OnOff == "program" && p.ProgramMode() == nil && p.DefaultProgram == "" {
 		return errors.New("on_off: program требует default_program или режим с programs")
 	}
-	if p.OnOff == "none" && len(p.Modes)+len(p.Ranges)+len(p.Toggles)+len(p.Properties) == 0 && p.Color == nil {
+	if p.OnOff == "none" && len(p.Modes)+len(p.Ranges)+len(p.Toggles)+len(p.Properties) == 0 && p.Color == nil && !p.HasEvents() {
 		return errors.New("у устройства нет ни умений, ни свойств")
 	}
 	if err := p.Color.validate(); err != nil {
@@ -579,7 +580,7 @@ func (p *Profile) Validate() error {
 	return nil
 }
 
-// Match - событие датчика для события прибора: точное имя, затем шаблон с *.
+// Match - нажатие кнопки для события прибора: точное имя, затем шаблон с *.
 // Из шаблонов выигрывает самый длинный, при равной длине - первый по алфавиту.
 func (e *Events) Match(event string) (string, bool) {
 	if v, ok := e.Button[event]; ok {
@@ -601,7 +602,7 @@ func (e *Events) Match(event string) (string, bool) {
 	return e.Button[best], true
 }
 
-// Transitions - переходы значений, на которые датчик отвечает событием: состояние -> значения.
+// Transitions - переходы значений, на которые прибор отвечает нажатием: состояние -> значения.
 func (e *Events) Transitions() map[string][]string {
 	out := map[string][]string{}
 	for k := range e.Button {
@@ -647,7 +648,7 @@ func (c *Color) validate() error {
 	return nil
 }
 
-// HasEvents сообщает, нужен ли прибору датчик событий.
+// HasEvents сообщает, задаёт ли раздел events кнопку или уровни прибора.
 func (p *Profile) HasEvents() bool {
 	return p.Events != nil && (len(p.Events.Button) > 0 || len(p.Events.FoodLevel) > 0 || len(p.Events.WaterLevel) > 0)
 }

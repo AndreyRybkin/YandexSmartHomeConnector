@@ -52,7 +52,7 @@ type Service struct {
 
 	mu      sync.RWMutex
 	devices []alice.Device
-	// byID - прибор по идентификатору любого из его устройств Алисы.
+	// byID - прибор по идентификатору его устройства Алисы.
 	byID map[string]alice.Device
 	// ctx - контекст Run; nil, пока Run не запущен.
 	ctx     context.Context
@@ -402,7 +402,7 @@ func (s *Service) act(ctx context.Context, what, requestID, id string, a *alice.
 	if d := byID[id]; d != nil {
 		ycode = d.Act(ctx, id, a)
 		// Яндекс мог запомнить значение из команды, а прибор его не принял: следующее
-		// уведомление об этом устройстве полное.
+		// уведомление об этом устройстве сообщит все умения.
 		if s.notifier != nil {
 			s.notifier.Forget(id)
 		}

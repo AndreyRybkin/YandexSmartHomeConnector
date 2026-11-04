@@ -195,8 +195,10 @@ func (s *Server) snapshot(id string) snapshot {
 		return sn
 	}
 	ast := hc.Appliance.State()
-	sn.Mappings = mapRows(hc.Profile, &ast, hc)
-	mapping := mappings(hc.Profile)
+	desc := hc.Appliance.Describe()
+	active := hcdevice.ActiveProfile(hc.Profile, &desc)
+	sn.Mappings = mapRows(active, &ast, hc)
+	mapping := mappings(active)
 	current := maps.Clone(ast.Values)
 	if current == nil {
 		current = map[string]any{}
@@ -352,14 +354,14 @@ func mappings(p *profile.Profile) map[string]string {
 	}
 	if e := p.Events; e != nil {
 		for _, k := range slices.Concat(e.FoodLevel, e.FoodLevelIfKnown) {
-			add(k, "датчик: food_level")
+			add(k, "события: food_level")
 		}
 		for _, k := range slices.Concat(e.WaterLevel, e.WaterLevelIfKnown) {
-			add(k, "датчик: water_level")
+			add(k, "события: water_level")
 		}
 		for _, k := range slices.Sorted(maps.Keys(e.Button)) {
 			name, _, _ := strings.Cut(k, "=")
-			add(name, "датчик: button "+e.Button[k])
+			add(name, "события: button "+e.Button[k])
 		}
 	}
 	for k, v := range implicit {

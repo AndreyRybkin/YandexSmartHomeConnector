@@ -791,8 +791,9 @@ func (s *Server) renderDevice(w http.ResponseWriter, sess *session, status int, 
 			// Номера рецептов 1-255 - не программы машины: в редактор попадают только сопоставленные.
 			desc.Programs = nil
 		}
-		v.Unmapped = unmapped(&st, hc.Profile, &desc)
-		v.Mappings = mapRows(hc.Profile, &st, hc)
+		active := hcdevice.ActiveProfile(hc.Profile, &desc)
+		v.Unmapped = unmapped(&st, active, &desc)
+		v.Mappings = mapRows(active, &st, hc)
 		v.Preview = previewOf(d.previewInfo, hc.Info(), d.preview)
 		t := &editTarget{action: "/devices/" + id + "/profile", builtin: builtin, probe: "/devices/" + id + "/probe",
 			forType: cfg.Profiles[haType], forDevice: dc.Profile, device: true, lg: propsSource(dc.Source),

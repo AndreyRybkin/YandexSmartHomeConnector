@@ -425,7 +425,7 @@ func itemValue(kind string, sv alice.StateValue, unit string) string {
 	return formatValue(sv.Value)
 }
 
-// aliceValues - что Алиса видит сейчас у всех устройств прибора: значение по-русски по виду
+// aliceValues - что Алиса видит сейчас у прибора: значение по-русски по виду
 // и instance, «devices.capabilities.range/temperature».
 func aliceValues(dev alice.Device) map[string]string {
 	u := map[string]string{}

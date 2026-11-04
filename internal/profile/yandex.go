@@ -21,7 +21,7 @@ var YandexTypes = []string{
 var (
 	// OnOffKinds - что делает «включи»: запуск программы, питание или ничего.
 	OnOffKinds = []string{"program", "power", "none"}
-	// ButtonValues - события датчика-кнопки.
+	// ButtonValues - значения свойства button.
 	ButtonValues = []string{"click", "double_click", "long_press"}
 	// PropertyTypes - виды свойств.
 	PropertyTypes = []string{"event", "float"}

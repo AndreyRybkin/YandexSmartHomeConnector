@@ -30,7 +30,7 @@ const (
 // и отложенный старт: полного списка состояний LG не публикует.
 var lgIdle = []string{"POWER_OFF", "INITIAL", "END", "ERROR", "SLEEP", "STANDBY"}
 
-// lgEvents - уведомления LG кнопкой датчика: окончание работы - click, разогрев духовки -
+// lgEvents - уведомления LG кнопкой прибора: окончание работы - click, разогрев духовки -
 // double_click, остальные коды - long_press.
 var lgEvents = &Events{Button: map[string]string{
 	"*_IS_COMPLETE":          "click",
