@@ -1,6 +1,7 @@
 package profile
 
 import (
+	"maps"
 	"slices"
 	"strings"
 )
@@ -11,6 +12,21 @@ import (
 // профиль стиральной машины.
 
 func init() {
+	for _, lgType := range lgServiceTypes {
+		lgBuiltin[lgType].Events = lgServiceEvents
+	}
+	// Уровни и протечка из уведомлений: шлюз хранит эти коды как значения прибора.
+	dish := *lgServiceEvents
+	dish.FoodLevelIfKnown = []string{"SALT_REFILL_IS_NEEDED"}
+	lgBuiltin["DEVICE_DISH_WASHER"].Events = &dish
+	lgBuiltin["DEVICE_DISH_WASHER"].Properties = append(lgBuiltin["DEVICE_DISH_WASHER"].Properties,
+		Property{Type: "event", Instance: "water_leak", Status: "WATER_LEAK_HAS_OCCURRED", IfKnown: true,
+			Values: map[string]string{"BSH.Common.EnumType.EventPresentState.Present": "leak", "BSH.Common.EnumType.EventPresentState.Off": "dry"}})
+	water := *lgServiceEvents
+	water.WaterLevelIfKnown = []string{"LACK_OF_WATER"}
+	water.Empty = []string{"LACK_OF_WATER"}
+	lgBuiltin["DEVICE_HUMIDIFIER"].Events = &water
+	lgBuiltin["DEVICE_AIR_PURIFIER"].Events = &water
 	for lgType, p := range lgBuiltin {
 		builtin[lgType] = p
 	}
@@ -48,6 +64,21 @@ var lgEvents = &Events{Button: map[string]string{
 	"*":                      "long_press",
 }}
 
+// lgServiceEvents - то же и напоминания об обслуживании: double_click, отдельно от неполадок. У духовки
+// double_click занят разогревом, поэтому ей этот список не подходит.
+var lgServiceEvents = func() *Events {
+	button := map[string]string{"TIME_TO_*": "double_click"}
+	for _, code := range []string{"LACK_OF_WATER", "WATER_IS_FULL", "RINSE_IS_NOT_ENOUGH", "SALT_REFILL_IS_NEEDED", "DOOR_IS_OPEN", "POLLUTION_IS_HIGH"} {
+		button[code] = "double_click"
+	}
+	maps.Copy(button, lgEvents.Button)
+	return &Events{Button: button}
+}()
+
+// lgServiceTypes - типы, у которых есть такие уведомления.
+var lgServiceTypes = []string{"DEVICE_DISH_WASHER", "DEVICE_AIR_CONDITIONER", "DEVICE_AIR_PURIFIER", "DEVICE_AIR_PURIFIER_FAN",
+	"DEVICE_HUMIDIFIER", "DEVICE_DEHUMIDIFIER", "DEVICE_REFRIGERATOR", "DEVICE_KIMCHI_REFRIGERATOR", "DEVICE_WINE_CELLAR", "DEVICE_STICK_CLEANER"}
+
 func lgPower(setting string) *Power {
 	return &Power{Setting: setting, On: "POWER_ON", Off: "POWER_OFF"}
 }
@@ -75,6 +106,12 @@ var lgAir = []Property{
 	lgFloat("pm10_density", "airQualitySensor.PM10", density),
 }
 
+// lgBattery - заряд событием: работает и на моделях без процента.
+var lgBattery = Property{Type: "event", Instance: "battery_level", Status: "battery.level", Values: map[string]string{
+	"MOVELESS": "low", "DOCK_LEVEL": "low", "LOW": "low", "WARNING": "low",
+	"MID": "normal", "HIGH": "normal", "FULL": "normal", "OVER_CHARGE": "normal",
+}}
+
 var lgDoor = Property{Type: "event", Instance: "open", Status: "doorStatus.doorState",
 	Values: map[string]string{"OPEN": "opened", "CLOSE": "closed"}}
 
@@ -97,6 +134,13 @@ func lgLaundry(operation string, idle []string, end ...string) *Profile {
 	}
 }
 
+// lgWasher - стиральная машина: ещё и счётчик стирок.
+func lgWasher() *Profile {
+	p := lgWashing("washerOperationMode")
+	p.Properties = []Property{lgFloat("meter", "cycle.cycleCount", "")}
+	return p
+}
+
 // lgWashing - стиральная или сушильная машина: работа кончается переходом в END.
 func lgWashing(operation string) *Profile {
 	return lgLaundry(operation, lgIdle, "END")
@@ -112,11 +156,11 @@ var (
 )
 
 var lgBuiltin = map[string]*Profile{
-	"DEVICE_WASHER":           lgWashing("washerOperationMode"),
-	"DEVICE_WASHTOWER":        lgWashing("washerOperationMode"),
-	"DEVICE_WASHTOWER_WASHER": lgWashing("washerOperationMode"),
-	"DEVICE_WASHCOMBO_MAIN":   lgWashing("washerOperationMode"),
-	"DEVICE_WASHCOMBO_MINI":   lgWashing("washerOperationMode"),
+	"DEVICE_WASHER":           lgWasher(),
+	"DEVICE_WASHTOWER":        lgWasher(),
+	"DEVICE_WASHTOWER_WASHER": lgWasher(),
+	"DEVICE_WASHCOMBO_MAIN":   lgWasher(),
+	"DEVICE_WASHCOMBO_MINI":   lgWasher(),
 	"DEVICE_DRYER":            lgWashing("dryerOperationMode"),
 	"DEVICE_WASHTOWER_DRYER":  lgWashing("dryerOperationMode"),
 	"DEVICE_STYLER":           lgLaundry("stylerOperationMode", lgStylerIdle, "COMPLETE", "RUNNING_END"),
@@ -168,9 +212,8 @@ var lgBuiltin = map[string]*Profile{
 		Modes:      []Mode{lgFan("airFlow.windStrength")},
 		Ranges:     []Range{{Instance: "humidity", Option: "humidity.targetHumidity", Unit: percent}},
 		Toggles:    []Toggle{{Instance: "backlight", Setting: "moodLamp.moodLampState", On: "ON", Off: "OFF", Optional: true}},
-		Properties: []Property{lgFloat("humidity", "airQualitySensor.humidity", percent),
-			lgFloat("temperature", "airQualitySensor.temperature", celsius)},
-		Events: lgEvents,
+		Properties: append([]Property{lgFloat("temperature", "airQualitySensor.temperature", celsius)}, lgAir...),
+		Events:     lgEvents,
 	},
 	"DEVICE_DEHUMIDIFIER": {
 		YandexType: "humidifier",
@@ -270,12 +313,12 @@ var lgBuiltin = map[string]*Profile{
 		Power: &Power{Setting: "operation.cleanOperationMode", On: "START", Off: "HOMING", State: lgState,
 			Idle: []string{"CHARGING", "HOMING", "SLEEP", "STANDBY", "INITIALIZING", "DIAGNOSIS", "ERROR",
 				"MACROSECTOR", "MONITORING_DETECTING", "MONITORING_MOVING", "MONITORING_POSITIONING", "RESERVATION", "SETDATE"}},
-		Properties: []Property{lgFloat("battery_level", "battery.percent", percent)},
+		Properties: []Property{lgFloat("battery_level", "battery.percent", percent), lgBattery},
 		Events:     lgEvents,
 	},
 	"DEVICE_STICK_CLEANER": {
 		YandexType: "vacuum_cleaner",
-		Properties: []Property{lgFloat("battery_level", "battery.percent", percent)},
+		Properties: []Property{lgFloat("battery_level", "battery.percent", percent), lgBattery},
 		Events:     lgEvents,
 	},
 }

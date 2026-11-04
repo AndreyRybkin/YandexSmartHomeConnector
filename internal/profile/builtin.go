@@ -29,6 +29,29 @@ var (
 	}
 	pause    = Toggle{Instance: "pause"}
 	finished = map[string]string{"BSH.Common.Event.ProgramFinished": "click"}
+	// aquaStop - прибор сообщил о протечке. Ключа нет в документации облака, поэтому свойство есть,
+	// только если прибор описывает это событие.
+	aquaStop = Property{Type: "event", Instance: "water_leak", Status: "BSH.Common.Event.AquaStopOccured", IfKnown: true,
+		Values: map[string]string{
+			"BSH.Common.EnumType.EventPresentState.Present":   "leak",
+			"BSH.Common.EnumType.EventPresentState.Off":       "dry",
+			"BSH.Common.EnumType.EventPresentState.Confirmed": "dry",
+		}}
+	// laundryButton - стирка: напоминание и мало средства - double_click, неполадки - long_press.
+	laundryButton = map[string]string{
+		"BSH.Common.Event.ProgramFinished":                    "click",
+		"LaundryCare.Washer.Event.DrumCleanReminder":          "double_click",
+		"LaundryCare.Washer.Event.IDos1FillLevelPoor":         "double_click",
+		"LaundryCare.Washer.Event.IDos2FillLevelPoor":         "double_click",
+		"LaundryCare.Washer.Event.PumpError":                  "long_press",
+		"LaundryCare.Washer.Event.Spin.SpinAbort":             "long_press",
+		"LaundryCare.Common.Event.FoamDetection":              "long_press",
+		"LaundryCare.Common.Event.FatalErrorOccured":          "long_press",
+		"LaundryCare.Common.Event.DoorLock.WaterLevelTooHigh": "long_press",
+		"BSH.Common.Event.LowWaterPressure":                   "long_press",
+	}
+	// iDosLevel - мало средства в дозаторе i-Dos: средство не вода, но так же устроен ополаскиватель.
+	iDosLevel = []string{"LaundryCare.Washer.Event.IDos1FillLevelPoor", "LaundryCare.Washer.Event.IDos2FillLevelPoor"}
 )
 
 func programs(prefix string, m map[string]string) map[string]string {
@@ -48,8 +71,8 @@ var washer = &Profile{
 		"Sensitive": "five", "Auto30": "auto", "Super153045.Super1530": "express",
 	})}},
 	Toggles:    []Toggle{pause},
-	Properties: []Property{doorOpen},
-	Events:     &Events{Button: finished},
+	Properties: []Property{doorOpen, aquaStop},
+	Events:     &Events{Button: laundryButton, WaterLevelIfKnown: iDosLevel},
 }
 
 // У стирально-сушильной машины в документации свои имена программ. Добавить их к профилю
@@ -63,8 +86,8 @@ var washerDryer = &Profile{
 		"WashAndDry.60": "three", "WashAndDry.90": "four",
 	})}},
 	Toggles:    []Toggle{pause},
-	Properties: []Property{doorOpen},
-	Events:     &Events{Button: finished},
+	Properties: []Property{doorOpen, aquaStop},
+	Events:     &Events{Button: laundryButton, WaterLevelIfKnown: iDosLevel},
 }
 
 // Варочную панель и кухонный процессор облако только показывает: программ для запуска в
@@ -117,13 +140,26 @@ var builtin = map[string]*Profile{
 			"Normal65": "normal", "Glas40": "glass", "PreRinse": "pre_rinse", "NightWash": "quiet",
 		})}},
 		Toggles:    []Toggle{pause},
-		Properties: []Property{doorOpen},
+		Properties: []Property{doorOpen, aquaStop},
 		Events: &Events{
-			Button: finished,
+			Button: map[string]string{
+				"BSH.Common.Event.ProgramFinished": "click",
+				// Напоминания об уходе.
+				"Dishcare.Dishwasher.Event.MachineCareReminder":                                "double_click",
+				"Dishcare.Dishwasher.Event.MachineCareAndFilterCleaningReminder":               "double_click",
+				"Dishcare.Dishwasher.Event.MachineCareAndLowMaintenanceFilterCleaningReminder": "double_click",
+				"Dishcare.Dishwasher.Event.SmartFilterCleaningReminder":                        "double_click",
+				// Неполадки.
+				"Dishcare.Dishwasher.Event.CheckFilterSystem":    "long_press",
+				"Dishcare.Dishwasher.Event.DrainingNotPossible":  "long_press",
+				"Dishcare.Dishwasher.Event.DrainPumpBlocked":     "long_press",
+				"Dishcare.Dishwasher.Event.WaterheaterCalcified": "long_press",
+				"BSH.Common.Event.LowWaterPressure":              "long_press",
+			},
 			// NearlyEmpty - скоро закончится, Lack - уже нет: прибор сообщает их по отдельности.
-			FoodLevel:  []string{"Dishcare.Dishwasher.Event.SaltNearlyEmpty", "Dishcare.Dishwasher.Event.SaltLack"},
+			FoodLevel:  []string{"Dishcare.Dishwasher.Event.SaltNearlyEmpty", "Dishcare.Dishwasher.Event.SaltLack", "Dishcare.Dishwasher.Event.ProgramBlockedSaltLack"},
 			WaterLevel: []string{"Dishcare.Dishwasher.Event.RinseAidNearlyEmpty", "Dishcare.Dishwasher.Event.RinseAidLack"},
-			Empty:      []string{"Dishcare.Dishwasher.Event.SaltLack", "Dishcare.Dishwasher.Event.RinseAidLack"},
+			Empty:      []string{"Dishcare.Dishwasher.Event.SaltLack", "Dishcare.Dishwasher.Event.ProgramBlockedSaltLack", "Dishcare.Dishwasher.Event.RinseAidLack"},
 		},
 	},
 	"Washer":      washer,
@@ -137,7 +173,14 @@ var builtin = map[string]*Profile{
 		})}},
 		Toggles:    []Toggle{pause},
 		Properties: []Property{doorOpen},
-		Events:     &Events{Button: finished},
+		Events: &Events{Button: map[string]string{
+			"BSH.Common.Event.ProgramFinished": "click",
+			// Сушка закончилась, а защита от складок ещё идёт: бельё уже можно забрать.
+			"LaundryCare.Dryer.Event.DryingProcessFinished":   "double_click",
+			"LaundryCare.Dryer.Event.CondensateContainerFull": "long_press",
+			"LaundryCare.Dryer.Event.LintFilterFull":          "long_press",
+			"LaundryCare.Dryer.Event.Maintenance.Remind":      "long_press",
+		}},
 	},
 	"CoffeeMaker": {
 		YandexType: "cooking.coffee_maker",
@@ -147,9 +190,26 @@ var builtin = map[string]*Profile{
 			"LatteMacchiato": "one",
 		})}},
 		Events: &Events{
-			FoodLevel:  []string{"ConsumerProducts.CoffeeMaker.Event.BeanContainerEmpty"},
-			WaterLevel: []string{"ConsumerProducts.CoffeeMaker.Event.WaterTankEmpty"},
-			Empty:      []string{"ConsumerProducts.CoffeeMaker.Event.BeanContainerEmpty", "ConsumerProducts.CoffeeMaker.Event.WaterTankEmpty"},
+			Button: map[string]string{
+				// Обслуживание.
+				"ConsumerProducts.CoffeeMaker.Event.DeviceShouldBeDescaled":     "double_click",
+				"ConsumerProducts.CoffeeMaker.Event.DeviceDescalingOverdue":     "double_click",
+				"ConsumerProducts.CoffeeMaker.Event.DeviceDescalingBlockage":    "double_click",
+				"ConsumerProducts.CoffeeMaker.Event.DeviceShouldBeCleaned":      "double_click",
+				"ConsumerProducts.CoffeeMaker.Event.DeviceCleaningOverdue":      "double_click",
+				"ConsumerProducts.CoffeeMaker.Event.DeviceShouldBeCalcNCleaned": "double_click",
+				"ConsumerProducts.CoffeeMaker.Event.DeviceCalcNCleanOverdue":    "double_click",
+				"ConsumerProducts.CoffeeMaker.Event.DeviceCalcNCleanBlockage":   "double_click",
+				// Поддон и молоко.
+				"ConsumerProducts.CoffeeMaker.Event.DripTrayFull":        "long_press",
+				"ConsumerProducts.CoffeeMaker.Event.DripTrayNotInserted": "long_press",
+				"ConsumerProducts.CoffeeMaker.Event.KeepMilkTankCool":    "long_press",
+			},
+			FoodLevel:         []string{"ConsumerProducts.CoffeeMaker.Event.BeanContainerEmpty"},
+			WaterLevel:        []string{"ConsumerProducts.CoffeeMaker.Event.WaterTankEmpty"},
+			WaterLevelIfKnown: []string{"ConsumerProducts.CoffeeMaker.Event.WaterTankNearlyEmpty", "ConsumerProducts.CoffeeMaker.Event.WaterTankNotInserted"},
+			Empty: []string{"ConsumerProducts.CoffeeMaker.Event.BeanContainerEmpty", "ConsumerProducts.CoffeeMaker.Event.WaterTankEmpty",
+				"ConsumerProducts.CoffeeMaker.Event.WaterTankNotInserted"},
 		},
 	},
 	"Hood": {
@@ -165,6 +225,11 @@ var builtin = map[string]*Profile{
 			"Cooking.Hood.EnumType.Stage.FanStage05": "five",
 		}}},
 		Toggles: []Toggle{{Instance: "backlight", Setting: "Cooking.Common.Setting.Lighting", Optional: true}},
+		// Жировой фильтр пора помыть.
+		Events: &Events{Button: map[string]string{
+			"Cooking.Common.Event.Hood.GreaseFilterMaxSaturationNearlyReached": "double_click",
+			"Cooking.Common.Event.Hood.GreaseFilterMaxSaturationReached":       "double_click",
+		}},
 	},
 	"Refrigerator":  fridge("Refrigeration.FridgeFreezer.Setting.SetpointTemperatureRefrigerator", "Refrigeration.Common.Status.Door.Refrigerator"),
 	"FridgeFreezer": fridge("Refrigeration.FridgeFreezer.Setting.SetpointTemperatureRefrigerator", "Refrigeration.Common.Status.Door.Refrigerator"),
@@ -219,8 +284,35 @@ var builtin = map[string]*Profile{
 		Toggles: []Toggle{pause},
 		// Заряд сообщают серии Roxxter и Spotless, от 0 до 100 %.
 		Properties: []Property{{Type: "float", Instance: "battery_level", Status: "BSH.Common.Status.BatteryLevel", Unit: percent}},
-		Events:     &Events{Button: finished},
+		Events: &Events{Button: map[string]string{
+			"BSH.Common.Event.ProgramFinished":                                "click",
+			"ConsumerProducts.CleaningRobot.Event.EmptyDustBoxAndCleanFilter": "double_click",
+			"ConsumerProducts.CleaningRobot.Event.RobotIsStuck":               "long_press",
+			"ConsumerProducts.CleaningRobot.Event.DockingStationNotFound":     "long_press",
+			"ConsumerProducts.CleaningRobot.Status.Lost=true":                 "long_press",
+			"ConsumerProducts.CleaningRobot.Status.Lifted=true":               "long_press",
+			"ConsumerProducts.CleaningRobot.Status.DustBoxInserted=false":     "long_press",
+		}},
 	},
+}
+
+// Авария прибора - long_press. ActionRequired сюда не входит: прибор просто ждёт человека, и при
+// обычной работе сценарий срабатывал бы зря.
+func init() {
+	const failure = "BSH.Common.Status.OperationState=BSH.Common.EnumType.OperationState.Error"
+	for _, t := range []string{"Oven", "Dishwasher", "Washer", "WasherDryer", "Dryer", "Microwave", "CleaningRobot", "CoffeeMaker", "AirConditioner"} {
+		p := builtin[t]
+		e := Events{}
+		if p.Events != nil {
+			e = *p.Events
+		}
+		e.Button = maps.Clone(e.Button)
+		if e.Button == nil {
+			e.Button = map[string]string{}
+		}
+		e.Button[failure] = "long_press"
+		p.Events = &e
+	}
 }
 
 // BuiltinTypes - типы Home Connect со встроенным профилем.

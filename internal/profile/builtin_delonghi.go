@@ -55,12 +55,16 @@ func init() {
 		DefaultProgram: DeLonghiRecipePrefix + "6",
 		// Значение есть только во время налива.
 		Tile: []TileItem{{Status: "DeLonghi.Status.Pouring", Label: "налито", Unit: percent}},
+		// Сколько напитков машина сварила за всё время.
+		Properties: []Property{{Type: "float", Instance: "meter", Status: "DeLonghi.Status.Brews"}},
 		Events: &Events{
 			Button:    deLonghiButtons(),
 			FoodLevel: []string{deLonghiAlarmPrefix + "NoCoffee"},
 			// Без бака воды нет: уровень empty, а не low.
-			WaterLevel: []string{deLonghiAlarmPrefix + "TankLevel", deLonghiAlarmPrefix + "TankPresence"},
-			Empty:      []string{deLonghiAlarmPrefix + "NoCoffee", deLonghiAlarmPrefix + "TankPresence"},
+			// Машина сообщает о воде и датчиками: так уровень верен, даже если тревога не сработала.
+			WaterLevel: []string{deLonghiAlarmPrefix + "TankLevel", deLonghiAlarmPrefix + "TankPresence",
+				"DeLonghi.Peripheral.WaterTankLow=true", "DeLonghi.Peripheral.TankPresence=false"},
+			Empty: []string{deLonghiAlarmPrefix + "NoCoffee", deLonghiAlarmPrefix + "TankPresence", "DeLonghi.Peripheral.TankPresence=false"},
 		},
 	}
 }

@@ -676,3 +676,28 @@ func TestRangeValues(t *testing.T) {
 		}
 	}
 }
+
+// Уведомления, у которых нет значения в отчёте: состояние держится до следующего запуска и переживает
+// полный отчёт.
+func TestStoredPush(t *testing.T) {
+	const prof = `{"notification":{"push":["SALT_REFILL_IS_NEEDED","WATER_LEAK_HAS_OCCURRED"]},"property":{
+		"runState":{"currentState":{"type":"enum","mode":["r"],"value":{"r":["END","RUNNING"]}}}}}`
+	d := newLG(t, "DEVICE_DISH_WASHER", prof, `{"runState":{"currentState":"END"}}`, "")
+	state := func(instance string) any { return d.state()[instance] }
+	if d.params("event/water_leak") == "" {
+		t.Fatalf("нет протечки: %v", d.items())
+	}
+	if got := d.Device.States(); len(got) != 1 || state("event/water_leak") != nil {
+		t.Fatalf("до уведомления: %v", d.state())
+	}
+	d.a.push("SALT_REFILL_IS_NEEDED")
+	d.a.push("WATER_LEAK_HAS_OCCURRED")
+	d.a.apply(json.RawMessage(`{"runState":{"currentState":"END"}}`), true)
+	if state("event/food_level") != "low" || state("event/water_leak") != "leak" {
+		t.Fatalf("после уведомления: %v", d.state())
+	}
+	d.a.apply(json.RawMessage(`{"runState":{"currentState":"RUNNING"}}`), false)
+	if state("event/food_level") != "normal" || state("event/water_leak") != "dry" {
+		t.Fatalf("после запуска: %v", d.state())
+	}
+}

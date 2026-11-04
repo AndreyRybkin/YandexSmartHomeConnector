@@ -355,6 +355,18 @@ func (a *Account) machineName(serial string) string {
 	return ""
 }
 
+// modelName - модель машины с серийным номером serial; пусто - облако её ещё не сообщило.
+func (a *Account) modelName(serial string) string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, d := range a.devices {
+		if d.Serial == serial {
+			return d.Model
+		}
+	}
+	return ""
+}
+
 func (a *Account) attach(ap *Appliance) {
 	a.mu.Lock()
 	defer a.mu.Unlock()

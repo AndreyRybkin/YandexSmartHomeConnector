@@ -1,6 +1,9 @@
 package profile
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // Встроенные профили устройств SmartThings по категории устройства. Тип - приставка
 // SmartThings. и категория, имя функции - «capability.атрибут», например switch.switch.
@@ -22,6 +25,7 @@ func SmartThingsType(t string) bool {
 
 func init() {
 	for t, p := range stBuiltin {
+		p.Properties = withSensors(p.Properties)
 		builtin[SmartThingsPrefix+t] = p
 	}
 }
@@ -37,9 +41,14 @@ func stEvent(instance, status string, values map[string]string) Property {
 // stSensors - показания и события датчиков, счётчиков и климатической техники.
 var stSensors = []Property{
 	stEvent("open", "contactSensor.contact", map[string]string{"open": "opened", "closed": "closed"}),
-	stEvent("motion", "motionSensor.motion", map[string]string{"active": "detected", "inactive": "not_detected"}),
+	stEvent("motion", "motionSensor.motion", map[string]string{"active": "detected", "inactive": "not_detected",
+		"present": "detected", "not present": "not_detected"}),
 	stEvent("water_leak", "waterSensor.water", map[string]string{"wet": "leak", "dry": "dry"}),
 	stEvent("smoke", "smokeDetector.smoke", map[string]string{"detected": "detected", "clear": "not_detected"}),
+	// Значение tested - проверка датчика, а не газ: Алиса его не получает.
+	stEvent("gas", "gasDetector.gas", map[string]string{"detected": "detected", "clear": "not_detected"}),
+	// Покоя у вибрации нет: inactive Алиса не получает.
+	stEvent("vibration", "accelerationSensor.acceleration", map[string]string{"active": "vibration"}),
 	lgFloat("temperature", "temperatureMeasurement.temperature", celsius),
 	lgFloat("humidity", "relativeHumidityMeasurement.humidity", percent),
 	lgFloat("illumination", "illuminanceMeasurement.illuminance", "unit.illumination.lux"),
@@ -51,6 +60,20 @@ var stSensors = []Property{
 	lgFloat("power", "powerMeter.power", "unit.watt"),
 	lgFloat("electricity_meter", "energyMeter.energy", "unit.kilowatt_hour"),
 	lgFloat("voltage", "voltageMeasurement.voltage", "unit.volt"),
+	// Устройство сообщает кПа, Алисе нужны мм рт. ст.
+	{Type: "float", Instance: "pressure", Status: "atmosphericPressureMeasurement.atmosphericPressure", Unit: "unit.pressure.mmhg", Scale: ptr(7.50062)},
+}
+
+// withSensors - свойства профиля и все показания датчиков, которых в нём нет: Яндекс не ограничивает
+// свойства типом устройства, а значения, которых устройство не сообщает, в Алису не попадают.
+func withSensors(props []Property) []Property {
+	out := slices.Clone(props)
+	for _, s := range stSensors {
+		if !slices.ContainsFunc(props, func(p Property) bool { return p.Type == s.Type && p.Instance == s.Instance }) {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func stSensor(yandexType string) *Profile {
@@ -125,19 +148,22 @@ var stBuiltin = map[string]*Profile{
 	"Switch":    {YandexType: "switch", OnOff: "power", Power: stPower(), Properties: stSensors},
 	"SmartPlug": {YandexType: "socket", OnOff: "power", Power: stPower(), Properties: stSensors},
 
-	"ContactSensor":          stSensor("sensor.open"),
-	"MotionSensor":           stSensor("sensor.motion"),
-	"LeakSensor":             stSensor("sensor.water_leak"),
-	"SmokeDetector":          stSensor("sensor.smoke"),
-	"TempSensor":             stSensor("sensor.climate"),
-	"TempHumiditySensor":     stSensor("sensor.climate"),
-	"HumiditySensor":         stSensor("sensor.climate"),
-	"EnvironmentSensor":      stSensor("sensor.climate"),
-	"AirQualityDetector":     stSensor("sensor.climate"),
-	"WeatherStation":         stSensor("sensor.climate"),
-	"LightSensor":            stSensor("sensor.illumination"),
-	"MultiFunctionalSensor":  stSensor("sensor"),
-	"GenericSensor":          stSensor("sensor"),
+	"ContactSensor":         stSensor("sensor.open"),
+	"MotionSensor":          stSensor("sensor.motion"),
+	"PresenceSensor":        stSensor("sensor.motion"),
+	"LeakSensor":            stSensor("sensor.water_leak"),
+	"SmokeDetector":         stSensor("sensor.smoke"),
+	"TempSensor":            stSensor("sensor.climate"),
+	"TempHumiditySensor":    stSensor("sensor.climate"),
+	"HumiditySensor":        stSensor("sensor.climate"),
+	"EnvironmentSensor":     stSensor("sensor.climate"),
+	"AirQualityDetector":    stSensor("sensor.climate"),
+	"WeatherStation":        stSensor("sensor.climate"),
+	"LightSensor":           stSensor("sensor.illumination"),
+	"MultiFunctionalSensor": stSensor("sensor"),
+	"GenericSensor":         stSensor("sensor"),
+	// Датчик газа сообщает категорию Siren. Шлюз им не управляет, а только передаёт показания.
+	"Siren":                  stSensor("sensor"),
 	"PowerMeasurementSensor": stSensor("smart_meter.electricity"),
 	"CurbPowerMeter":         stSensor("smart_meter.electricity"),
 	"Button": {

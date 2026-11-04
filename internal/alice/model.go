@@ -11,12 +11,20 @@ type DeviceInfo struct {
 	Capabilities []Capability `json:"capabilities,omitempty"`
 	Properties   []Capability `json:"properties,omitempty"`
 	DeviceInfo   Manufacturer `json:"device_info"`
+	// StatusInfo - шлюз сам сообщает Яндексу, что устройство на связи или нет.
+	StatusInfo *StatusInfo `json:"status_info,omitempty"`
+}
+
+// StatusInfo - как Яндекс узнаёт о связи с устройством.
+type StatusInfo struct {
+	Reportable bool `json:"reportable"`
 }
 
 // Manufacturer - производитель и модель устройства.
 type Manufacturer struct {
 	Manufacturer string `json:"manufacturer"`
 	Model        string `json:"model,omitempty"`
+	SWVersion    string `json:"sw_version,omitempty"`
 }
 
 // Capability - умение или свойство в списке устройств.
@@ -73,6 +81,15 @@ type CapState struct {
 // InstanceButton - событие нажатия кнопки. Оно мгновенное, состояния у него нет: Яндекс получает
 // его только отдельным уведомлением в момент нажатия.
 const InstanceButton = "button"
+
+// InstanceVibration - вибрация: значения покоя у неё нет, поэтому она тоже мгновенная. Иначе второе
+// срабатывание не отличить от первого.
+const InstanceVibration = "vibration"
+
+// Momentary сообщает, что событие мгновенное: каждое срабатывание уходит отдельным уведомлением.
+func Momentary(instance string) bool {
+	return instance == InstanceButton || instance == InstanceVibration
+}
 
 // StateValue - значение умения или свойства. Value без omitempty: false и 0 - тоже значения.
 type StateValue struct {

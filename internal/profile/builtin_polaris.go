@@ -23,7 +23,9 @@ func init() {
 		Events: &Events{
 			// Polaris.Event.BoilFinished - чайник перестал работать сам: его не сняли с базы и не выключили
 			// командой шлюза. Выключение кнопкой на чайнике от конца работы не отличить.
-			Button: map[string]string{"Polaris.Event.BoilFinished": "click", "error/empty_base=true": "long_press"},
+			// Коды 03 и 04 - сбой датчика температуры, 06 и 07 - пора сменить воду.
+			Button: map[string]string{"Polaris.Event.BoilFinished": "click", "error/empty_base=true": "long_press",
+				"error/code=03": "double_click", "error/code=04": "double_click", "error/code=06": "double_click", "error/code=07": "double_click"},
 			// Код 01 - мало воды; пустой ли чайник, прибор отдельно не сообщает.
 			WaterLevel: []string{"Polaris.Alarm.Water"},
 		},

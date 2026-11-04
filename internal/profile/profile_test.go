@@ -550,7 +550,7 @@ func TestSmartThingsProfiles(t *testing.T) {
 	for typ, status := range map[string]string{"Washer": "washerOperatingState.washerJobState", "Dryer": "dryerOperatingState.dryerJobState",
 		"Dishwasher": "dishwasherOperatingState.dishwasherJobState"} {
 		p := builtin[SmartThingsPrefix+typ]
-		if p.Events != nil || len(p.Properties) != 1 || p.Properties[0].Instance != "button" || p.Properties[0].Status != status {
+		if p.Events != nil || p.Properties[0].Instance != "button" || p.Properties[0].Status != status {
 			t.Fatalf("%s: %+v", typ, p)
 		}
 	}
@@ -584,6 +584,53 @@ func TestDeLonghiLayerDefaultDrink(t *testing.T) {
 	} {
 		if got := DeLonghiLayer(c.recipes, c.drink).DefaultProgram; got != c.want {
 			t.Fatalf("%v %q: %s", c.recipes, c.drink, got)
+		}
+	}
+}
+
+// Датчики есть у всех устройств SmartThings, без повторов; газ и присутствие читаются по другим именам.
+func TestSmartThingsSensorsEverywhere(t *testing.T) {
+	for _, category := range []string{"Light", "Washer", "Refrigerator", "Oven", "Button", "RobotCleaner", "Siren", "PresenceSensor"} {
+		p, err := Resolve(SmartThingsPrefix+category, nil, nil)
+		if err != nil {
+			t.Fatalf("%s: %v", category, err)
+		}
+		for _, instance := range []string{"gas", "vibration", "pressure"} {
+			if !slices.ContainsFunc(p.Properties, func(pr Property) bool { return pr.Instance == instance }) {
+				t.Fatalf("%s: нет %s", category, instance)
+			}
+		}
+	}
+	if v, ok := StatusValue(map[string]any{"carbonMonoxideDetector.carbonMonoxide": "detected"}, "gasDetector.gas"); !ok || v != "detected" {
+		t.Fatalf("угарный газ: %v %v", v, ok)
+	}
+	if v, ok := StatusValue(map[string]any{"presenceSensor.presence": "not present"}, "motionSensor.motion"); !ok || v != "not present" {
+		t.Fatalf("присутствие: %v %v", v, ok)
+	}
+}
+
+// Новые значения кнопки: обслуживание отдельно от неполадок; у духовки LG double_click только разогрев.
+func TestServiceButtons(t *testing.T) {
+	for _, c := range []struct{ kind, event, want string }{
+		{"Dishwasher", "Dishcare.Dishwasher.Event.MachineCareReminder", "double_click"},
+		{"Dishwasher", "Dishcare.Dishwasher.Event.DrainPumpBlocked", "long_press"},
+		{"Washer", "LaundryCare.Washer.Event.PumpError", "long_press"},
+		{"Dryer", "LaundryCare.Dryer.Event.DryingProcessFinished", "double_click"},
+		{"CoffeeMaker", "ConsumerProducts.CoffeeMaker.Event.DripTrayFull", "long_press"},
+		{"Hood", "Cooking.Common.Event.Hood.GreaseFilterMaxSaturationReached", "double_click"},
+		{"CleaningRobot", "ConsumerProducts.CleaningRobot.Event.RobotIsStuck", "long_press"},
+		{"DEVICE_DISH_WASHER", "TIME_TO_CLEAN_FILTER", "double_click"},
+		{"DEVICE_DISH_WASHER", "SALT_REFILL_IS_NEEDED", "double_click"},
+		{"DEVICE_DISH_WASHER", "SOME_FAILURE", "long_press"},
+		{"DEVICE_OVEN", "TIME_TO_CLEAN_FILTER", "long_press"},
+		{PolarisKettleType, "error/code=06", "double_click"},
+	} {
+		p, err := Resolve(c.kind, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := p.Events.Match(c.event); got != c.want {
+			t.Fatalf("%s %s: %q", c.kind, c.event, got)
 		}
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"sync"
 
 	"hcgateway/internal/appliance"
@@ -27,6 +28,8 @@ type Appliance struct {
 	// values и have - состояние и то, что оно получено.
 	values map[string]any
 	have   bool
+	// pushed - уведомления из storedPush: отчёт прибора их не содержит, а полный отчёт заменяет значения.
+	pushed map[string]any
 	notify appliance.Notify
 	runs   int
 }
@@ -64,6 +67,11 @@ func (a *Appliance) Describe() appliance.Description {
 	for key := range a.values {
 		if _, ok := d.Options[key]; !ok && key != RemainKey {
 			d.Reports = append(d.Reports, key)
+		}
+	}
+	for _, code := range m.Push {
+		if slices.Contains(storedPush, code) && !slices.Contains(d.Reports, code) {
+			d.Reports = append(d.Reports, code)
 		}
 	}
 	slices.Sort(d.Reports)
@@ -110,12 +118,22 @@ func (a *Appliance) apply(raw json.RawMessage, full bool) {
 		a.mu.Unlock()
 		return
 	}
+	wasWorking := lgWorking(a.values)
 	if full || a.values == nil {
 		a.values = map[string]any{}
 	}
 	a.model.flatten(raw, a.values)
 	remain(a.values)
 	a.model.derive(a.values)
+	// LG не сообщает, что проблему устранили: о ней забывает только следующий запуск.
+	if !wasWorking && lgWorking(a.values) {
+		for code := range a.pushed {
+			a.pushed[code] = appliance.EventOff
+		}
+	}
+	for code, v := range a.pushed {
+		a.values[code] = v
+	}
 	a.have = true
 	a.changedLocked(nil)
 }
@@ -136,9 +154,39 @@ func remain(values map[string]any) {
 	values[RemainKey] = h*3600 + m*60
 }
 
-// push - уведомление прибора: код заглавными уходит событием.
+// storedPush - уведомления, которые Алиса видит и как состояние: у них нет значения в отчёте прибора.
+var storedPush = []string{"SALT_REFILL_IS_NEEDED", "LACK_OF_WATER", "WATER_LEAK_HAS_OCCURRED"}
+
+// lgRestStates - состояния runState.currentState, в которых прибор не работает.
+var lgRestStates = []string{"POWER_OFF", "INITIAL", "END", "ERROR", "SLEEP", "STANDBY", "COMPLETE", "RUNNING_END", "DONE", "CLEANING_IS_DONE"}
+
+// lgWorking сообщает, работает ли прибор: по состоянию работы, а без него - по питанию, как увлажнитель.
+func lgWorking(values map[string]any) bool {
+	if s, ok := values["runState.currentState"].(string); ok {
+		return !slices.Contains(lgRestStates, s)
+	}
+	for k, v := range values {
+		if strings.HasPrefix(k, "operation.") && v == "POWER_ON" {
+			return true
+		}
+	}
+	return false
+}
+
+// push - уведомление прибора: код заглавными уходит событием, а код из storedPush ещё и остаётся в
+// значениях прибора до следующего запуска.
 func (a *Appliance) push(code string) {
 	a.mu.Lock()
+	if slices.Contains(storedPush, code) {
+		if a.pushed == nil {
+			a.pushed = map[string]any{}
+		}
+		a.pushed[code] = appliance.EventPresent
+		if a.values == nil {
+			a.values = map[string]any{}
+		}
+		a.values[code] = appliance.EventPresent
+	}
 	a.changedLocked([]string{code})
 }
 

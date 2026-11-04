@@ -43,6 +43,8 @@ const (
 	// PeripheralPrefix - датчики: DeLonghi.Peripheral.WaterTankLow = true.
 	PeripheralPrefix = "DeLonghi.Peripheral."
 
+	// StatusBrews - сколько напитков машина сварила за всё время, из тени BrewingStatisticsTotals.
+	StatusBrews = "DeLonghi.Status.Brews"
 	// EventBeverageFinished - напиток готов.
 	EventBeverageFinished = "DeLonghi.Event.BeverageFinished"
 	// EventLoginRequired - JWT не продлевается: нужен новый вход в аккаунт.
@@ -70,6 +72,11 @@ const (
 var (
 	fastPoll   = 1500 * time.Millisecond
 	fastWindow = 30 * time.Second
+	// brewsWait - пауза перед чтением счётчика напитков, brewsPoll - как часто он читается сам,
+	// brewsTimeout - предел одного чтения.
+	brewsWait    = 30 * time.Second
+	brewsPoll    = time.Hour
+	brewsTimeout = 30 * time.Second
 )
 
 // offModes - CurrMode выключенной и выключающейся машины: переход между ними и остальными -
@@ -101,6 +108,8 @@ type Appliance struct {
 	wake chan struct{}
 	// boosted будит частый опрос тени после смены питания.
 	boosted chan struct{}
+	// brewed будит чтение счётчика напитков: напиток готов.
+	brewed chan struct{}
 
 	mu sync.Mutex
 	// watchUntil - до какого времени тень читается часто.
@@ -126,7 +135,7 @@ func (a *Account) Appliance(c Config) (*Appliance, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Appliance{acct: a, conf: c, pin: pin, log: a.log, wake: make(chan struct{}, 1), boosted: make(chan struct{}, 1),
+	return &Appliance{acct: a, conf: c, pin: pin, log: a.log, wake: make(chan struct{}, 1), boosted: make(chan struct{}, 1), brewed: make(chan struct{}, 1),
 		values: map[string]any{}}, nil
 }
 
@@ -154,7 +163,7 @@ func (ap *Appliance) Observed() string {
 // Describe - рецепты 1-255 как программы, питание как настройка. Какие рецепты видит
 // Алиса, решает профиль.
 func (ap *Appliance) Describe() appliance.Description {
-	d := appliance.Description{Type: Type, Options: map[string]appliance.Option{
+	d := appliance.Description{Type: Type, Model: ap.acct.modelName(ap.conf.Serial), Options: map[string]appliance.Option{
 		SettingPower: {Key: SettingPower, Values: []string{PowerOff, PowerOn}, Setting: true},
 	}, Events: []string{EventBeverageFinished, EventLoginRequired}}
 	for i := 1; i <= maxRecipe; i++ {
@@ -194,10 +203,14 @@ func (ap *Appliance) Run(ctx context.Context, notify appliance.Notify) {
 		ap.mu.Unlock()
 	}()
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 	go func() {
 		defer wg.Done()
 		ap.pollCloud(ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		ap.pollBrews(ctx)
 	}()
 	go func() {
 		defer wg.Done()
@@ -348,7 +361,53 @@ func (ap *Appliance) apply(r map[string]any, lan bool, ts time.Time) {
 	if switched {
 		ap.boost()
 	}
+	if slices.Contains(events, EventBeverageFinished) {
+		signal(ap.brewed)
+	}
 	ap.changed(events)
+}
+
+// pollBrews читает счётчик напитков при запуске, после каждого напитка и раз в brewsPoll: напиток могли
+// сварить, пока шлюз не был на связи. Облако обновляет тень не сразу, поэтому чтение идёт с паузой.
+func (ap *Appliance) pollBrews(ctx context.Context) {
+	t := time.NewTimer(brewsWait)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ap.brewed:
+			t.Reset(brewsWait)
+			continue
+		case <-t.C:
+		}
+		ap.readBrews(ctx)
+		t.Reset(brewsPoll)
+	}
+}
+
+// readBrews записывает сумму варок. Без входа в облако или при ошибке прежнее значение остаётся.
+func (ap *Appliance) readBrews(ctx context.Context) {
+	if ap.conf.Serial == "" || !ap.acct.Status().LoggedIn {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, brewsTimeout)
+	defer cancel()
+	stats, err := ap.acct.RecipeStats(ctx, ap.conf.Serial)
+	if err != nil {
+		if ctx.Err() == nil {
+			ap.log.Warn("De'Longhi: счётчик напитков не прочитан", "device", ap.conf.ID, "err", err)
+		}
+		return
+	}
+	total := 0
+	for _, s := range stats {
+		total += s.Brew
+	}
+	ap.mu.Lock()
+	ap.values[StatusBrews] = float64(total)
+	ap.mu.Unlock()
+	ap.changed(nil)
 }
 
 // boost включает частый опрос тени на fastWindow; повторная смена питания продлевает окно.
@@ -574,5 +633,32 @@ func (ap *Appliance) result(cmd string, r map[string]any, err error) error {
 	}
 	ap.log.Warn("De'Longhi: машина отказала", "device", ap.conf.ID, "command", cmd,
 		"response", fmt.Sprint(r["Response"]), "error", fmt.Sprint(r["ErrorDescription"]))
+	if cmd == "BeverageRequest" {
+		return ap.refusal()
+	}
+	return appliance.ErrBusy
+}
+
+// refusal - причина, по которой машина отказала варить, по её тревогам. Заранее варку шлюз не
+// запрещает: смысл тревог известен по именам, а машина знает лучше.
+func (ap *Appliance) refusal() error {
+	ap.mu.Lock()
+	defer ap.mu.Unlock()
+	active := func(alarm string) bool { return ap.values[AlarmPrefix+alarm] == appliance.EventPresent }
+	switch {
+	case active("TankLevel"), active("TankPresence"):
+		return appliance.ErrNotEnoughWater
+	case active("NoCoffee"):
+		return appliance.ErrContainerEmpty
+	case active("Waste"):
+		return appliance.ErrContainerFull
+	case active("Drain"):
+		return appliance.ErrDripTrayFull
+	}
+	for k, v := range ap.values {
+		if strings.HasPrefix(k, AlarmPrefix) && v == appliance.EventPresent {
+			return appliance.ErrHumanNeeded
+		}
+	}
 	return appliance.ErrBusy
 }

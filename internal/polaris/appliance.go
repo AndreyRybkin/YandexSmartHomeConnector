@@ -55,7 +55,9 @@ func (a *Appliance) DeviceID() string {
 func (a *Appliance) Describe() appliance.Description {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	d := appliance.Description{Type: profileType(a.devType), Options: map[string]appliance.Option{}, Reports: slices.Clone(a.reports)}
+	d := appliance.Description{Type: profileType(a.devType), Options: map[string]appliance.Option{}, Reports: slices.Clone(a.reports),
+		Model: modelName(a.devType)}
+	d.Firmware, _ = a.values[KeyFirmware].(string)
 	if !Kettle(a.devType) {
 		return d
 	}
@@ -216,6 +218,11 @@ func (a *Appliance) Set(_ context.Context, key string, value any) error {
 	if !online {
 		return appliance.ErrUnreachable
 	}
+	if heating := key == KeyTemperature || key == KeyTea || (key == KeyMode && fmt.Sprint(value) != modeOff); heating {
+		if err := a.heatRefused(); err != nil {
+			return err
+		}
+	}
 	switch key {
 	case KeyTemperature:
 		f, ok := value.(float64)
@@ -248,6 +255,19 @@ func (a *Appliance) Set(_ context.Context, key string, value any) error {
 		return fmt.Errorf("%w: %s", appliance.ErrInvalidValue, key)
 	}
 	return a.hub.publish(a.id, key, text)
+}
+
+// heatRefused - причина, по которой чайник греть нельзя: Алиса назовёт её человеку. Выключать можно всегда.
+func (a *Appliance) heatRefused() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	switch {
+	case a.values[KeyEmptyBase] == true:
+		return appliance.ErrHumanNeeded
+	case a.values[KeyWaterAlarm] == appliance.EventPresent:
+		return appliance.ErrNotEnoughWater
+	}
+	return nil
 }
 
 // heat задаёт температуру и включает разогрев.

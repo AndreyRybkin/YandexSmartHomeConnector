@@ -1342,7 +1342,11 @@ docker compose exec -T hcgateway /hcgateway -config /config/config.yaml web-user
    типом прибора: у прибора Home Connect - `BSH`, у прибора LG - `LG` и
    тип ThinQ, например `DEVICE_WASHER`. У телевизора LG - `LG`, у
    телевизора Samsung - `Samsung`, у устройства SmartThings -
-   производитель из SmartThings, а без него - `SmartThings`.
+   производитель из SmartThings, а без него - `SmartThings`. Настоящую
+   модель `device_info.model` сообщают кофемашина, чайник и телевизоры, когда
+   она стала известна, а прошивку `sw_version` - чайник и лента WLED. У каждого
+   устройства `status_info.reportable` = `true`: шлюз сам сообщает, что
+   устройство на связи или нет, и приложение может предложить уведомление.
 2. Умение `mode` перечисляет только программы и значения, которые есть
    у прибора. Порядок режимов - по имени Home Connect и между запросами
    не меняется: этого требует Яндекс.
@@ -1436,6 +1440,11 @@ docker compose exec -T hcgateway /hcgateway -config /config/config.yaml web-user
 | `REMOTE_CONTROL_DISABLED` | удалённый старт на приборе не разрешён |
 | `DEVICE_UNREACHABLE` | прибор недоступен или не ответил за 3 с |
 | `DEVICE_BUSY` | прибор занят |
+| `NOT_ENOUGH_WATER` | мало воды: чайник с `error/code` `01`, отказ кофемашины с тревогой воды |
+| `CONTAINER_EMPTY` | отказ кофемашины с тревогой `NoCoffee` |
+| `CONTAINER_FULL` | отказ кофемашины с тревогой `Waste` |
+| `DRIP_TRAY_FULL` | отказ кофемашины с тревогой `Drain` |
+| `HUMAN_INVOLVEMENT_NEEDED` | чайник снят с базы, отказ кофемашины с другой тревогой |
 | `INVALID_VALUE` | значение неверного типа, вне пределов или без пары в профиле |
 | `INVALID_ACTION` | умения нет в профиле или прибор не поддерживает команду |
 | `NOT_SUPPORTED_IN_CURRENT_MODE` | команда недоступна в текущем состоянии |
@@ -1514,10 +1523,10 @@ docker compose exec -T hcgateway /hcgateway -config /config/config.yaml web-user
 | `ranges` | список: `instance`, `option`, `unit`, необязательные `min`, `max`, `precision` |
 | `toggles` | список: `instance` и `setting` - флаг или свойство со значениями `on` и `off`. Без `setting` бывает только `pause`: пауза и продолжение программы командами; `optional: true` - только если прибор описывает настройку и разрешает её менять |
 | `color` | цвет: `setting` - команда цвета с `hue` и `saturation` - значениями оттенка и насыщенности, `hue_max` - верх шкалы оттенка прибора, по умолчанию 360; `temperature` - цветовая температура в кельвинах с пределами `min_k` и `max_k`. Задаётся HSV, температура или оба; пустой `color` - умения нет |
-| `properties` | список: `type` (`event` или `float`), `instance`, `status`, `unit`; для `event` - `values`; для `float` - пересчёт `convert` или `scale` и `offset`, объём `volume`, границы `min` и `max`. Оставшееся время программы - `float` `remaining_time` (правила ниже) |
+| `properties` | список: `type` (`event` или `float`), `instance`, `status`, `unit`; для `event` - `values`; для `float` - пересчёт `convert` или `scale` и `offset`, объём `volume`, границы `min` и `max`; `if_known: true` - свойство есть, только если прибор описывает `status` в списке событий. Оставшееся время программы - `float` `remaining_time` (правила ниже) |
 | `events.button` | событие прибора -> `click`, `double_click` или `long_press`. Событие - имя, шаблон с `*` или переход значения `состояние=значение` |
 | `events.food_level` | события «заканчивается» сухого: соль, зёрна |
-| `events.water_level` | события «заканчивается» жидкости: вода, ополаскиватель |
+| `events.water_level` | события «заканчивается» жидкости: вода, ополаскиватель. Вместо события можно указать значение `имя=значение` |
 | `events.empty` | какие из этих событий значат «уже нет»: уровень `empty`, а не `low` |
 | `tile` | до 3 показаний плитки: `item` вида `float/temperature` или `status` с `unit`, необязательная `label` до 32 символов; нет поля - шлюз выбирает сам (раздел 4.6.1, п. 12) |
 | `events.food_level_if_known` | такие же события, но только у прибора, который перечисляет их в своём описании |
@@ -1635,20 +1644,25 @@ unexpected type at 38: number».
 | Тип Home Connect | Устройство Алисы | Умения | Раздел `events` |
 |---|---|---|---|
 | `Oven` | `cooking` | программа (`program`), температура 30-275 °C, пауза, подсветка камеры; свойства: дверца, температура в камере | `click` - программа закончилась, `double_click` - разогрелась; `water_level` - вода |
-| `Dishwasher` | `dishwasher` | программа (`dishwashing`), пауза; свойство: дверца | `click`; `food_level` - соль; `water_level` - ополаскиватель |
-| `Washer` | `washing_machine` | программа, пауза; свойство: дверца | `click` |
-| `WasherDryer` | `washing_machine` | программа `LaundryCare.WasherDryer.Program.*`: `Cotton` - `normal`, `Cotton.Eco4060` - `eco`, `EasyCare` - `one`, `Mix` - `two`, `WashAndDry.60` - `three`, `WashAndDry.90` - `four`; пауза; свойство: дверца | `click` |
-| `Dryer` | `washing_machine` | программа, пауза; свойство: дверца | `click` |
-| `CoffeeMaker` | `cooking.coffee_maker` | питание, напиток (`coffee_mode`) | `food_level` - зёрна; `water_level` - вода |
-| `Hood` | `ventilation` | вытяжка, скорость (`fan_speed`), подсветка | - |
+| `Dishwasher` | `dishwasher` | программа (`dishwashing`), пауза; свойства: дверца, протечка `water_leak` | `click`; `double_click` - напоминание об уходе и фильтре; `long_press` - фильтр, слив, нагреватель, давление воды; `food_level` - соль, `empty` и при блокировке программы; `water_level` - ополаскиватель |
+| `Washer` | `washing_machine` | программа, пауза; свойства: дверца, протечка `water_leak` | `click`; `double_click` - чистка барабана, мало средства i-Dos; `long_press` - насос, пена, отжим, авария, давление воды; `water_level` - средство i-Dos |
+| `WasherDryer` | `washing_machine` | программа `LaundryCare.WasherDryer.Program.*`: `Cotton` - `normal`, `Cotton.Eco4060` - `eco`, `EasyCare` - `one`, `Mix` - `two`, `WashAndDry.60` - `three`, `WashAndDry.90` - `four`; пауза; свойства: дверца, протечка `water_leak` | как у `Washer` |
+| `Dryer` | `washing_machine` | программа, пауза; свойство: дверца | `click`; `double_click` - сушка закончилась, защита от складок ещё идёт; `long_press` - конденсат, фильтр, обслуживание |
+| `CoffeeMaker` | `cooking.coffee_maker` | питание, напиток (`coffee_mode`) | `double_click` - накипь и очистка; `long_press` - поддон и молоко; `food_level` - зёрна; `water_level` - вода, в том числе мало воды и снятый бак, если прибор описывает эти события |
+| `Hood` | `ventilation` | вытяжка, скорость (`fan_speed`), подсветка | `double_click` - пора помыть жировой фильтр |
 | `Refrigerator`, `FridgeFreezer`, `Freezer` | `cooking` | температура; свойство: дверца | - |
 | `WineCooler` | `cooking` | температура винной камеры; свойство: дверца | - |
-| `CleaningRobot` | `vacuum_cleaner` | уборка, программа, пауза; свойство: заряд `BSH.Common.Status.BatteryLevel` | `click` |
+| `CleaningRobot` | `vacuum_cleaner` | уборка, программа, пауза; свойство: заряд `BSH.Common.Status.BatteryLevel` | `click`; `double_click` - пылесборник и фильтр; `long_press` - застрял, не нашёл базу, потерялся, поднят, вынут контейнер |
 | `AirConditioner` | `thermostat.ac` | питание; режим `thermostat` из программ `Auto`, `Cool`, `Dry`, `Fan`, `Heat`; температура `SetpointTemperature` | - |
 | `Microwave` | `cooking` | программа: мощность от `90Watt` до `1000Watt` - режимы от `one` до `seven`, `Max` - `max`; пауза; свойство: дверца | `click` |
 | `WarmingDrawer` | `cooking` | подогрев (`program`), режим `heat`: `Low`, `Medium`, `High`; свойство: дверца | `click` |
 | `Hob`, `Cooktop` | `cooking` | питание | - |
 | `CookProcessor` | `cooking.multicooker` | питание | - |
+
+Переход `BSH.Common.Status.OperationState` в `Error` - `long_press` у `Oven`,
+`Dishwasher`, `Washer`, `WasherDryer`, `Dryer`, `Microwave`, `CleaningRobot`,
+`CoffeeMaker` и `AirConditioner`. `ActionRequired` кнопку не нажимает: прибор
+ждёт человека и при обычной работе.
 
 Программа духовки по умолчанию - `HotAir` на 180 °C, посудомойки -
 `Auto2`, шкафа для подогрева - `WarmingDrawer`, стиральной и
@@ -1718,7 +1732,18 @@ Home Assistant. На настоящем приборе проверен толь
 1. Уведомления встроенные профили передают кнопкой прибора: код
    с окончанием `_COMPLETE` или `_COMPLETED` - `click`,
    `PREHEATING_IS_COMPLETE` - `double_click`, остальные коды -
-   `long_press`.
+   `long_press`. У посудомойки, кондиционера, очистителей, увлажнителя,
+   осушителя, холодильников, винного шкафа и ручного пылесоса напоминания
+   `TIME_TO_*`, `LACK_OF_WATER`, `WATER_IS_FULL`, `RINSE_IS_NOT_ENOUGH`,
+   `SALT_REFILL_IS_NEEDED`, `DOOR_IS_OPEN` и `POLLUTION_IS_HIGH` -
+   `double_click`.
+   Коды `SALT_REFILL_IS_NEEDED`, `LACK_OF_WATER` и `WATER_LEAK_HAS_OCCURRED`
+   шлюз ещё и хранит как значения прибора в памяти: посудомойка получает
+   `food_level` `low` и `water_leak` `leak`, увлажнитель и очиститель -
+   `water_level` `empty`. LG не сообщает, что проблему устранили, поэтому
+   значения сбрасывает следующий запуск: переход из покоя в работу по
+   `runState.currentState`, а без него - по питанию в `POWER_ON`. После
+   перезапуска шлюза значений нет.
 2. У стиральных и сушильных машин окончание работы - переход
    `runState.currentState` в `END`, у стайлера - в `COMPLETE` и
    `RUNNING_END`: это `click`. Кнопкой `long_press` идут только ошибки
@@ -1770,8 +1795,8 @@ Home Assistant. На настоящем приборе проверен толь
 | `DEVICE_WINE_CELLAR` | `cooking`, по камере | температура камеры; яркость `brightness` в процентах по `operation.lightStatus` | - |
 | `DEVICE_WATER_HEATER` | `thermostat` | питание, если прибор разрешает его менять; температура воды; режим `heat` | температура воды |
 | `DEVICE_SYSTEM_BOILER` | `thermostat` | питание; режим `thermostat`; температура `roomTemperatureInUnits.targetTemperatureC` | температура `roomTemperatureInUnits.currentTemperatureC` |
-| `DEVICE_ROBOT_CLEANER` | `vacuum_cleaner` | запуск уборки `START` и возврат на базу `HOMING` в `operation.cleanOperationMode` | заряд `battery_level` по `battery.percent` |
-| `DEVICE_STICK_CLEANER` | `vacuum_cleaner` | - | заряд `battery_level` по `battery.percent` |
+| `DEVICE_ROBOT_CLEANER` | `vacuum_cleaner` | запуск уборки `START` и возврат на базу `HOMING` в `operation.cleanOperationMode` | заряд `battery_level` по `battery.percent` и событием по `battery.level` |
+| `DEVICE_STICK_CLEANER` | `vacuum_cleaner` | - | заряд `battery_level` по `battery.percent` и событием по `battery.level` |
 | `DEVICE_COOKTOP`, `DEVICE_WATER_PURIFIER`, `DEVICE_HOME_BREW`, `DEVICE_PLANT_CULTIVATOR` | встроенного профиля нет: у них нет управления, которое понимает Алиса | - | - |
 
 ### 6.4. Встроенный профиль кофемашины De'Longhi
@@ -1789,8 +1814,9 @@ ECAM630.75.
 | `default_program` | `DeLonghi.Recipe.6` |
 | `events.button` | `DeLonghi.Event.BeverageFinished` - `click`, `DeLonghi.Event.LoginRequired` - `long_press`, появление тревог из раздела 7.6.5 - `double_click` |
 | `events.food_level` | `DeLonghi.Alarm.NoCoffee`, при нём уровень `empty` |
-| `events.water_level` | `DeLonghi.Alarm.TankLevel`; `DeLonghi.Alarm.TankPresence`, при нём уровень `empty` |
+| `events.water_level` | `DeLonghi.Alarm.TankLevel`, `DeLonghi.Peripheral.WaterTankLow=true`; `DeLonghi.Alarm.TankPresence` и `DeLonghi.Peripheral.TankPresence=false`, при них уровень `empty` |
 | `tile` | `status: DeLonghi.Status.Pouring`, `label: налито`, `unit: unit.percent` |
+| `properties` | `float` `meter` по `DeLonghi.Status.Brews` |
 
 `recipes` и `default_drink` из настроек прибора (раздел 3) шлюз
 превращает в `modes` и `default_program`. Это слой под
@@ -1841,6 +1867,8 @@ ECAM630.75.
 | `Light` | `light` | питание `switch.switch`; яркость `switchLevel.level`; цвет `colorControl.setColor` с `hue` и `saturation` в шкале 0-100 и температура `colorTemperature.colorTemperature` |
 | `Switch`, `SmartPlug` | `switch`, `socket` | питание; свойства датчиков |
 | `ContactSensor`, `MotionSensor`, `LeakSensor`, `SmokeDetector` | `sensor.open`, `sensor.motion`, `sensor.water_leak`, `sensor.smoke` | свойства датчиков |
+| `PresenceSensor` | `sensor.motion` | свойства датчиков |
+| `Siren` | `sensor` | свойства датчиков |
 | `TempSensor`, `TempHumiditySensor`, `HumiditySensor`, `EnvironmentSensor`, `AirQualityDetector`, `WeatherStation` | `sensor.climate` | свойства датчиков |
 | `LightSensor`, `MultiFunctionalSensor`, `GenericSensor` | `sensor.illumination`, `sensor` | свойства датчиков |
 | `PowerMeasurementSensor`, `CurbPowerMeter` | `smart_meter.electricity` | свойства датчиков |
@@ -1864,9 +1892,11 @@ ECAM630.75.
 | Свойство | Значение SmartThings |
 |---|---|
 | `event` `open` | `contactSensor.contact`: `open` - `opened`, `closed` - `closed` |
-| `event` `motion` | `motionSensor.motion`: `active` - `detected`, `inactive` - `not_detected` |
+| `event` `motion` | `motionSensor.motion`: `active` - `detected`, `inactive` - `not_detected`; `presenceSensor.presence`: `present` - `detected`, `not present` - `not_detected` |
 | `event` `water_leak` | `waterSensor.water`: `wet` - `leak`, `dry` - `dry` |
 | `event` `smoke` | `smokeDetector.smoke`: `detected` - `detected`, `clear` - `not_detected` |
+| `event` `gas` | `gasDetector.gas` или `carbonMonoxideDetector.carbonMonoxide`: `detected` - `detected`, `clear` - `not_detected`; `tested` Алиса не получает |
+| `event` `vibration` | `accelerationSensor.acceleration`: `active` - `vibration`; покоя у вибрации нет. Событие мгновенное, как кнопка: каждое срабатывание уходит отдельным уведомлением |
 | `float` `temperature`, °C | `temperatureMeasurement.temperature` |
 | `float` `humidity`, % | `relativeHumidityMeasurement.humidity` |
 | `float` `illumination`, лк | `illuminanceMeasurement.illuminance` |
@@ -1874,11 +1904,16 @@ ECAM630.75.
 | `float` `co2_level`, ppm | `carbonDioxideMeasurement.carbonDioxide` |
 | `float` `pm1_density`, `pm2.5_density`, `pm10_density` | `veryFineDustSensor.veryFineDustLevel`, `dustSensor.fineDustLevel`, `dustSensor.dustLevel` |
 | `float` `power`, `electricity_meter`, `voltage` | `powerMeter.power`, `energyMeter.energy`, `voltageMeasurement.voltage` |
+| `float` `pressure`, мм рт. ст. | `atmosphericPressureMeasurement.atmosphericPressure` в кПа × 7,50062; другую единицу шлюз не пересчитывает |
+
+Эти свойства есть в профилях всех категорий. В Алису попадает только то, что
+устройство сообщает.
 
 Энергию `energyMeter.energy` шлюз передаёт в кВт·ч (раздел 7.7.3, п. 5).
 
-Замков, гаражных ворот и сирен во встроенных профилях нет: открыть дверь
-голосом можно, только задав свой профиль. Устройство другой категории
+Замков и гаражных ворот во встроенных профилях нет: открыть дверь голосом
+можно, только задав свой профиль. Категория `Siren` передаёт только показания:
+её сообщает датчик газа, сиреной шлюз не управляет. Устройство другой категории
 добавляется со своим профилем, в котором задан `yandex_type`.
 
 ## 7. Источники приборов
@@ -1915,7 +1950,18 @@ ECAM630.75.
 
 Тип устройства по умолчанию - `cooking`. Другой тип задаётся в редакторе
 профиля прибора. Умения: включение, режимы `program` `one` и `two`,
-`temperature` от 30 до 100 °C с шагом 5, `pause`.
+`temperature` от 30 до 100 °C с шагом 5, `pause`, переключатели и режимы из
+таблицы. Они - настройки: меняются и без программы, запуск их не сбрасывает.
+
+| Умение | Значения |
+|---|---|
+| `toggle` | `controls_locked`, `mute`, `ionization`, `keep_warm`, `backlight` |
+| `mode` `work_speed` | `slow`, `medium`, `fast`, `turbo`, `max` |
+| `mode` `swing` | `stationary`, `vertical`, `horizontal`, `auto` |
+| `mode` `heat` | `min`, `low`, `normal`, `high`, `max` |
+| `mode` `cleanup_mode` | `auto`, `quiet`, `normal`, `express`, `dry_cleaning`, `wet_cleaning`, `mixed_cleaning`, `smart` |
+| `mode` `fan_speed` | `auto`, `low`, `medium`, `high`, `turbo` |
+| `mode` `input_source` | `one`, `two`, `three` |
 
 | Вид | Свойства |
 |---|---|
@@ -2694,7 +2740,9 @@ API у De'Longhi нет: адреса, ключи и сообщения взят
    и цифр и `ConnectionId`. Ответ находит по `RequestId`.
 2. Команда выполнена, если в ответе `"Response":"OK"`. Иначе Алиса
    получает `DEVICE_BUSY`, а без ответа или соединения -
-   `DEVICE_UNREACHABLE`. Текст ошибки машины - только в журнал.
+   `DEVICE_UNREACHABLE`. Текст ошибки машины - только в журнал. Если машина
+   отказала варить при тревоге, Алиса получает код по тревоге (раздел 5.5).
+   Заранее шлюз варку из-за тревог не запрещает.
 3. Напиток не варится, пока машина выключена, включается или
    выключается (`CurrMode` 0, 1, 2): `NOT_SUPPORTED_IN_CURRENT_MODE`.
    Пока машина занята (`Status: Busy`) - `DEVICE_BUSY`. Есть ли чашка
@@ -2746,6 +2794,7 @@ API у De'Longhi нет: адреса, ключи и сообщения взят
 | `DeLonghi.Status.Pouring` | то же значение, но только во время налива; его показывает плитка: `налито 40 %` |
 | `DeLonghi.Alarm.<имя>` | тревога из `alarms`: `BSH.Common.EnumType.EventPresentState.Present` или `Off` |
 | `DeLonghi.Peripheral.<имя>` | датчик из `peripherals`, `true` или `false` |
+| `DeLonghi.Status.Brews` | сколько напитков сварено за всё время: сумма `Brew` из тени `BrewingStatisticsTotals`. Шлюз читает её через 30 с после запуска и после напитка, затем раз в час, если выполнен вход в аккаунт |
 | `DeLonghi.Event.BeverageFinished` | напиток налит |
 | `DeLonghi.Event.LoginRequired` | нужен новый вход в аккаунт |
 
@@ -3226,9 +3275,13 @@ Samsung через облако - устройство SmartThings катего�
 | `mode` `tea_mode` | температура по виду чая, затем `control/mode` `3`: чёрный 100 °C, зелёный и цветочный 80 °C, красный, улун и травяной 90 °C, пуэр 95 °C, белый 65 °C |
 | `toggle` `backlight`, `controls_locked` | `backlight`, `child_lock`, если прибор их сообщает |
 | `float` `temperature` | `sensor/temperature` |
-| `button` | конец работы - `click`; `error/empty_base` `true` - `long_press` |
+| `button` | конец работы - `click`; `error/empty_base` `true` - `long_press`; `error/code` `03`, `04` (сбой датчика температуры), `06`, `07` (пора сменить воду) - `double_click` |
 | `float` `water_level`, % | пересчёт `weight_to_percent`: `weight` × 100 / (`volume` × 1000), от 0 до 100; чайник на 1,7 литра показывает полным 1630-1700 |
 | `event` `water_level` | `low`, пока `error/code` равен `01`, иначе `normal` |
+
+Команды нагрева снятый с базы чайник не получает: Алиса отвечает
+`HUMAN_INVOLVEMENT_NEEDED`, а при `error/code` `01` - `NOT_ENOUGH_WATER`.
+Выключить чайник можно всегда.
 
 Концом работы шлюз считает переход `mode` в `0`, если за 2 с после него
 чайник не сообщил `error/empty_base` `true` и не включился снова. Выключение
@@ -3537,3 +3590,16 @@ scrape_configs:
 23. Запасные пределы термостата и духовки задал владелец, в документации
     SmartThings их нет, на устройствах они не проверены. [уточнить: сообщают ли
     духовки `ovenSetpointRange`: в известных снимках он пуст]
+24. Новые свойства и значения кнопки сверены с документацией и открытыми
+    интеграциями, на приборах не проверены. Коды `error/code` чайника: на
+    настоящем виден только `00`. [уточнить: что значат `WaterTankLow` и
+    `TankPresence` на настоящей кофемашине: смысл взят из имён; принимает ли
+    Яндекс `float` со значением 0 у частиц увлажнителя LG]
+25. `status_info.reportable`, `sw_version` и новые коды отказа взяты из
+    документации Яндекса, у Яндекса не проверены. [уточнить: появляется ли в
+    приложении настройка уведомлений; даёт ли лишнее уведомление кофемашина,
+    которая рвёт соединение при включении; снимается ли `error/code` `01`
+    у чайника после доливки: пока он не снят, Алиса не греет; отказывает ли
+    кофемашина при тревогах]
+26. Переключатели и режимы `AllInOne` (раздел 7.1.1) у Яндекса не проверены, в
+    профилях настоящих приборов их пока нет.

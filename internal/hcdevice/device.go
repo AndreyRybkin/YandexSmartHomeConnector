@@ -4,6 +4,7 @@
 package hcdevice
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -296,8 +297,13 @@ func once(events []string) []string {
 
 // buttonState - нажатие кнопки устройства id: только оно, без остальных свойств.
 func buttonState(id, value string) alice.DeviceState {
+	return momentaryState(id, alice.InstanceButton, value)
+}
+
+// momentaryState - срабатывание мгновенного события: только оно, без остальных свойств.
+func momentaryState(id, instance, value string) alice.DeviceState {
 	return alice.DeviceState{ID: id, Properties: []alice.CapState{{Type: alice.PropEvent,
-		State: alice.StateValue{Instance: alice.InstanceButton, Value: value}}}}
+		State: alice.StateValue{Instance: instance, Value: value}}}}
 }
 
 // pressed - нажатия кнопки самого прибора, например кнопки SmartThings: событие состояние=значение
@@ -306,13 +312,13 @@ func (d *Device) pressed(events []string) []alice.DeviceState {
 	var out []alice.DeviceState
 	for i := range d.Profile.Properties {
 		pr := &d.Profile.Properties[i]
-		if pr.Type != "event" || pr.Instance != alice.InstanceButton {
+		if pr.Type != "event" || !alice.Momentary(pr.Instance) {
 			continue
 		}
 		for _, e := range events {
 			if raw, ok := strings.CutPrefix(e, pr.Status+"="); ok {
 				if v, ok := pr.Values[raw]; ok {
-					out = append(out, buttonState(d.ID, v))
+					out = append(out, momentaryState(d.ID, pr.Instance, v))
 				}
 			}
 		}
@@ -332,7 +338,7 @@ func (d *Device) transitions(st *appliance.State) []string {
 		watch = d.Profile.Events.Transitions()
 	}
 	for i := range d.Profile.Properties {
-		if pr := &d.Profile.Properties[i]; pr.Type == "event" && pr.Instance == alice.InstanceButton {
+		if pr := &d.Profile.Properties[i]; pr.Type == "event" && alice.Momentary(pr.Instance) {
 			watch[pr.Status] = append(watch[pr.Status], slices.Collect(maps.Keys(pr.Values))...)
 		}
 	}
@@ -366,7 +372,8 @@ func (d *Device) Info() []alice.DeviceInfo {
 	p := d.Profile
 	dev := alice.DeviceInfo{
 		ID: d.ID, Name: d.Name, Room: d.Room, Type: alice.TypePrefix + p.YandexType,
-		DeviceInfo: alice.Manufacturer{Manufacturer: d.manufacturer(), Model: desc.Type},
+		DeviceInfo: alice.Manufacturer{Manufacturer: d.manufacturer(), Model: cmp.Or(desc.Model, desc.Type), SWVersion: desc.Firmware},
+		StatusInfo: &alice.StatusInfo{Reportable: true},
 	}
 	if hasOnOff(p, &desc) {
 		dev.Capabilities = append(dev.Capabilities, alice.Capability{Type: alice.CapOnOff, Retrievable: true, Reportable: true})
@@ -399,7 +406,7 @@ func (d *Device) Info() []alice.DeviceInfo {
 			Parameters: c})
 	}
 	for _, pr := range p.Properties {
-		if !desc.Knows(pr.Status) {
+		if !hasProperty(&pr, &desc) {
 			continue
 		}
 		dev.Properties = append(dev.Properties, propertyInfo(&pr))
@@ -437,12 +444,21 @@ func hasOnOff(p *profile.Profile, desc *appliance.Description) bool {
 	return desc.Knows(p.Power.Setting) && !desc.Options[p.Power.Setting].ReadOnly
 }
 
+// hasProperty сообщает, есть ли у прибора свойство: он сообщает значение под одним из его имён, а
+// свойство с IfKnown ещё и описывает в списке событий.
+func hasProperty(pr *profile.Property, desc *appliance.Description) bool {
+	if pr.IfKnown && !slices.Contains(desc.Events, pr.Status) {
+		return false
+	}
+	return slices.ContainsFunc(profile.StatusNames(pr.Status), desc.Knows)
+}
+
 // ownEvent сообщает, что в properties есть свойство event с этим instance и прибор его сообщает. Оно
 // главнее раздела events: иначе в одном устройстве окажутся два одинаковых свойства, память об
 // уведомлениях спутает их значения, а кнопка сработает дважды на одно событие.
 func ownEvent(p *profile.Profile, desc *appliance.Description, instance string) bool {
 	return slices.ContainsFunc(p.Properties, func(pr profile.Property) bool {
-		return pr.Type == "event" && pr.Instance == instance && desc.Knows(pr.Status)
+		return pr.Type == "event" && pr.Instance == instance && hasProperty(&pr, desc)
 	})
 }
 
@@ -495,6 +511,15 @@ func knownKeys(always, ifKnown []string, desc *appliance.Description) []string {
 		}
 	}
 	return out
+}
+
+// levelActive сообщает, активен ли источник уровня: событие прибора или значение вида «имя=значение».
+func levelActive(key string, values map[string]any) bool {
+	if name, want, ok := strings.Cut(key, "="); ok {
+		v, present := values[name]
+		return present && valueString(v) == want
+	}
+	return values[key] == appliance.EventPresent
 }
 
 // buttonValues - значения кнопки. Если прибор перечисляет все свои события, остаются только те, что
@@ -681,7 +706,7 @@ func (d *Device) mainState(st *appliance.State) alice.DeviceState {
 			continue
 		}
 		raw, ok := profile.StatusValue(st.Values, pr.Status)
-		if !ok {
+		if !ok || !hasProperty(&pr, &desc) {
 			continue
 		}
 		var v any
@@ -744,7 +769,7 @@ func (d *Device) eventProperties(st *appliance.State, desc *appliance.Descriptio
 	for _, l := range levels(d.Profile, desc) {
 		value := "normal"
 		for _, key := range l.keys {
-			if st.Values[key] != appliance.EventPresent {
+			if !levelActive(key, st.Values) {
 				continue
 			}
 			if slices.Contains(e.Empty, key) {
@@ -1049,6 +1074,16 @@ func code(err error) string {
 		return alice.CodeInvalidAction
 	case errors.Is(err, appliance.ErrWrongMode):
 		return alice.CodeWrongMode
+	case errors.Is(err, appliance.ErrNotEnoughWater):
+		return alice.CodeNotEnoughWater
+	case errors.Is(err, appliance.ErrContainerEmpty):
+		return alice.CodeContainerEmpty
+	case errors.Is(err, appliance.ErrContainerFull):
+		return alice.CodeContainerFull
+	case errors.Is(err, appliance.ErrDripTrayFull):
+		return alice.CodeDripTrayFull
+	case errors.Is(err, appliance.ErrHumanNeeded):
+		return alice.CodeHumanNeeded
 	}
 	return alice.CodeInternal
 }

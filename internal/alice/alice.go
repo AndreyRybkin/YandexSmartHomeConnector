@@ -31,6 +31,11 @@ const (
 	CodeInvalidValue   = "INVALID_VALUE"
 	CodeWrongMode      = "NOT_SUPPORTED_IN_CURRENT_MODE"
 	CodeNotFound       = "DEVICE_NOT_FOUND"
+	CodeNotEnoughWater = "NOT_ENOUGH_WATER"
+	CodeContainerEmpty = "CONTAINER_EMPTY"
+	CodeContainerFull  = "CONTAINER_FULL"
+	CodeDripTrayFull   = "DRIP_TRAY_FULL"
+	CodeHumanNeeded    = "HUMAN_INVOLVEMENT_NEEDED"
 )
 
 // Device - прибор или лента в Алисе: одно или несколько устройств Алисы одного

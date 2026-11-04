@@ -379,6 +379,9 @@ func applyField(t *editTarget, field string, patch *profile.Profile, reset bool)
 	if field == "modes" && !reset {
 		keepModeExtras(patch, profile.Merge(t.base(), t.override()))
 	}
+	if field == "properties" && !reset {
+		keepIfKnown(patch, profile.Merge(t.base(), t.override()))
+	}
 	if reset || sameField(patch, t.base(), field) {
 		patch = nil
 	}
@@ -405,6 +408,17 @@ func keepModeExtras(patch, current *profile.Profile) {
 				m.AlsoValues[k] = v
 			}
 		}
+	}
+}
+
+// keepIfKnown переносит if_known из текущего профиля: формы для него нет, а без него свойство появилось
+// бы у всех приборов типа.
+func keepIfKnown(patch, current *profile.Profile) {
+	for i := range patch.Properties {
+		pr := &patch.Properties[i]
+		pr.IfKnown = slices.ContainsFunc(current.Properties, func(old profile.Property) bool {
+			return old.IfKnown && old.Type == pr.Type && old.Instance == pr.Instance && old.Status == pr.Status
+		})
 	}
 }
 

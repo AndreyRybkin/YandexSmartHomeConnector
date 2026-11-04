@@ -409,6 +409,29 @@ func TestRecipeStats(t *testing.T) {
 	}
 }
 
+// Счётчик напитков - сумма варок всех рецептов; без входа в облако его нет.
+func TestReadBrews(t *testing.T) {
+	cloud := dlfake.NewCloud()
+	defer cloud.Close()
+	a, _ := loggedIn(t, cloud)
+	ap, err := a.Appliance(Config{ID: "coffee", Host: "127.0.0.1:1", Serial: dlfake.Serial})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ap.readBrews(context.Background())
+	stats, err := a.RecipeStats(context.Background(), dlfake.Serial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	total := 0
+	for _, s := range stats {
+		total += s.Brew
+	}
+	if got := ap.State().Values[StatusBrews]; got != float64(total) {
+		t.Fatalf("счётчик %v, нужно %d", got, total)
+	}
+}
+
 // IP машины в домашней сети - из тени MachineStatus; не IPv4 - пусто.
 func TestLanAddress(t *testing.T) {
 	cloud := dlfake.NewCloud()
@@ -421,5 +444,26 @@ func TestLanAddress(t *testing.T) {
 	cloud.SetShadow(map[string]any{"CurrMode": 7.0, "LanIpAddress": "машина"}, time.Now())
 	if ip, err := a.LanAddress(context.Background(), dlfake.Thing); err != nil || ip != "" {
 		t.Fatalf("не адрес: %q %v", ip, err)
+	}
+}
+
+// Причина отказа машины - по её тревогам; без тревог - занята.
+func TestRefusal(t *testing.T) {
+	cloud := dlfake.NewCloud()
+	defer cloud.Close()
+	a, _ := loggedIn(t, cloud)
+	ap, err := a.Appliance(Config{ID: "coffee", Host: "127.0.0.1:1", Serial: dlfake.Serial})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ap.refusal(); !errors.Is(err, appliance.ErrBusy) {
+		t.Fatalf("без тревог: %v", err)
+	}
+	for alarm, want := range map[string]error{"TankLevel": appliance.ErrNotEnoughWater, "TankPresence": appliance.ErrNotEnoughWater,
+		"NoCoffee": appliance.ErrContainerEmpty, "Waste": appliance.ErrContainerFull, "Drain": appliance.ErrDripTrayFull, "Descale": appliance.ErrHumanNeeded} {
+		ap.values = map[string]any{AlarmPrefix + alarm: appliance.EventPresent}
+		if err := ap.refusal(); !errors.Is(err, want) {
+			t.Fatalf("%s: %v", alarm, err)
+		}
 	}
 }

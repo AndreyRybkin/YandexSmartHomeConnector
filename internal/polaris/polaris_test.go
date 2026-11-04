@@ -2,6 +2,7 @@ package polaris
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -428,5 +429,32 @@ func TestOtherTypeValues(t *testing.T) {
 	}
 	if st.Values["sensor/humidity"] != 45.5 || st.Values["error/code"] != "00" {
 		t.Fatalf("значения: %v", st.Values)
+	}
+}
+
+// Снятый с базы чайник и чайник без воды не греют, а Алиса называет причину. Выключить можно всегда.
+func TestKettleRefusesHeat(t *testing.T) {
+	f := newFixture(t, t.TempDir(), nil)
+	a := f.hub.Appliance(testID)
+	a.message("c", KeyDevType, "294")
+	a.message("c", KeyFirmware, "0.8")
+	d := a.Describe()
+	if d.Model != "PWK-1775CGLD" || d.Firmware != "0.8" {
+		t.Fatalf("модель %q, прошивка %q", d.Model, d.Firmware)
+	}
+	ctx := context.Background()
+	a.message("c", KeyEmptyBase, "true")
+	for key, value := range map[string]any{KeyMode: "1", KeyTemperature: 80.0, KeyTea: "green"} {
+		if err := a.Set(ctx, key, value); !errors.Is(err, appliance.ErrHumanNeeded) {
+			t.Fatalf("%s на снятом чайнике: %v", key, err)
+		}
+	}
+	if err := a.Set(ctx, KeyMode, "0"); errors.Is(err, appliance.ErrHumanNeeded) {
+		t.Fatalf("выключение: %v", err)
+	}
+	a.message("c", KeyEmptyBase, "false")
+	a.message("c", KeyErrorCode, "01")
+	if err := a.Set(ctx, KeyMode, "1"); !errors.Is(err, appliance.ErrNotEnoughWater) {
+		t.Fatalf("мало воды: %v", err)
 	}
 }

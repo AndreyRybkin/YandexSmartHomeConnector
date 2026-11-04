@@ -186,6 +186,9 @@ type Property struct {
 	// Min и Max - границы значения float для Алисы: значение за границей прилипает к ней.
 	Min *float64 `yaml:"min,omitempty"`
 	Max *float64 `yaml:"max,omitempty"`
+	// IfKnown - свойство есть, только если прибор описывает Status в списке своих событий: иначе оно
+	// появилось бы у всех приборов типа и осталось без значения.
+	IfKnown bool `yaml:"if_known,omitempty"`
 	// Values - для event: значение Home Connect -> значение Алисы.
 	Values map[string]string `yaml:"values,omitempty"`
 }
@@ -194,6 +197,9 @@ type Property struct {
 // например духовка с номером камеры в именах. Профиль хранит основное имя, а значение ищется по всем.
 var otherNames = map[string][]string{
 	"Cooking.Oven.Status.CurrentCavityTemperature": {"Cooking.Oven.Status.Cavity.001.CurrentTemperature"},
+	// Датчик присутствия - то же свойство motion, угарный газ - то же свойство gas.
+	"motionSensor.motion": {"presenceSensor.presence"},
+	"gasDetector.gas":     {"carbonMonoxideDetector.carbonMonoxide"},
 }
 
 // StatusNames - все имена значения status: основное и другие.

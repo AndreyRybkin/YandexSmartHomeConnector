@@ -263,7 +263,10 @@ func (t *TV) certChanged(fp string) {
 }
 
 func (t *TV) Describe() appliance.Description {
-	return appliance.Description{Type: Type, Options: map[string]appliance.Option{
+	t.mu.Lock()
+	model := t.pair.Model
+	t.mu.Unlock()
+	return appliance.Description{Type: Type, Model: model, Options: map[string]appliance.Option{
 		tv.Power:    {Key: tv.Power, Values: []string{tv.On, tv.Off}, Setting: true},
 		tv.Volume:   {Key: tv.Volume, Min: 0, Max: 100, Step: 1, Setting: true},
 		tv.Mute:     {Key: tv.Mute, Setting: true},

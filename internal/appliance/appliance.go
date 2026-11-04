@@ -46,6 +46,12 @@ var (
 	ErrInvalidValue   = errors.New("недопустимое значение")
 	ErrNotSupported   = errors.New("прибор не поддерживает команду")
 	ErrWrongMode      = errors.New("команда недоступна в текущем состоянии прибора")
+	// Причины отказа, которые Алиса называет человеку.
+	ErrNotEnoughWater = errors.New("мало воды")
+	ErrContainerEmpty = errors.New("контейнер пуст")
+	ErrContainerFull  = errors.New("контейнер заполнен")
+	ErrDripTrayFull   = errors.New("поддон заполнен")
+	ErrHumanNeeded    = errors.New("нужно действие человека")
 )
 
 // Option - параметр программы или настройка прибора с допустимыми значениями.
@@ -66,7 +72,10 @@ type Option struct {
 // Description - что умеет прибор.
 type Description struct {
 	// Type - тип прибора в Home Connect, например Oven или Dishwasher.
-	Type     string
+	Type string
+	// Model и Firmware - настоящая модель и прошивка для раздела «Об устройстве»; пусто - не известны.
+	Model    string
+	Firmware string
 	Programs []string
 	// Options - параметры программ и настройки по имени.
 	Options  map[string]Option

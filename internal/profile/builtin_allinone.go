@@ -17,15 +17,34 @@ func demoEvent(instance, status string, values ...string) Property {
 	return Property{Type: "event", Instance: instance, Status: "Demo.Status." + status, Values: m}
 }
 
+func demoMode(instance, setting string, values ...string) Mode {
+	m := make(map[string]string, len(values))
+	for _, v := range values {
+		m[v] = v
+	}
+	return Mode{Instance: instance, Option: "Demo.Setting." + setting, Values: m}
+}
+
 func init() {
 	builtin[AllInOneType] = &Profile{
 		YandexType:     "cooking",
 		OnOff:          "program",
 		DefaultProgram: "Demo.Program.One",
 		DefaultOptions: map[string]any{"Demo.Option.Temperature": 60.0},
-		Modes:          []Mode{{Instance: "program", Programs: map[string]string{"Demo.Program.One": "one", "Demo.Program.Two": "two"}}},
-		Ranges:         []Range{{Instance: "temperature", Option: "Demo.Option.Temperature", Unit: celsius}},
-		Toggles:        []Toggle{pause},
+		Modes: []Mode{{Instance: "program", Programs: map[string]string{"Demo.Program.One": "one", "Demo.Program.Two": "two"}},
+			demoMode("work_speed", "WorkSpeed", "medium", "slow", "fast", "turbo", "max"),
+			demoMode("swing", "Swing", "stationary", "vertical", "horizontal", "auto"),
+			demoMode("heat", "Heat", "normal", "min", "low", "high", "max"),
+			demoMode("cleanup_mode", "Cleanup", "auto", "quiet", "normal", "express", "dry_cleaning", "wet_cleaning", "mixed_cleaning", "smart"),
+			demoMode("fan_speed", "FanSpeed", "auto", "low", "medium", "high", "turbo"),
+			demoMode("input_source", "Input", "one", "two", "three")},
+		Ranges: []Range{{Instance: "temperature", Option: "Demo.Option.Temperature", Unit: celsius}},
+		Toggles: []Toggle{pause,
+			{Instance: "controls_locked", Setting: "Demo.Setting.ChildLock"},
+			{Instance: "mute", Setting: "Demo.Setting.Mute"},
+			{Instance: "ionization", Setting: "Demo.Setting.Ionization"},
+			{Instance: "keep_warm", Setting: "Demo.Setting.KeepWarm"},
+			{Instance: "backlight", Setting: "Demo.Setting.Light"}},
 		Properties: []Property{
 			demoFloat("temperature", "Temperature", celsius),
 			demoFloat("humidity", "Humidity", percent),

@@ -634,7 +634,7 @@ func TestAllInOne(t *testing.T) {
 		t.Fatalf("устройства %v, ждём одно", ids)
 	}
 	info := d.Info()
-	if len(info) != 1 || len(info[0].Properties) != 30 || len(info[0].Capabilities) != 4 {
+	if len(info) != 1 || len(info[0].Properties) != 30 || len(info[0].Capabilities) != 15 {
 		t.Fatalf("описание: %+v", info)
 	}
 	states := d.States()
@@ -949,5 +949,143 @@ func TestModeExtras(t *testing.T) {
 	act("fan_only")
 	if !slices.Equal(f.set, []string{"main.mode=wind"}) {
 		t.Fatalf("основная настройка: %v", f.set)
+	}
+}
+
+// Свойство с if_known есть, только если прибор описывает событие, и без этого не уходит даже со значением.
+func TestPropertyIfKnown(t *testing.T) {
+	p, err := profile.Resolve("Dishwasher", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	has := func(events []string) (bool, bool) {
+		a := newProps(map[string]any{"BSH.Common.Event.AquaStopOccured": appliance.EventPresent})
+		a.desc = appliance.Description{Events: events}
+		d := &Device{ID: "d", Profile: p, Appliance: a}
+		info, _ := json.Marshal(d.Info())
+		state, _ := json.Marshal(d.States())
+		return strings.Contains(string(info), "water_leak"), strings.Contains(string(state), `"instance":"water_leak","value":"leak"`)
+	}
+	if i, s := has(nil); i || s {
+		t.Fatalf("без описания события: %v %v", i, s)
+	}
+	if i, s := has([]string{"BSH.Common.Event.AquaStopOccured"}); !i || !s {
+		t.Fatalf("с описанием события: %v %v", i, s)
+	}
+}
+
+// Уровень по значению вида «имя=значение»: датчик кофемашины без тревоги.
+func TestLevelFromValue(t *testing.T) {
+	p, err := profile.Resolve(profile.DeLonghiType, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	water := func(values map[string]any) string {
+		a := newProps(values)
+		a.desc = appliance.Description{}
+		raw, _ := json.Marshal((&Device{ID: "c", Profile: p, Appliance: a}).States())
+		for _, v := range []string{"empty", "low", "normal"} {
+			if strings.Contains(string(raw), `"instance":"water_level","value":"`+v+`"`) {
+				return v
+			}
+		}
+		return ""
+	}
+	for want, values := range map[string]map[string]any{
+		"normal": {"DeLonghi.Peripheral.WaterTankLow": false, "DeLonghi.Peripheral.TankPresence": true},
+		"low":    {"DeLonghi.Peripheral.WaterTankLow": true, "DeLonghi.Peripheral.TankPresence": true},
+		"empty":  {"DeLonghi.Peripheral.WaterTankLow": false, "DeLonghi.Peripheral.TankPresence": false},
+	} {
+		if got := water(values); got != want {
+			t.Fatalf("%v: %s, нужно %s", values, got, want)
+		}
+	}
+	if got := water(map[string]any{}); got != "normal" {
+		t.Fatalf("без датчиков: %s", got)
+	}
+}
+
+// Вибрация мгновенная: каждое срабатывание уходит отдельным уведомлением, покой не отправляется.
+func TestVibrationMomentary(t *testing.T) {
+	p, err := profile.Resolve(profile.SmartThingsPrefix+"MultiFunctionalSensor", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const status = "accelerationSensor.acceleration"
+	a := newProps(map[string]any{status: "inactive"})
+	a.desc = appliance.Description{}
+	d := &Device{ID: "s", Profile: p, Appliance: a}
+	st := a.State()
+	if events := d.transitions(&st); len(events) != 0 {
+		t.Fatalf("первое значение: %v", events)
+	}
+	for range 2 {
+		a.state.Values[status] = "active"
+		st = a.State()
+		got := d.pressed(d.transitions(&st))
+		raw, _ := json.Marshal(got)
+		if len(got) != 1 || !strings.Contains(string(raw), `"instance":"vibration","value":"vibration"`) {
+			t.Fatalf("срабатывание: %s", raw)
+		}
+		a.state.Values[status] = "inactive"
+		st = a.State()
+		if got := d.pressed(d.transitions(&st)); len(got) != 0 {
+			t.Fatalf("покой: %+v", got)
+		}
+	}
+}
+
+// Новые умения AllInOne: настройки меняются и без программы, значения приходят обратно в состоянии.
+func TestAllInOneSettings(t *testing.T) {
+	a, err := appliance.NewDemo(appliance.DemoAllInOne, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := profile.Resolve(profile.AllInOneType, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &Device{ID: "all", Profile: p, Appliance: a}
+	act := func(capability, instance string, value any) {
+		t.Helper()
+		if code := d.Act(context.Background(), "all", &alice.Action{Type: capability, State: alice.ActionState{Instance: instance, Value: value}}); code != "" {
+			t.Fatalf("%s: %s", instance, code)
+		}
+	}
+	act(alice.CapToggle, "controls_locked", true)
+	act(alice.CapMode, "work_speed", "turbo")
+	raw, _ := json.Marshal(d.States())
+	for _, want := range []string{`"instance":"controls_locked","value":true`, `"instance":"work_speed","value":"turbo"`, `"instance":"mute","value":false`} {
+		if !strings.Contains(string(raw), want) {
+			t.Fatalf("нет %s: %s", want, raw)
+		}
+	}
+}
+
+// Авария прибора - long_press, ActionRequired кнопку не нажимает; без соли посудомойка показывает empty.
+func TestFailureButtonAndSalt(t *testing.T) {
+	p, err := profile.Resolve("Dishwasher", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := newProps(map[string]any{appliance.StatusOperationState: appliance.OperationRun})
+	a.desc = appliance.Description{}
+	d := &Device{ID: "d", Profile: p, Appliance: a}
+	pressed := func(state string) []string {
+		a.state.Values[appliance.StatusOperationState] = state
+		st := a.State()
+		return d.buttonFor(d.transitions(&st))
+	}
+	pressed(appliance.OperationRun)
+	if got := pressed(appliance.OperationActionRequired); len(got) != 0 {
+		t.Fatalf("ActionRequired: %v", got)
+	}
+	if got := pressed("BSH.Common.EnumType.OperationState.Error"); !slices.Equal(got, []string{"long_press"}) {
+		t.Fatalf("Error: %v", got)
+	}
+	a.state.Values["Dishcare.Dishwasher.Event.ProgramBlockedSaltLack"] = appliance.EventPresent
+	raw, _ := json.Marshal(d.States())
+	if !strings.Contains(string(raw), `"instance":"food_level","value":"empty"`) {
+		t.Fatalf("соль: %s", raw)
 	}
 }

@@ -88,6 +88,8 @@ type status struct {
 	// Color - основной цвет главного сегмента, 0xRRGGBB.
 	Color      int
 	Name, Arch string
+	// Version - версия прошивки ленты.
+	Version string
 	// MAC - MAC ленты вида AA:BB:CC:DD:EE:FF: по нему поиск в сети узнаёт ленту по новому
 	// адресу. Остаётся и после потери связи.
 	MAC string
@@ -212,9 +214,13 @@ func (d *Device) Info() []alice.DeviceInfo {
 	if scenes := d.scenes(); len(scenes) > 0 {
 		color.ColorScene = &alice.SceneParams{Scenes: scenes}
 	}
+	d.mu.Lock()
+	version := d.st.Version
+	d.mu.Unlock()
 	return []alice.DeviceInfo{{
 		ID: d.ID, Name: d.Name, Room: d.Room, Type: alice.TypeLight,
-		DeviceInfo: alice.Manufacturer{Manufacturer: "WLED"},
+		DeviceInfo: alice.Manufacturer{Manufacturer: "WLED", SWVersion: version},
+		StatusInfo: &alice.StatusInfo{Reportable: true},
 		Capabilities: []alice.Capability{
 			{Type: alice.CapOnOff, Retrievable: true, Reportable: true},
 			{Type: alice.CapRange, Retrievable: true, Reportable: true, Parameters: alice.RangeParams{Instance: "brightness",
@@ -466,6 +472,7 @@ type message struct {
 		Name string `json:"name"`
 		Arch string `json:"arch"`
 		MAC  string `json:"mac"`
+		Ver  string `json:"ver"`
 	} `json:"info"`
 	Error *int `json:"error"`
 }
@@ -494,7 +501,7 @@ func (d *Device) apply(data []byte) bool {
 	defer d.mu.Unlock()
 	before, had := d.st, d.have
 	if m.Info != nil {
-		d.st.Name, d.st.Arch = m.Info.Name, m.Info.Arch
+		d.st.Name, d.st.Arch, d.st.Version = m.Info.Name, m.Info.Arch, m.Info.Ver
 		if mac := colonMAC(m.Info.MAC); mac != "" {
 			d.st.MAC = mac
 		}

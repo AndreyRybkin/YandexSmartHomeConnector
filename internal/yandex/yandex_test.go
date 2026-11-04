@@ -143,7 +143,8 @@ func TestDevicesList(t *testing.T) {
 		`"id":"oven","name":"oven","room":"Кухня","type":"devices.types.cooking"`,
 		`"instance":"program","modes":[{"value":"one"},{"value":"frying"},{"value":"baking"},{"value":"eco"},{"value":"pizza"},{"value":"preheat"},{"value":"slow_cook"},{"value":"normal"}]`,
 		`"instance":"temperature","unit":"unit.temperature.celsius","random_access":true,"range":{"min":30,"max":275,"precision":5}`,
-		`"instance":"button","events":[{"value":"click"},{"value":"double_click"}]`,
+		`"instance":"button","events":[{"value":"click"},{"value":"double_click"},{"value":"long_press"}]`,
+		`"status_info":{"reportable":true}`,
 		`"instance":"dishwashing"`,
 		`"instance":"food_level","events":[{"value":"empty"},{"value":"low"},{"value":"normal"}]`,
 	} {

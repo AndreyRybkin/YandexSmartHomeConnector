@@ -65,6 +65,8 @@ const (
 	KeyWaterAlarm = "Polaris.Alarm.Water"
 	// KeyEmptyBase - чайник снят с базы.
 	KeyEmptyBase = "error/empty_base"
+	// KeyFirmware - версия прошивки.
+	KeyFirmware = "firmware"
 	// KeySensor - температура воды.
 	KeySensor = "sensor/temperature"
 	// EventBoilFinished - чайник перестал работать сам: виртуальное событие шлюза.
@@ -295,6 +297,18 @@ func parseOther(key, value string) any {
 		return f
 	}
 	return v
+}
+
+// modelName - модель для раздела «Об устройстве». Название известно только у проверенного типа, у
+// остальных - номер типа; пусто - прибор ещё не сообщил тип.
+func modelName(devType string) string {
+	switch devType {
+	case "":
+		return ""
+	case "294":
+		return "PWK-1775CGLD"
+	}
+	return "тип " + devType
 }
 
 // profileType - тип прибора для профиля; пусто - прибор ещё не сообщил свой тип.

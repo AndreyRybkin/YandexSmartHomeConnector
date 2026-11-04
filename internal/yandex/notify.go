@@ -324,7 +324,7 @@ func stateKey(c alice.CapState) string {
 func withoutButton(props []alice.CapState) []alice.CapState {
 	var out []alice.CapState
 	for _, c := range props {
-		if sv, ok := c.State.(alice.StateValue); ok && c.Type == alice.PropEvent && sv.Instance == alice.InstanceButton {
+		if sv, ok := c.State.(alice.StateValue); ok && c.Type == alice.PropEvent && alice.Momentary(sv.Instance) {
 			continue
 		}
 		out = append(out, c)

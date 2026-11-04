@@ -90,6 +90,7 @@ func NewDemo(kind string, duration time.Duration) (*Demo, error) {
 	}
 	d.state = State{Online: true, Values: values}
 	if kind == DemoAllInOne {
+		d.setAllInOneSettings()
 		d.setAllInOneStep(0)
 	}
 	return d, nil
@@ -277,7 +278,7 @@ func (d *Demo) Set(ctx context.Context, key string, value any) error {
 	}
 	d.mu.Lock()
 	// Параметр программы меняется только у работающей программы, настройка - всегда.
-	if key != SettingPowerState && !d.state.Running() {
+	if key != SettingPowerState && !d.desc.Options[key].Setting && !d.state.Running() {
 		d.mu.Unlock()
 		return ErrWrongMode
 	}
@@ -299,6 +300,13 @@ func (d *Demo) check(key string, value any) error {
 	if len(opt.Values) > 0 {
 		s, ok := value.(string)
 		if !ok || !contains(opt.Values, s) {
+			return ErrInvalidValue
+		}
+		return nil
+	}
+	// Настройка без значений и пределов - флаг.
+	if opt.Setting && opt.Max == 0 {
+		if _, ok := value.(bool); !ok {
 			return ErrInvalidValue
 		}
 		return nil
