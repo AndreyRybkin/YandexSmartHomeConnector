@@ -157,6 +157,7 @@ func New(a *auth.Auth, gw *gateway.Gateway, file *config.File, start *config.Con
 	mux.HandleFunc("POST /mqtt/publish", s.authed(s.mqttPublish))
 	mux.HandleFunc("GET /mqtt/password", s.authed(s.mqttPasswordPage))
 	mux.HandleFunc("POST /mqtt/password", s.authed(s.mqttPassword))
+	mux.HandleFunc("GET /actions", s.authed(s.actionsPage))
 	mux.HandleFunc("GET /logins", s.authed(s.loginsPage))
 	mux.HandleFunc("POST /logins/lift", s.authed(s.lift))
 	s.mux = mux
@@ -642,7 +643,7 @@ func (s *Server) reloadLocked() error {
 func parsePages() map[string]*template.Template {
 	base := template.Must(template.New("").Funcs(funcs).ParseFS(templateFiles, "templates/layout.html", "templates/editor.html"))
 	pages := map[string]*template.Template{}
-	for _, name := range []string{"login", "notfound", "devices", "device", "confirm", "profiles", "profile", "connections", "logins", "info", "move", "mqtt"} {
+	for _, name := range []string{"login", "notfound", "devices", "device", "confirm", "profiles", "profile", "connections", "logins", "actions", "info", "move", "mqtt"} {
 		pages[name] = template.Must(template.Must(base.Clone()).ParseFS(templateFiles, "templates/"+name+".html"))
 	}
 	return pages

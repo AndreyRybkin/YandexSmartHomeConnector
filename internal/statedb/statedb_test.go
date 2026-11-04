@@ -500,16 +500,83 @@ func TestNil(t *testing.T) {
 	d.SetValues("a", nil, t0)
 	d.AddChanges("a", []Change{{}})
 	d.MarkGap(Change{})
+	d.AddAction("a", Action{}, nil)
 	d.Retain(func(string) bool { return false })
 	d.BanStarted(addr, t0, t0, "")
 	d.BanEnded(addr, t0, EndedWeb, t0)
 	d.flush(false)
 	d.Run(context.Background())
 	d.Close()
-	if d.Failing() || d.Links() != nil || d.Values("a") != nil || d.Changes("a") != nil || d.ActiveBans(t0) != nil || d.LiftedByCommand(t0) != nil {
+	if d.Failing() || d.Links() != nil || d.Values("a") != nil || d.Changes("a") != nil || d.Actions("") != nil || d.ActiveBans(t0) != nil || d.LiftedByCommand(t0) != nil {
 		t.Fatal("у nil есть данные")
 	}
 	if rows, err := d.BanHistory(0, 1); rows != nil || err != nil {
 		t.Fatal(rows, err)
+	}
+}
+
+// Журнал действий переживает перезапуск, хранит 50 строк на прибор и уходит вместе с прибором.
+func TestActions(t *testing.T) {
+	path := tempPath(t)
+	d := openAt(t, path)
+	d.AddAction("oven", Action{Time: t0, Initiator: "alice", Type: "on_off", Instance: "on"}, true)
+	d.AddAction("oven", Action{Time: t0.Add(time.Second), Initiator: "gateway", Type: "range", Instance: "volume", Relative: true, Code: "DOOR_OPEN"}, 5.0)
+	d.AddAction("tv", Action{Time: t0.Add(2 * time.Second), Initiator: "gateway", Type: "on_off", Instance: "on"}, false)
+	d.flush(false)
+	d.Close()
+
+	r := openAt(t, path)
+	all := r.Actions("")
+	if len(all) != 3 || all[0].Device != "tv" || all[2].Device != "oven" || all[2].Value != "true" {
+		t.Fatalf("все действия: %+v", all)
+	}
+	oven := r.Actions("oven")
+	if len(oven) != 2 || oven[0].Initiator != "gateway" || oven[0].Code != "DOOR_OPEN" || !oven[0].Relative || oven[0].Value != "5" || !oven[0].Time.Equal(t0.Add(time.Second)) {
+		t.Fatalf("действия прибора: %+v", oven)
+	}
+
+	// 51-е действие вытесняет самое старое и в памяти, и в файле.
+	for i := range MaxActions {
+		r.AddAction("oven", Action{Time: t0.Add(time.Duration(i+10) * time.Second), Initiator: "alice", Type: "on_off"}, true)
+		if i%20 == 0 {
+			r.flush(false)
+		}
+	}
+	r.flush(false)
+	check := func(db *DB) {
+		t.Helper()
+		got := db.Actions("oven")
+		if len(got) != MaxActions || !got[0].Time.Equal(t0.Add((MaxActions+9)*time.Second)) || !got[MaxActions-1].Time.Equal(t0.Add(10*time.Second)) {
+			t.Fatalf("после вытеснения %d строк: %+v", len(got), got)
+		}
+	}
+	check(r)
+	var rows int
+	if err := r.handle().QueryRow("SELECT count(*) FROM device_actions WHERE device_id = 'oven'").Scan(&rows); err != nil || rows != MaxActions {
+		t.Fatalf("в файле %d строк: %v", rows, err)
+	}
+	r.Close()
+	r2 := openAt(t, path)
+	check(r2)
+
+	// Прибора больше нет в настройках: его действия удаляются из памяти и файла.
+	r2.Retain(func(id string) bool { return id != "oven" })
+	if got := r2.Actions("oven"); len(got) != 0 {
+		t.Fatalf("действия удалённого прибора: %+v", got)
+	}
+	r2.flush(false)
+	r2.Close()
+	if got := openAt(t, path).Actions(""); len(got) != 1 || got[0].Device != "tv" {
+		t.Fatalf("после удаления прибора: %+v", got)
+	}
+}
+
+// Длинное значение команды обрезается, а не раздувает базу.
+func TestActionValueLimit(t *testing.T) {
+	d := openAt(t, tempPath(t))
+	d.AddAction("oven", Action{Time: t0, Type: strings.Repeat("t", 10000)}, strings.Repeat("v", 10000))
+	got := d.Actions("oven")
+	if len(got) != 1 || len(got[0].Value) > MaxValueBytes || len(got[0].Type) > maxKeyBytes {
+		t.Fatalf("пределы: %d, %d", len(got[0].Value), len(got[0].Type))
 	}
 }

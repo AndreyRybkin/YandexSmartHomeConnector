@@ -159,11 +159,20 @@ func New(dataDir string, tokens *linking.Store, login linking.Login, log *slog.L
 // сколько не работал. Вызывается до первого Apply.
 func (g *Gateway) Attach(state *statedb.DB) {
 	g.state = state
+	g.Service.OnAction(func(id, initiator string, at time.Time, a *alice.Action, code string) {
+		state.AddAction(id, statedb.Action{Time: at, Initiator: initiator, Type: a.Type, Instance: a.State.Instance,
+			Relative: a.State.Relative, Code: code}, a.State.Value)
+	})
 	alive := state.Alive()
 	g.links.restore(state.Links(), alive)
 	if now := g.clock(); !alive.IsZero() {
 		state.MarkGap(statedb.Change{Time: now, Value: "не работал " + hcdevice.Duration(now.Sub(alive).Seconds())})
 	}
+}
+
+// Actions - журнал действий прибора id, при пустом id - всех приборов, новые первыми.
+func (g *Gateway) Actions(id string) []statedb.Action {
+	return g.state.Actions(id)
 }
 
 // Run держит связь с приборами и облаком и отправляет уведомления, пока ctx не отменён.

@@ -1,0 +1,8 @@
+{{define "content"}}{{with .Data}}
+<h1>{{if .Name}}Действия: {{.Name}}{{else}}Действия{{end}}</h1>
+<p class="muted">До 50 последних команд на прибор: от Алисы и от кнопок шлюза. Команды Алисы из голоса, приложения и сценариев шлюз не различает. Действия на самом приборе и в приложении производителя шлюз сюда не пишет: их видно как изменения на странице «Всё о приборе».</p>
+{{if .Name}}<p><a href="/actions">Все приборы</a></p>{{end}}
+{{if .Rows}}<div class="wrap"><table><tr><th>Дата и время</th><th>Прибор</th><th>Действие</th><th>Инициатор</th></tr>
+{{range .Rows}}<tr><td>{{.Time}}</td><td><a href="/actions?device={{.ID}}">{{.Device}}</a></td><td>{{.Label}}: {{.Value}}{{with .Failure}}<br><span class="err">{{.}}</span>{{end}}</td><td>{{.Initiator}}</td></tr>{{end}}
+</table></div>{{else}}<p>Действий пока не было.</p>{{end}}
+{{end}}{{end}}

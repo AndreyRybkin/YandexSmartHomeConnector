@@ -191,6 +191,7 @@ button,.button,input:not([type=checkbox]),select{min-height:44px}
 </main></body></html>{{end}}
 
 {{define "navlinks"}}<a href="/"{{if eq .Nav "devices"}} class="on"{{end}}>Приборы</a>
+<a href="/actions"{{if eq .Nav "actions"}} class="on"{{end}}>Действия</a>
 <a href="/profiles"{{if eq .Nav "profiles"}} class="on"{{end}}>Профили типов</a>
 <a href="/connections"{{if eq .Nav "connections"}} class="on"{{end}}>Подключения</a>
 <a href="/mqtt"{{if eq .Nav "mqtt"}} class="on"{{end}}>MQTT</a>

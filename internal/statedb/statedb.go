@@ -104,6 +104,19 @@ CREATE TABLE mqtt_retained (
 	qos INTEGER NOT NULL,
 	at INTEGER NOT NULL
 );
+`, `
+CREATE TABLE device_actions (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	device_id TEXT NOT NULL,
+	at INTEGER NOT NULL,
+	initiator TEXT NOT NULL,
+	type TEXT NOT NULL,
+	instance TEXT NOT NULL,
+	value TEXT NOT NULL,
+	relative INTEGER NOT NULL,
+	code TEXT NOT NULL
+);
+CREATE INDEX device_actions_device ON device_actions (device_id, id);
 `}
 
 // DB - база состояния и её копия в памяти.

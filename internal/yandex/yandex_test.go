@@ -865,3 +865,35 @@ func TestForgetWhileSending(t *testing.T) {
 		t.Fatalf("offline второй раз: %q", got)
 	}
 }
+
+// О команде сообщается один раз с её источником, кодом ошибки и временем; неизвестное устройство
+// в журнал действий не попадает.
+func TestOnAction(t *testing.T) {
+	type record struct {
+		id, initiator, instance, code string
+	}
+	var mu sync.Mutex
+	var got []record
+	svc := NewService([]alice.Device{newDevice(t, "oven", "Oven")}, &fakeTokens{}, nil, discard())
+	svc.OnAction(func(id, initiator string, at time.Time, a *alice.Action, code string) {
+		if at.IsZero() {
+			t.Error("нет времени команды")
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		got = append(got, record{id, initiator, a.State.Instance, code})
+	})
+	ctx := context.Background()
+	on := alice.Action{Type: alice.CapOnOff, State: alice.ActionState{Instance: "on", Value: true}}
+	if code := svc.Command(ctx, "oven", &on); code != "" {
+		t.Fatalf("команда: %s", code)
+	}
+	svc.actDevice(ctx, "req", &actionDevice{ID: "oven", Capabilities: []alice.Action{
+		{Type: alice.CapMode, State: alice.ActionState{Instance: "program", Value: "нет такого"}}}})
+	if code := svc.Command(ctx, "ghost", &on); code != alice.CodeNotFound {
+		t.Fatalf("неизвестное устройство: %s", code)
+	}
+	if len(got) != 2 || got[0] != (record{"oven", InitiatorGateway, "on", ""}) || got[1].initiator != InitiatorAlice || got[1].code == "" {
+		t.Fatalf("записи: %+v", got)
+	}
+}

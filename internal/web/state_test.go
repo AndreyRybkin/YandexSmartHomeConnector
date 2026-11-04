@@ -16,9 +16,11 @@ import (
 	"testing"
 	"time"
 
+	"hcgateway/internal/alice"
 	"hcgateway/internal/mqttbroker"
 	"hcgateway/internal/statedb"
 	"hcgateway/internal/tv"
+	"hcgateway/internal/yandex"
 )
 
 const stateDevices = `
@@ -323,5 +325,62 @@ func TestPolarisDevice(t *testing.T) {
 	}
 	if _, body := f.get("/"); !strings.Contains(body, "ждёт прибор Polaris") {
 		t.Fatal("на плитке нет причины")
+	}
+}
+
+// Журнал действий: кнопка шлюза и команда Алисы с разными инициаторами, отказ с причиной, один
+// прибор по ссылке, неверная ссылка - 404.
+func TestActionsPage(t *testing.T) {
+	f := newFixture(t, stateDevices)
+	f.writeUser(testPassword)
+	f.login()
+	if _, body := f.get("/actions"); !strings.Contains(body, "Действий пока не было.") {
+		t.Fatal("пустой журнал")
+	}
+	if _, _, to := f.post("/devices/oven/command", url.Values{"type": {"devices.capabilities.on_off"}, "instance": {"on"}, "value": {"true"}}); to == "" {
+		t.Fatal("кнопка не сработала")
+	}
+	f.state.AddAction("oven", statedb.Action{Time: time.Now().Add(time.Second), Initiator: yandex.InitiatorAlice,
+		Type: alice.CapOnOff, Instance: "on", Code: alice.CodeDoorOpen}, true)
+	f.state.AddAction("strip", statedb.Action{Time: time.Now().Add(2 * time.Second), Initiator: yandex.InitiatorAlice,
+		Type: alice.CapRange, Instance: "brightness", Relative: true}, 10.0)
+
+	_, body := f.get("/actions")
+	for _, want := range []string{"<th>Дата и время</th><th>Прибор</th><th>Действие</th><th>Инициатор</th>", `<a href="/actions?device=oven">Духовка</a>`,
+		`<a href="/actions?device=strip">Лента</a>`, "Питание: включено", "Яркость: &#43;10 %", "Не выполнено: дверца открыта (DOOR_OPEN).", "<td>Алиса</td>", "<td>Шлюз</td>"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("в журнале нет %s:\n%s", want, body)
+		}
+	}
+	if strings.Index(body, ">Лента</a>") > strings.Index(body, ">Духовка</a>") {
+		t.Fatal("новые строки должны идти первыми")
+	}
+	_, one := f.get("/actions?device=strip")
+	if !strings.Contains(one, "Действия: Лента") || strings.Contains(one, "Духовка</a>") || !strings.Contains(one, `<a href="/actions">Все приборы</a>`) {
+		t.Fatalf("журнал прибора:\n%s", one)
+	}
+	if status, _ := f.get("/actions?device=ghost"); status != http.StatusNotFound {
+		t.Fatalf("неверный прибор: %d", status)
+	}
+	if _, device := f.get("/devices/oven"); !strings.Contains(device, `<a href="/actions?device=oven">Действия прибора</a>`) {
+		t.Fatal("на странице прибора нет ссылки на журнал")
+	}
+
+	// Значения разных умений читаются, обрезанное показывается как есть.
+	for _, c := range []struct {
+		a    statedb.Action
+		want string
+	}{
+		{statedb.Action{Type: alice.CapColor, Instance: "rgb", Value: "16711680"}, "#ff0000"},
+		{statedb.Action{Type: alice.CapColor, Instance: "temperature_k", Value: "4000"}, "4000 K"},
+		{statedb.Action{Type: alice.CapColor, Instance: "hsv", Value: `{"h":10,"s":20,"v":30}`}, "оттенок 10, насыщенность 20 %"},
+		{statedb.Action{Type: alice.CapMode, Instance: "program", Value: `"fast"`}, nameOr(modeValueNames, "fast")},
+		{statedb.Action{Type: alice.CapRange, Instance: "volume", Relative: true, Value: "-5"}, "-5"},
+		{statedb.Action{Type: alice.CapToggle, Instance: "pause", Value: "false"}, "выключено"},
+		{statedb.Action{Type: alice.CapMode, Instance: "program", Value: `"обрезан`}, `"обрезан`},
+	} {
+		if got := actionValue(&c.a, nil); got != c.want {
+			t.Fatalf("%+v: %s", c.a, got)
+		}
 	}
 }

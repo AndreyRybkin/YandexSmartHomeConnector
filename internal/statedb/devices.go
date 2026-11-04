@@ -60,6 +60,10 @@ type device struct {
 	changes []Change
 	unsaved int
 	rewrite bool
+	// actions - последние действия, старые первыми. actionsUnsaved и actionsRewrite - как у changes.
+	actions        []Action
+	actionsUnsaved int
+	actionsRewrite bool
 }
 
 func newDevice() *device {
@@ -286,6 +290,7 @@ func (d *DB) markAll() {
 			e.dirty = true
 		}
 		dev.unsaved, dev.rewrite = 0, len(dev.changes) > 0
+		dev.actionsUnsaved, dev.actionsRewrite = 0, len(dev.actions) > 0
 	}
 	d.banOps = nil
 	for _, b := range d.active {
@@ -305,6 +310,7 @@ type batch struct {
 	values  []valueRow
 	removed []valueRow
 	changes []changeRows
+	actions []actionRows
 	bans    []banOp
 	alive   bool
 	prune   bool
@@ -331,7 +337,7 @@ type changeRows struct {
 
 func (b *batch) empty() bool {
 	return len(b.dropped) == 0 && len(b.links) == 0 && len(b.values) == 0 && len(b.removed) == 0 &&
-		len(b.changes) == 0 && len(b.bans) == 0 && len(b.retained) == 0 && len(b.retainedGone) == 0 && !b.alive && !b.prune
+		len(b.changes) == 0 && len(b.actions) == 0 && len(b.bans) == 0 && len(b.retained) == 0 && len(b.retainedGone) == 0 && !b.alive && !b.prune
 }
 
 // take забирает изменения в запись. Только под mu.
@@ -379,6 +385,7 @@ func (d *DB) take(now time.Time, alive, prune bool) *batch {
 			b.changes = append(b.changes, changeRows{id, slices.Clone(dev.changes[len(dev.changes)-dev.unsaved:]), false})
 			dev.unsaved = 0
 		}
+		dev.takeActions(id, b)
 	}
 	return b
 }
@@ -421,6 +428,7 @@ func (d *DB) restore(b *batch) {
 			dev.trim()
 		}
 	}
+	d.restoreActions(b)
 }
 
 // write записывает изменения одной транзакцией.
@@ -434,7 +442,7 @@ func (b *batch) write(db *sql.DB) error {
 	defer tx.Rollback()
 	for _, id := range b.dropped {
 		for _, q := range []string{"DELETE FROM devices WHERE id = ?", "DELETE FROM device_values WHERE device_id = ?",
-			"DELETE FROM device_changes WHERE device_id = ?"} {
+			"DELETE FROM device_changes WHERE device_id = ?", "DELETE FROM device_actions WHERE device_id = ?"} {
 			if _, err := tx.ExecContext(ctx, q, id); err != nil {
 				return err
 			}
@@ -476,6 +484,9 @@ func (b *batch) write(db *sql.DB) error {
 			(SELECT id FROM device_changes WHERE device_id = ?1 ORDER BY id DESC LIMIT 1 OFFSET ?2)`, c.id, MaxChanges); err != nil {
 			return err
 		}
+	}
+	if err := writeActions(ctx, tx, b); err != nil {
+		return err
 	}
 	if err := writeBans(ctx, tx, b.bans); err != nil {
 		return err
@@ -583,6 +594,9 @@ func load(db *sql.DB, now time.Time) (*loaded, error) {
 	}
 	rows.Close()
 
+	if err := loadActions(ctx, db, entry); err != nil {
+		return nil, err
+	}
 	if l.active, err = activeBans(ctx, db, now); err != nil {
 		return nil, err
 	}

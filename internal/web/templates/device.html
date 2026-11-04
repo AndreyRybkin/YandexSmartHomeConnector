@@ -11,6 +11,7 @@
 {{if .State}}<a href="#tab-state">Состояние и команды</a>{{end}}
 {{if or .Editor .Strip}}<a href="#tab-map">Сопоставления</a>{{end}}
 {{if .State}}<a href="/devices/{{.ID}}/info">Всё о приборе</a>{{end}}
+<a href="/actions?device={{.ID}}">Действия прибора</a>
 </nav>
 
 <div class="tab" id="tab-device">

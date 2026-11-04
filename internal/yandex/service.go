@@ -59,6 +59,23 @@ type Service struct {
 	stopped bool
 	running map[alice.Device]*runner
 	wg      sync.WaitGroup
+	// onAction - куда сообщать о командах; задаётся до первой команды.
+	onAction ActionFunc
+}
+
+// Откуда пришла команда.
+const (
+	InitiatorAlice   = "alice"
+	InitiatorGateway = "gateway"
+)
+
+// ActionFunc получает команду устройству из настроек: когда шлюз её получил, откуда, что и код
+// ошибки Яндекса, пустой у выполненной команды.
+type ActionFunc func(id, initiator string, at time.Time, a *alice.Action, code string)
+
+// OnAction задаёт, куда сообщать о командах. Вызывается до первой команды.
+func (s *Service) OnAction(f ActionFunc) {
+	s.onAction = f
 }
 
 // runner - связь с одним прибором.
@@ -366,7 +383,7 @@ func (s *Service) actDevice(ctx context.Context, requestID string, rd *actionDev
 	}
 	for _, c := range rd.Capabilities {
 		result := actionResult{Status: "DONE"}
-		if ycode := s.act(ctx, "команда Алисы", requestID, rd.ID, &c); ycode != "" {
+		if ycode := s.act(ctx, InitiatorAlice, requestID, rd.ID, &c); ycode != "" {
 			result = actionResult{Status: "ERROR", ErrorCode: ycode}
 			metrics.Action(device, capabilityLabel(c.Type), ycode)
 		} else {
@@ -392,15 +409,24 @@ func capabilityLabel(t string) string {
 func (s *Service) Command(ctx context.Context, id string, a *alice.Action) string {
 	ctx, cancel := context.WithTimeout(ctx, ActionTimeout)
 	defer cancel()
-	return s.act(ctx, "команда из интерфейса", "", id, a)
+	return s.act(ctx, InitiatorGateway, "", id, a)
 }
 
-// act выполняет одну команду и пишет её в журнал. what - откуда команда.
-func (s *Service) act(ctx context.Context, what, requestID, id string, a *alice.Action) string {
+// act выполняет одну команду и пишет её в журнал. Команду устройству, которого нет в настройках, в
+// журнал действий не записывает: иначе чужие запросы с выдуманными именами раздували бы базу.
+func (s *Service) act(ctx context.Context, initiator, requestID, id string, a *alice.Action) string {
+	what := "команда из интерфейса"
+	if initiator == InitiatorAlice {
+		what = "команда Алисы"
+	}
+	at := time.Now()
 	_, byID := s.snapshot()
 	ycode := alice.CodeNotFound
 	if d := byID[id]; d != nil {
 		ycode = d.Act(ctx, id, a)
+		if s.onAction != nil {
+			s.onAction(id, initiator, at, a, ycode)
+		}
 		// Яндекс мог запомнить значение из команды, а прибор его не принял: следующее
 		// уведомление об этом устройстве сообщит все умения.
 		if s.notifier != nil {
