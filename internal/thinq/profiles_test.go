@@ -388,7 +388,7 @@ const (
 func TestHood(t *testing.T) {
 	d := newLG(t, "DEVICE_HOOD", hoodProfile, hoodState, "")
 	// Уведомлений в профиле нет, поэтому кнопки нет (ошибка 38).
-	if got := d.items(); !slices.Equal(got, []string{"mode/fan_speed", "toggle/backlight"}) {
+	if got := d.items(); !slices.Equal(got, []string{"mode/fan_speed", "on_off", "toggle/backlight"}) {
 		t.Fatalf("умения: %v", got)
 	}
 	// Яркость 2: подсветка горит, хотя такого значения у переключателя нет.

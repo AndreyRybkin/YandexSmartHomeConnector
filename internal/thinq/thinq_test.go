@@ -137,6 +137,15 @@ type fakeAPI struct {
 	// badProfile - отвечать профилем, который не разбирается; badID - только для этого прибора.
 	badProfile bool
 	badID      string
+	// energyProfile - ответ на запрос профиля энергии; пусто - 404. energyUsage - ответ на запрос
+	// потребления. energyStatus - статус ошибки на оба запроса. Запросы считаются.
+	// controlCode - код ошибки на команды; пусто - команды проходят.
+	controlCode    string
+	energyProfile  string
+	energyUsage    string
+	energyStatus   int
+	energyProfiles int
+	energyUsages   []string
 }
 
 func newAPI(t *testing.T, ca *testCA) *fakeAPI {
@@ -189,8 +198,34 @@ func newAPI(t *testing.T, ca *testCA) *fakeAPI {
 		f.mu.Lock()
 		f.controls = append(f.controls, r.PathValue("id")+" "+string(data))
 		f.headers = r.Header.Clone()
+		code := f.controlCode
 		f.mu.Unlock()
+		if code != "" {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": code, "message": "отказ"}})
+			return
+		}
 		ok(w, map[string]any{})
+	})
+	energy := func(w http.ResponseWriter, count func(), answer func() string) {
+		f.mu.Lock()
+		count()
+		status, response := f.energyStatus, answer()
+		f.mu.Unlock()
+		switch {
+		case status != 0:
+			w.WriteHeader(status)
+		case response == "":
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			raw(w, response)
+		}
+	}
+	mux.HandleFunc("GET /devices/energy/{id}/profile", func(w http.ResponseWriter, r *http.Request) {
+		energy(w, func() { f.energyProfiles++ }, func() string { return f.energyProfile })
+	})
+	mux.HandleFunc("GET /devices/energy/{id}/usage", func(w http.ResponseWriter, r *http.Request) {
+		energy(w, func() { f.energyUsages = append(f.energyUsages, r.URL.RawQuery) }, func() string { return f.energyUsage })
 	})
 	mux.HandleFunc("POST /client", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()

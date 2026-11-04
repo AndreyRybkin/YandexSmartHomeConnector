@@ -75,7 +75,7 @@ type Gateway struct {
 	appliances string
 	// dataDir - каталог данных: в нём файлы телевизоров.
 	dataDir string
-	// tvChanges - телевизор сообщил новые входы: Алисе нужен новый список устройств.
+	// tvChanges - телевизор сообщил новые входы или лента новые возможности: Алисе нужен новый список устройств.
 	tvChanges chan struct{}
 	log       *slog.Logger
 	// demoDuration - длительность программы демо-приборов; тесты её сокращают.
@@ -287,7 +287,7 @@ func (g *Gateway) watchCloud(ctx context.Context) {
 		case <-g.Polaris.Changes():
 			g.reapply("Polaris")
 		case <-g.tvChanges:
-			g.reapply("телевизор")
+			g.reapply("телевизор или лента WLED")
 		}
 	}
 }
@@ -404,7 +404,7 @@ func (g *Gateway) build(cfg *config.Config, id string, dc config.Device, prev *b
 			return prev, nil
 		}
 		return &built{conf: dc, dev: &wled.Device{ID: id, Name: dc.Name, Room: dc.Room, Host: dc.Host,
-			Presets: maps.Clone(dc.Presets), Log: g.log}}, nil
+			Presets: maps.Clone(dc.Presets), Dir: filepath.Join(g.dataDir, "wled"), ListChanged: g.tvChanged, Log: g.log}}, nil
 	}
 	var a appliance.Appliance
 	if prev != nil && sameSource(prev.conf, dc) {
@@ -431,6 +431,10 @@ func (g *Gateway) build(cfg *config.Config, id string, dc config.Device, prev *b
 	if dc.Source == config.SourceDeLonghi {
 		// recipes и default_drink - слой профиля прибора под его profile.
 		forDevice = profile.Merge(profile.DeLonghiLayer(dc.Recipes, dc.DefaultDrink), dc.Profile)
+	}
+	if dc.Source == config.SourceWebOS && len(dc.Apps) > 0 {
+		// Приложения - такой же слой профиля прибора под его profile.
+		forDevice = profile.Merge(profile.TVAppsLayer(dc.Apps, forType), dc.Profile)
 	}
 	p, err := profile.Resolve(haType, forType, forDevice)
 	if err != nil {
@@ -508,7 +512,7 @@ func (g *Gateway) newAppliance(id string, dc config.Device) (appliance.Appliance
 		}
 		return g.DeLonghi.Appliance(delonghi.Config{ID: id, Host: dc.Host, Serial: dc.Serial, Pin: dc.Pin, ProfileID: profileID})
 	case config.SourceWebOS:
-		return webos.New(webos.Config{ID: id, Host: dc.Host, MAC: dc.MAC, Broadcast: dc.Broadcast,
+		return webos.New(webos.Config{ID: id, Host: dc.Host, MAC: dc.MAC, Broadcast: dc.Broadcast, Apps: slices.Sorted(maps.Values(dc.Apps)),
 			Dir: filepath.Join(g.dataDir, "webos"), Changed: g.tvChanged}, g.log)
 	case config.SourceSamsungTV:
 		return samsungtv.New(samsungtv.Config{ID: id, Host: dc.Host, MAC: dc.MAC, Broadcast: dc.Broadcast,
@@ -521,7 +525,7 @@ func (g *Gateway) newAppliance(id string, dc config.Device) (appliance.Appliance
 	return nil, fmt.Errorf("источник %s не поддерживается", dc.Source)
 }
 
-// tvChanged - телевизор сообщил новые входы: шлюз пересобирает приборы, а Яндекс получает
+// tvChanged - телевизор сообщил новые входы или лента новые возможности: шлюз пересобирает приборы, а Яндекс получает
 // новый список устройств.
 func (g *Gateway) tvChanged() {
 	select {

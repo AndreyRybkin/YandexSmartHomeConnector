@@ -61,10 +61,8 @@ func init() {
 			Button:    deLonghiButtons(),
 			FoodLevel: []string{deLonghiAlarmPrefix + "NoCoffee"},
 			// Без бака воды нет: уровень empty, а не low.
-			// Машина сообщает о воде и датчиками: так уровень верен, даже если тревога не сработала.
-			WaterLevel: []string{deLonghiAlarmPrefix + "TankLevel", deLonghiAlarmPrefix + "TankPresence",
-				"DeLonghi.Peripheral.WaterTankLow=true", "DeLonghi.Peripheral.TankPresence=false"},
-			Empty: []string{deLonghiAlarmPrefix + "NoCoffee", deLonghiAlarmPrefix + "TankPresence", "DeLonghi.Peripheral.TankPresence=false"},
+			WaterLevel: []string{deLonghiAlarmPrefix + "TankLevel", deLonghiAlarmPrefix + "TankPresence"},
+			Empty:      []string{deLonghiAlarmPrefix + "NoCoffee", deLonghiAlarmPrefix + "TankPresence"},
 		},
 	}
 }

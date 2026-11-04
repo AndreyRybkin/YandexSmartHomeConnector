@@ -53,6 +53,13 @@ const (
 	modeHeat = "3"
 )
 
+// keepWarmOn и keepWarmOff - какой режим получает чайник по команде удержания тепла. У режимов 5 и 6
+// удержания нет.
+var (
+	keepWarmOn  = map[string]string{modeOff: "2", "1": "2", modeHeat: "4"}
+	keepWarmOff = map[string]string{"2": "1", "4": modeHeat}
+)
+
 // Функции чайника, которые шлюз разбирает сам.
 const (
 	KeyMode        = "mode"
@@ -61,8 +68,12 @@ const (
 	KeyErrorCode   = "error/code"
 	// KeyTea - вид чая: виртуальная функция шлюза. Чай - это температура и режим разогрева.
 	KeyTea = "tea"
+	// KeyKeepWarm - удержание тепла: виртуальная функция шлюза из mode. Включено, пока mode 2 или 4.
+	KeyKeepWarm = "Polaris.KeepWarm"
 	// KeyWaterAlarm - вода заканчивается: виртуальная функция из error/code.
 	KeyWaterAlarm = "Polaris.Alarm.Water"
+	// KeyNoWater - чайник пуст: виртуальная функция из error/code.
+	KeyNoWater = "Polaris.Alarm.NoWater"
 	// KeyEmptyBase - чайник снят с базы.
 	KeyEmptyBase = "error/empty_base"
 	// KeyFirmware - версия прошивки.

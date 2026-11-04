@@ -3,6 +3,7 @@ package profile
 import (
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -28,6 +29,7 @@ func init() {
 	lgBuiltin["DEVICE_HUMIDIFIER"].Events = &water
 	lgBuiltin["DEVICE_AIR_PURIFIER"].Events = &water
 	for lgType, p := range lgBuiltin {
+		p.Properties = append(slices.Clip(p.Properties), lgEnergyMeter)
 		builtin[lgType] = p
 	}
 }
@@ -90,8 +92,22 @@ func lgRun(setting, off string, idle []string) *Power {
 
 func lgFan(option string) Mode {
 	return Mode{Instance: "fan_speed", Option: option, Values: map[string]string{
-		"LOW": "low", "MID": "medium", "HIGH": "high", "AUTO": "auto", "POWER": "turbo",
+		"SLOW": "quiet", "LOW": "low", "MID": "medium", "HIGH": "high", "AUTO": "auto", "POWER": "turbo",
 	}}
+}
+
+// lgWindSteps - скорость очистителя с вентилятором: и ступени WIND_1...WIND_10.
+func lgWindSteps(option string) Mode {
+	m := lgFan(option)
+	for i, name := range []string{"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"} {
+		m.Values["WIND_"+strconv.Itoa(i+1)] = name
+	}
+	return m
+}
+
+// lgKeepWarm - нагрев воздуха или пара: другого instance для него у Алисы нет.
+func lgKeepWarm(setting string) Toggle {
+	return Toggle{Instance: "keep_warm", Setting: setting, On: "WARM_ON", Off: "WARM_OFF", Optional: true}
 }
 
 func lgFloat(instance, status, unit string) Property {
@@ -105,6 +121,10 @@ var lgAir = []Property{
 	lgFloat("pm2.5_density", "airQualitySensor.PM2", density),
 	lgFloat("pm10_density", "airQualitySensor.PM10", density),
 }
+
+// lgEnergyMeter - потребление за текущий месяц в кВт·ч. Значение thinq.EnergyKey шлюз запрашивает сам,
+// и только у прибора, для которого облако вернуло профиль энергии.
+var lgEnergyMeter = lgFloat("electricity_meter", "energy.monthUsageKwh", "unit.kilowatt_hour")
 
 // lgBattery - заряд событием: работает и на моделях без процента.
 var lgBattery = Property{Type: "event", Instance: "battery_level", Status: "battery.level", Values: map[string]string{
@@ -177,10 +197,13 @@ var lgBuiltin = map[string]*Profile{
 		OnOff:      "power",
 		Power:      lgPower("operation.airConOperationMode"),
 		Modes: []Mode{{Instance: "thermostat", Option: "airConJobMode.currentJobMode", Values: map[string]string{
-			"COOL": "cool", "HEAT": "heat", "AIR_DRY": "dry", "FAN": "fan_only", "AUTO": "auto",
-		}}, lgFan("airFlow.windStrength")},
-		Ranges:     []Range{{Instance: "temperature", Option: "temperatureInUnits.targetTemperatureC", Unit: celsius}},
-		Toggles:    []Toggle{{Instance: "oscillation", Setting: "windDirection.rotateUpDown", Optional: true}},
+			"COOL": "cool", "HEAT": "heat", "AIR_DRY": "dry", "FAN": "fan_only", "AUTO": "auto", "ENERGY_SAVING": "eco",
+		}}, lgFan("airFlow.windStrength"), {Instance: "swing", Option: "windDirection.rotateLeftRight", Values: map[string]string{
+			"true": "horizontal", "false": "stationary",
+		}}},
+		Ranges: []Range{{Instance: "temperature", Option: "temperatureInUnits.targetTemperatureC", Unit: celsius}},
+		Toggles: []Toggle{{Instance: "oscillation", Setting: "windDirection.rotateUpDown", Optional: true},
+			{Instance: "backlight", Setting: "display.light", On: "ON", Off: "OFF", Optional: true}},
 		Properties: append([]Property{lgFloat("temperature", "temperatureInUnits.currentTemperatureC", celsius)}, lgAir...),
 		Events:     lgEvents,
 	},
@@ -189,7 +212,7 @@ var lgBuiltin = map[string]*Profile{
 		OnOff:      "power",
 		Power:      lgPower("operation.airPurifierOperationMode"),
 		Modes: []Mode{{Instance: "program", Option: "airPurifierJobMode.currentJobMode", Values: map[string]string{
-			"AUTO": "auto", "CLEAN": "normal", "SLEEP": "quiet",
+			"AUTO": "auto", "CLEAN": "normal", "SLEEP": "quiet", "FAST": "fast", "SMART": "smart",
 		}}, lgFan("airFlow.windStrength")},
 		Properties: lgAir,
 		Events:     lgEvents,
@@ -201,7 +224,12 @@ var lgBuiltin = map[string]*Profile{
 		// Режимы сопоставлены приблизительно: точных значений у Алисы для них нет.
 		Modes: []Mode{{Instance: "program", Option: "airFanJobMode.currentJobMode", Values: map[string]string{
 			"SPACE_CLEAN": "normal", "SPOT_CLEAN": "express", "DIRECT_CLEAN": "turbo", "NATURE_CLEAN": "auto",
-		}}, lgFan("airFlow.windStrength")},
+		}}, lgWindSteps("airFlow.windStrength"), {Instance: "swing", Option: "airFlow.windAngle", Values: map[string]string{
+			"OFF": "stationary", "ANGLE_45": "one", "ANGLE_60": "two", "ANGLE_90": "three", "ANGLE_140": "four",
+		}}},
+		// Температура имеет смысл только при включённом нагреве: иначе облако может отвергнуть команду.
+		Ranges:     []Range{{Instance: "temperature", Option: "airFlow.windTemperature", Unit: celsius}},
+		Toggles:    []Toggle{lgKeepWarm("airFlow.warmMode")},
 		Properties: append([]Property{lgFloat("temperature", "airQualitySensor.temperature", celsius)}, lgAir...),
 		Events:     lgEvents,
 	},
@@ -209,9 +237,13 @@ var lgBuiltin = map[string]*Profile{
 		YandexType: "humidifier",
 		OnOff:      "power",
 		Power:      lgPower("operation.humidifierOperationMode"),
-		Modes:      []Mode{lgFan("airFlow.windStrength")},
-		Ranges:     []Range{{Instance: "humidity", Option: "humidity.targetHumidity", Unit: percent}},
-		Toggles:    []Toggle{{Instance: "backlight", Setting: "moodLamp.moodLampState", On: "ON", Off: "OFF", Optional: true}},
+		// Номера вместо названий: подходящих значений у Алисы нет.
+		Modes: []Mode{{Instance: "program", Option: "humidifierJobMode.currentJobMode", Values: map[string]string{
+			"HUMIDIFY": "one", "HUMIDIFY_AND_AIR_CLEAN": "two", "AIR_CLEAN": "three",
+		}}, lgFan("airFlow.windStrength")},
+		Ranges: []Range{{Instance: "humidity", Option: "humidity.targetHumidity", Unit: percent}},
+		Toggles: []Toggle{{Instance: "backlight", Setting: "moodLamp.moodLampState", On: "ON", Off: "OFF", Optional: true},
+			lgKeepWarm("humidity.warmMode")},
 		Properties: append([]Property{lgFloat("temperature", "airQualitySensor.temperature", celsius)}, lgAir...),
 		Events:     lgEvents,
 	},
@@ -219,7 +251,10 @@ var lgBuiltin = map[string]*Profile{
 		YandexType: "humidifier",
 		OnOff:      "power",
 		Power:      lgPower("operation.dehumidifierOperationMode"),
-		Modes:      []Mode{lgFan("airFlow.windStrength")},
+		Modes: []Mode{{Instance: "program", Option: "dehumidifierJobMode.currentJobMode", Values: map[string]string{
+			"SMART_HUMIDITY": "smart", "RAPID_HUMIDITY": "fast", "QUIET_HUMIDITY": "quiet", "INTENSIVE_DRY": "intensive",
+			"CLOTHES_DRY": "dry", "AIR_CLEAN": "normal",
+		}}, lgFan("airFlow.windStrength")},
 		Ranges:     []Range{{Instance: "humidity", Option: "humidity.targetHumidity", Unit: percent}},
 		Properties: []Property{lgFloat("humidity", "humidity.currentHumidity", percent)},
 		Events:     lgEvents,
@@ -248,9 +283,12 @@ var lgBuiltin = map[string]*Profile{
 	},
 	"DEVICE_HOOD": {
 		YandexType: "ventilation",
-		Modes:      []Mode{lgHoodFan},
-		Toggles:    []Toggle{lgLamp},
-		Events:     lgEvents,
+		OnOff:      "power",
+		// Включение ставит скорость 1, а не прошлую: прошлую прибор не сообщает.
+		Power:   &Power{Setting: "ventilation.fanSpeed", On: "1", Off: "0", State: "ventilation.fanSpeed", Idle: []string{"0"}},
+		Modes:   []Mode{lgHoodFan},
+		Toggles: []Toggle{lgLamp},
+		Events:  lgEvents,
 	},
 	"DEVICE_MICROWAVE_OVEN": {
 		YandexType: "cooking",
@@ -262,12 +300,19 @@ var lgBuiltin = map[string]*Profile{
 		YandexType: "cooking",
 		OnOff:      "power",
 		Power:      lgRun("operation.ovenOperationMode", "STOP", lgOvenIdle),
+		// Режим только для записи и уходит без START: голос не запускает нагрев сам. Состояния режима нет.
+		Modes: []Mode{{Instance: "program", Option: "cook.cookMode", Values: map[string]string{
+			"BAKE": "baking", "ROAST": "frying", "CONVECTION_BAKE": "one", "CONVECTION_ROAST": "two", "CRISP_CONVECTION": "three",
+		}}},
 		// Температура уходит только настройкой, без START: голос не запускает нагрев сам.
 		Ranges: []Range{{Instance: "temperature", Option: "temperature.targetTemperatureC", Unit: celsius}},
 		Events: lgEvents,
 	},
 	"DEVICE_REFRIGERATOR": {
 		YandexType: "cooking",
+		// Быстрая заморозка: ресурс общий на прибор, поэтому режим есть у каждой камеры.
+		Modes: []Mode{{Instance: "work_speed", Option: "refrigeration.rapidFreeze", FallbackOption: "refrigeration.expressMode",
+			Values: map[string]string{"true": "turbo", "false": "normal"}}},
 		Ranges:     []Range{{Instance: "temperature", Option: "temperatureInUnits.targetTemperatureC", Unit: celsius}},
 		Properties: []Property{lgDoor},
 		Events:     lgEvents,
@@ -290,7 +335,7 @@ var lgBuiltin = map[string]*Profile{
 		OnOff:      "power",
 		Power:      lgPower("operation.waterHeaterOperationMode"),
 		Modes: []Mode{{Instance: "heat", Option: "waterHeaterJobMode.currentJobMode", Values: map[string]string{
-			"AUTO": "auto", "TURBO": "turbo",
+			"AUTO": "auto", "TURBO": "turbo", "HEAT_PUMP": "normal", "VACATION": "min",
 		}}},
 		Ranges:     []Range{{Instance: "temperature", Option: "temperatureInUnits.targetTemperatureC", Unit: celsius}},
 		Properties: []Property{lgFloat("temperature", "temperatureInUnits.currentTemperatureC", celsius)},
@@ -304,6 +349,7 @@ var lgBuiltin = map[string]*Profile{
 			"HEAT": "heat", "COOL": "cool", "AUTO": "auto",
 		}}},
 		Ranges:     []Range{{Instance: "temperature", Option: "roomTemperatureInUnits.targetTemperatureC", Unit: celsius}},
+		Toggles:    []Toggle{{Instance: "keep_warm", Setting: "operation.hotWaterMode", On: "ON", Off: "OFF", Optional: true}},
 		Properties: []Property{lgFloat("temperature", "roomTemperatureInUnits.currentTemperatureC", celsius)},
 		Events:     lgEvents,
 	},
@@ -313,6 +359,9 @@ var lgBuiltin = map[string]*Profile{
 		Power: &Power{Setting: "operation.cleanOperationMode", On: "START", Off: "HOMING", State: lgState,
 			Idle: []string{"CHARGING", "HOMING", "SLEEP", "STANDBY", "INITIALIZING", "DIAGNOSIS", "ERROR",
 				"MACROSECTOR", "MONITORING_DETECTING", "MONITORING_MOVING", "MONITORING_POSITIONING", "RESERVATION", "SETDATE"}},
+		// Команда PAUSE, а положение - по состоянию работы: cleanOperationMode только для записи.
+		Toggles: []Toggle{{Instance: "pause", Setting: "operation.cleanOperationMode", On: "PAUSE", Off: "RESUME",
+			State: lgState, StateOn: "PAUSE", Optional: true}},
 		Properties: []Property{lgFloat("battery_level", "battery.percent", percent), lgBattery},
 		Events:     lgEvents,
 	},
@@ -320,5 +369,10 @@ var lgBuiltin = map[string]*Profile{
 		YandexType: "vacuum_cleaner",
 		Properties: []Property{lgFloat("battery_level", "battery.percent", percent), lgBattery},
 		Events:     lgEvents,
+	},
+	// Управления нет, только показание. Смысл приблизительный: уровень пива вместо воды.
+	"DEVICE_HOME_BREW": {
+		YandexType: "other",
+		Properties: []Property{lgFloat("water_level", "recipe.beerRemain", percent)},
 	},
 }

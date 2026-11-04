@@ -32,6 +32,8 @@
 {{if or (eq .Source "webos") (eq .Source "samsung-tv")}}<label>IP телевизора в домашней сети <input name="host" value="{{.Conf.Host}}" maxlength="261" required></label>
 <label>MAC телевизора <input name="mac" value="{{.Conf.MAC}}" maxlength="17" placeholder="AA:BB:CC:DD:EE:FF"> <span class="muted">пусто - тот, что сообщил телевизор</span></label>
 <label>Широковещательный адрес для включения <input name="broadcast" value="{{.Conf.Broadcast}}" maxlength="15" placeholder="255.255.255.255"></label>{{end}}
+{{if .TVApps}}<p>Приложения для режима «Программа» <span class="muted">пусто - режима нет в Алисе. Идентификатор приложения на экране - значение TV.App на странице «Всё о приборе»</span></p>
+{{range .TVApps}}<label>{{.Label}} <input name="app.{{.Mode}}" value="{{.Value}}" maxlength="128"></label>{{end}}{{end}}
 {{if eq .Source "homeconnect-local"}}<label>Прибор Home Connect {{if .HaIDs}}<select name="ha_id">{{template "opts" .HaIDs}}</select>{{else}}<input name="ha_id" value="{{.Conf.HaID}}" maxlength="64">{{end}} <span class="muted">ключи прибора - в data_dir/appliances/&lt;haId&gt;</span></label>
 <label>Адрес прибора в домашней сети <input name="host" value="{{.Conf.Host}}" maxlength="261" required> <span class="muted">без порта - 443 для TLS-PSK и 80 для AES</span></label>{{end}}
 {{if eq .Source "delonghi"}}{{with .Coffee}}<label>IP кофемашины в домашней сети <input name="host" value="{{$p.Data.Conf.Host}}" maxlength="261" required></label>

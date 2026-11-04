@@ -96,6 +96,12 @@ var pinRe = regexp.MustCompile(`^[0-9A-Fa-f]{2}(:?[0-9A-Fa-f]{2}){31}$`)
 // CoffeeDrinks - напитки Алисы, которым сопоставляются рецепты кофемашины.
 var CoffeeDrinks = []string{"espresso", "double_espresso", "americano", "cappuccino", "latte"}
 
+// TVAppModes - режимы Алисы, которым сопоставляются приложения телевизора LG.
+var TVAppModes = []string{"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"}
+
+// tvAppRe - идентификатор приложения webOS, например com.webos.app.livetv: он уходит телевизору.
+var tvAppRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
+
 // maxProfileID и maxRecipe - пределы профиля пользователя и номера рецепта кофемашины.
 const (
 	maxProfileID = 15
@@ -288,6 +294,8 @@ type Device struct {
 	MAC string `yaml:"mac,omitempty"`
 	// Broadcast - широковещательный адрес для включения телевизора по сети; пусто - 255.255.255.255.
 	Broadcast string `yaml:"broadcast,omitempty"`
+	// Apps - режим Алисы -> идентификатор приложения webOS, только для SourceWebOS; пусто - режима нет.
+	Apps map[string]string `yaml:"apps,omitempty"`
 	// Serial - серийный номер кофемашины De'Longhi, только для SourceDeLonghi.
 	Serial string `yaml:"serial,omitempty"`
 	// Pin - подтверждённый отпечаток SHA-256 сертификата кофемашины; пусто - не подтверждён.
@@ -597,6 +605,9 @@ var broadcastAll = netip.AddrFrom4([4]byte{255, 255, 255, 255})
 // клиента, а имя в DNS может указать на чужой компьютер. MAC приводится к виду
 // AA:BB:CC:DD:EE:FF.
 func checkTV(id string, d *Device) error {
+	if err := checkTVApps(id, d); err != nil {
+		return err
+	}
 	if d.Source != SourceWebOS && d.Source != SourceSamsungTV {
 		if d.MAC != "" || d.Broadcast != "" {
 			return fmt.Errorf("devices.%s: mac и broadcast задаются только для источников %s и %s", id, SourceWebOS, SourceSamsungTV)
@@ -618,6 +629,31 @@ func checkTV(id string, d *Device) error {
 		if err != nil || !a.Is4() || !(a.IsPrivate() || a.IsLoopback() || a == broadcastAll) {
 			return fmt.Errorf("devices.%s.broadcast: нужен IPv4 домашней сети, например 192.168.1.255, или 255.255.255.255", id)
 		}
+	}
+	return nil
+}
+
+// checkTVApps проверяет приложения телевизора LG. Одно приложение - у одного режима: по приложению на
+// экране шлюз называет Алисе режим.
+func checkTVApps(id string, d *Device) error {
+	if d.Apps == nil {
+		return nil
+	}
+	if d.Source != SourceWebOS {
+		return fmt.Errorf("devices.%s: apps задаётся только для источника %s", id, SourceWebOS)
+	}
+	modes := map[string]string{}
+	for _, mode := range slices.Sorted(maps.Keys(d.Apps)) {
+		app := d.Apps[mode]
+		switch {
+		case !slices.Contains(TVAppModes, mode):
+			return fmt.Errorf("devices.%s.apps: режим %q, допустимо от one до ten", id, mode)
+		case !tvAppRe.MatchString(app):
+			return fmt.Errorf("devices.%s.apps.%s: нужно от 1 до 128 латинских букв, цифр, точек, _ и -", id, mode)
+		case modes[app] != "":
+			return fmt.Errorf("devices.%s.apps: приложение %s у режимов %s и %s", id, app, modes[app], mode)
+		}
+		modes[app] = mode
 	}
 	return nil
 }

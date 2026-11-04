@@ -416,7 +416,7 @@ func (c *Cloud) Appliance(deviceID, component string) *Appliance {
 	if a == nil {
 		a = &Appliance{cloud: c, deviceID: deviceID, component: component, values: map[string]any{},
 			units: map[string]string{}, lists: map[string]map[string][]string{}, limits: map[string]limit{},
-			disabled: map[string][]string{}}
+			reported: map[string]bool{}, disabled: map[string][]string{}}
 		c.appliances[key] = a
 	}
 	return a

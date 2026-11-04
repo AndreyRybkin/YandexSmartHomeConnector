@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -37,6 +38,34 @@ type tvView struct {
 	Samsung bool
 	// CertText и NewCertText - отпечатки сертификата группами по два знака.
 	CertText, NewCertText string
+}
+
+// tvAppRow - поле приложения телевизора LG для режима Алисы.
+type tvAppRow struct {
+	Mode, Label, Value string
+}
+
+func tvAppRows(apps map[string]string) []tvAppRow {
+	rows := make([]tvAppRow, 0, len(config.TVAppModes))
+	for _, mode := range config.TVAppModes {
+		rows = append(rows, tvAppRow{Mode: mode, Label: nameOr(modeValueNames, mode), Value: apps[mode]})
+	}
+	return rows
+}
+
+// tvAppsForm - приложения телевизора из формы. Пустое поле - режима нет в Алисе; значения проверяет
+// config при сохранении.
+func tvAppsForm(f url.Values) map[string]string {
+	var apps map[string]string
+	for _, mode := range config.TVAppModes {
+		if v := strings.TrimSpace(f.Get("app." + mode)); v != "" {
+			if apps == nil {
+				apps = map[string]string{}
+			}
+			apps[mode] = v
+		}
+	}
+	return apps
 }
 
 func (s *Server) tvView(id string, source string) *tvView {

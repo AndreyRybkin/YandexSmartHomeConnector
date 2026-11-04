@@ -128,7 +128,7 @@ func TestMarshalYAML(t *testing.T) {
 func TestMerge(t *testing.T) {
 	base := BuiltinProfile("Oven")
 	m := Merge(base, &Profile{Toggles: []Toggle{}})
-	if len(m.Toggles) != 0 || len(m.Modes) != 1 || len(base.Toggles) != 2 {
+	if len(m.Toggles) != 0 || len(m.Modes) != 1 || len(base.Toggles) != 3 {
 		t.Fatalf("Merge: %+v", m)
 	}
 	if BuiltinProfile("Kettle") != nil || !slices.Contains(BuiltinTypes(), "Dishwasher") {
@@ -559,7 +559,8 @@ func TestSmartThingsProfiles(t *testing.T) {
 		t.Fatalf("кнопка: %v", values)
 	}
 	ac := builtin[SmartThingsPrefix+"AirConditioner"]
-	if len(ac.Toggles) != 0 || !slices.ContainsFunc(ac.Modes, func(m Mode) bool { return m.Instance == "swing" }) {
+	if !slices.ContainsFunc(ac.Toggles, func(tg Toggle) bool { return tg.Instance == "ionization" && tg.Optional }) ||
+		!slices.ContainsFunc(ac.Modes, func(m Mode) bool { return m.Instance == "swing" }) {
 		t.Fatalf("кондиционер: %+v", ac)
 	}
 	for typ := range builtin {
@@ -568,6 +569,35 @@ func TestSmartThingsProfiles(t *testing.T) {
 				t.Fatalf("%s: %v", typ, err)
 			}
 		}
+	}
+}
+
+// Запасная настройка числа: необязательна, читается из YAML и не совпадает с основной. Другие имена
+// значения ищутся по всем именам, а основное имя главнее.
+func TestRangeFallback(t *testing.T) {
+	var r Range
+	if err := yaml.Unmarshal([]byte("instance: open\noption: a\nfallback_option: b\n"), &r); err != nil || r.FallbackOption != "b" {
+		t.Fatalf("%v %+v", err, r)
+	}
+	out, err := yaml.Marshal(Range{Instance: "open", Option: "a"})
+	if err != nil || strings.Contains(string(out), "fallback_option") {
+		t.Fatalf("%v %s", err, out)
+	}
+	p := &Profile{YandexType: "openable", OnOff: "none", Ranges: []Range{{Instance: "open", Option: "a", FallbackOption: "a"}}}
+	if p.Validate() == nil {
+		t.Fatal("запасная равна основной")
+	}
+	p.Ranges[0].FallbackOption = "b"
+	if err := p.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	values := map[string]any{"fineDustSensor.fineDustLevel": 1.0}
+	if v, ok := StatusValue(values, "dustSensor.fineDustLevel"); !ok || v != 1.0 {
+		t.Fatalf("другое имя: %v %v", v, ok)
+	}
+	values["dustSensor.fineDustLevel"] = 2.0
+	if v, _ := StatusValue(values, "dustSensor.fineDustLevel"); v != 2.0 {
+		t.Fatalf("основное имя: %v", v)
 	}
 }
 

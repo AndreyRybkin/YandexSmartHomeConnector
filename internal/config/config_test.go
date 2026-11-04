@@ -456,3 +456,35 @@ func TestHomeConnectAddress(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadTVApps(t *testing.T) {
+	base := "devices:\n  tv:\n    name: Т\n    source: webos\n    host: 192.168.1.80\n"
+	cfg, err := Load(writeConfig(t, base+"    apps: {one: example.app.one, ten: example_2-app}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := cfg.Devices["tv"].Apps; a["one"] != "example.app.one" || a["ten"] != "example_2-app" {
+		t.Fatalf("приложения: %v", a)
+	}
+	if clone := cfg.Clone(); clone.Devices["tv"].Apps["one"] != "example.app.one" {
+		t.Fatalf("копия: %v", clone.Devices["tv"].Apps)
+	}
+	cases := map[string]string{
+		"чужой режим":   base + "    apps: {eleven: example.app}\n",
+		"не режим":      base + "    apps: {boiling: example.app}\n",
+		"пустое":        base + "    apps: {one: \"\"}\n",
+		"чужие символы": base + "    apps: {one: \"example/../app\"}\n",
+		"кириллица":     base + "    apps: {one: приложение}\n",
+		"длинное":       base + "    apps: {one: " + strings.Repeat("a", 129) + "}\n",
+		"дважды":        base + "    apps: {one: example.app, two: example.app}\n",
+		"у Samsung":     "devices:\n  tv:\n    name: Т\n    source: samsung-tv\n    host: 192.168.1.80\n    apps: {one: example.app}\n",
+		"у демо":        "devices:\n  a:\n    name: A\n    demo: Oven\n    apps: {one: example.app}\n",
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Load(writeConfig(t, body)); err == nil {
+				t.Fatal("ожидалась ошибка")
+			}
+		})
+	}
+}

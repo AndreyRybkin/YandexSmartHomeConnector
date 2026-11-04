@@ -677,13 +677,15 @@ type deviceView struct {
 	Names       string
 	Icons       []choice
 	Coffee      *coffeeView
-	Conf        config.Device
-	Source      string
-	RoomNames   []string
-	DemoKinds   []choice
-	HaIDs       []choice
-	ThinQIDs    []choice
-	STIDs       []choice
+	// TVApps - поля приложений телевизора LG по режимам Алисы; пусто - прибор не такой телевизор.
+	TVApps    []tvAppRow
+	Conf      config.Device
+	Source    string
+	RoomNames []string
+	DemoKinds []choice
+	HaIDs     []choice
+	ThinQIDs  []choice
+	STIDs     []choice
 	// TV - связь с телевизором в домашней сети; nil - прибор не телевизор.
 	TV *tvView
 	// Waiting - прибор облака ждёт своего типа от облака.
@@ -769,6 +771,9 @@ func (s *Server) renderDevice(w http.ResponseWriter, sess *session, status int, 
 		v.STIDs = s.stChoices(v.Conf.DeviceID)
 	}
 	v.TV = s.tvView(id, dc.Source)
+	if v.Conf.Source == config.SourceWebOS {
+		v.TVApps = tvAppRows(v.Conf.Apps)
+	}
 	if strip, ok := s.gw.Strip(id); ok {
 		v.Strip = s.stripView(strip, dc, d)
 	}
@@ -787,6 +792,10 @@ func (s *Server) renderDevice(w http.ResponseWriter, sess *session, status int, 
 		if dc.Source == config.SourceDeLonghi {
 			// Рецепты и напиток из настроек прибора - под его профилем, как в шлюзе.
 			builtin = profile.Merge(builtin, profile.DeLonghiLayer(dc.Recipes, dc.DefaultDrink))
+		}
+		if dc.Source == config.SourceWebOS {
+			// Приложения из настроек прибора - такой же слой, как в шлюзе.
+			builtin = profile.Merge(builtin, profile.TVAppsLayer(dc.Apps, nil))
 		}
 		desc := hc.Appliance.Describe()
 		if dc.Source == config.SourceDeLonghi {
@@ -1016,6 +1025,9 @@ func (s *Server) saveDevice(w http.ResponseWriter, r *http.Request, sess *sessio
 		case config.SourceWebOS, config.SourceSamsungTV:
 			d.Host = strings.TrimSpace(f.Get("host"))
 			d.MAC, d.Broadcast = strings.TrimSpace(f.Get("mac")), strings.TrimSpace(f.Get("broadcast"))
+			if d.Source == config.SourceWebOS {
+				d.Apps = tvAppsForm(f)
+			}
 		case config.SourceDeLonghi:
 			if err := coffeeForm(&d, f); err != nil {
 				next = d

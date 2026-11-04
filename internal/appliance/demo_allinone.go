@@ -50,10 +50,27 @@ var allInOneEvents = map[string][]string{
 	"Demo.Status.WaterLevel": {"normal", "low", "empty"},
 }
 
+// allInOneExtra - остальные значения режима из списка Яндекса: программы Demo.Program.<значение>. Яндекс
+// видит их на демо-приборе раньше, чем на настоящем: отвергнутое значение закрывает всё устройство.
+var allInOneExtra = []string{
+	"wet_cleaning", "dry_cleaning", "mixed_cleaning", "auto", "eco", "turbo", "cool", "dry", "fan_only",
+	"preheat", "high", "low", "medium", "max", "min", "fast", "slow", "express", "normal", "quiet",
+	"horizontal", "stationary", "vertical", "supply_air", "extraction_air", "three", "four", "five", "six",
+	"seven", "eight", "nine", "ten", "americano", "cappuccino", "double_espresso", "espresso", "latte",
+	"black_tea", "flower_tea", "green_tea", "herbal_tea", "oolong_tea", "puerh_tea", "red_tea", "white_tea",
+	"glass", "intensive", "pre_rinse", "aspic", "baby_food", "baking", "bread", "cereals", "cheesecake",
+	"deep_fryer", "dessert", "fowl", "frying", "macaroni", "milk_porridge", "multicooker", "pasta", "pilaf",
+	"pizza", "sauce", "slow_cook", "soup", "steam", "stewing", "vacuum", "yogurt",
+}
+
+// allInOneRanges - настройки-числа для умений range: имя и предел сверху.
+var allInOneRanges = map[string]float64{"Demo.Setting.Brightness": 100, "Demo.Setting.Humidity": 100, "Demo.Setting.Open": 100,
+	"Demo.Setting.Volume": 100, "Demo.Setting.Channel": 999}
+
 // allInOneToggles - настройки-флаги для умений toggle; allInOneModes - настройки со значениями для
 // умений mode: значения равны значениям Алисы, первое - начальное.
 var (
-	allInOneToggles = []string{"Demo.Setting.ChildLock", "Demo.Setting.Mute", "Demo.Setting.Ionization", "Demo.Setting.KeepWarm", "Demo.Setting.Light"}
+	allInOneToggles = []string{"Demo.Setting.ChildLock", "Demo.Setting.Mute", "Demo.Setting.Ionization", "Demo.Setting.KeepWarm", "Demo.Setting.Light", "Demo.Setting.Oscillation"}
 	allInOneModes   = map[string][]string{
 		"Demo.Setting.WorkSpeed": {"medium", "slow", "fast", "turbo", "max"},
 		"Demo.Setting.Swing":     {"stationary", "vertical", "horizontal", "auto"},
@@ -78,9 +95,16 @@ func allInOneDescription() Description {
 	for key, values := range allInOneModes {
 		options[key] = Option{Key: key, Values: values, Setting: true}
 	}
+	for key, top := range allInOneRanges {
+		options[key] = Option{Key: key, Min: 1, Max: top, Step: 1, Setting: true}
+	}
+	programs := []string{"Demo.Program.One", "Demo.Program.Two", "Demo.Program.Boil", "Demo.Program.Heat", "Demo.Program.Smart"}
+	for _, value := range allInOneExtra {
+		programs = append(programs, "Demo.Program."+value)
+	}
 	return Description{
 		Type:     DemoAllInOne,
-		Programs: []string{"Demo.Program.One", "Demo.Program.Two"},
+		Programs: programs,
 		Options:  options,
 		Commands: []string{CommandPause, CommandResume},
 	}
@@ -93,6 +117,9 @@ func (d *Demo) setAllInOneSettings() {
 	}
 	for key, values := range allInOneModes {
 		d.state.Values[key] = values[0]
+	}
+	for key := range allInOneRanges {
+		d.state.Values[key] = 50.0
 	}
 }
 

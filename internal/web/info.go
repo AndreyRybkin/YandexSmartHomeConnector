@@ -153,6 +153,9 @@ func (s *Server) infoTarget(cfg *config.Config, dc config.Device, haType string)
 	if dc.Source == config.SourceDeLonghi {
 		builtin = profile.Merge(builtin, profile.DeLonghiLayer(dc.Recipes, dc.DefaultDrink))
 	}
+	if dc.Source == config.SourceWebOS {
+		builtin = profile.Merge(builtin, profile.TVAppsLayer(dc.Apps, nil))
+	}
 	return &editTarget{builtin: builtin, forType: cfg.Profiles[haType], forDevice: dc.Profile, device: true}
 }
 
@@ -219,7 +222,7 @@ func (s *Server) snapshot(id string) snapshot {
 
 // stripMappings - кто берёт значения ленты WLED.
 var stripMappings = map[string]string{"on": "on_off: питание", "brightness": "range brightness", "rgb": "color_setting: цвет",
-	"scene": "color_setting: сцена"}
+	"scene": "color_setting: сцена", "temperature_k": "color_setting: цветовая температура", "amperage": "float amperage"}
 
 // valueRows - строки значений прибора: текущие значения и последние полученные с пометкой. Если
 // прибор на связи, с пометкой идут только значения, которых он сейчас не сообщает.

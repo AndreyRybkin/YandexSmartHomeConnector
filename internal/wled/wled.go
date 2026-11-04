@@ -9,9 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"math"
 	"net/http"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -21,6 +24,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"hcgateway/internal/alice"
+	"hcgateway/internal/atomicfile"
 	"hcgateway/internal/metrics"
 )
 
@@ -46,6 +50,17 @@ const (
 	maxPresetsFile = 256 << 10
 	// MaxPreset - самый большой номер пресета WLED.
 	MaxPreset = 250
+	// minKelvin и maxKelvin - пределы цветовой температуры в Алисе.
+	minKelvin = 2000
+	maxKelvin = 9000
+	// Биты info.leds.lc: у ленты есть цвет, белый канал и цветовая температура.
+	lcRGB   = 1
+	lcWhite = 2
+	lcCCT   = 4
+	// maxPwr - самое большое значение info.leds.pwr в документации WLED, мА.
+	maxPwr = 65000
+	// maxCapsFile - предел файла возможностей ленты.
+	maxCapsFile = 4 << 10
 )
 
 // pingEvery - как часто шлюз проверяет соединение сообщением p: лента отвечает pong.
@@ -67,7 +82,12 @@ type Device struct {
 	Host string
 	// Presets - номер пресета WLED -> сцена Алисы.
 	Presets map[int]string
-	Log     *slog.Logger
+	// Dir - каталог файлов лент, data_dir/wled: в них шлюз помнит возможности ленты. Пусто - не помнит.
+	Dir string
+	// ListChanged вызывается, когда у ленты изменились возможности: Алисе нужен новый список
+	// устройств. nil - не нужно.
+	ListChanged func()
+	Log         *slog.Logger
 
 	// writeMu - сообщения ленте по одному: у соединения один писатель.
 	writeMu sync.Mutex
@@ -77,6 +97,8 @@ type Device struct {
 	st   status
 	// have - состояние получено после подключения.
 	have bool
+	// loaded - возможности ленты прочитаны из файла.
+	loaded bool
 }
 
 // status - что лента сообщила о себе.
@@ -93,6 +115,106 @@ type status struct {
 	// MAC - MAC ленты вида AA:BB:CC:DD:EE:FF: по нему поиск в сети узнаёт ленту по новому
 	// адресу. Остаётся и после потери связи.
 	MAC string
+	// LC - биты info.leds.lc; ABL - включено ограничение тока.
+	LC  int
+	ABL bool
+	// Kelvin - цветовая температура главного сегмента; White - его белый канал.
+	Kelvin, White int
+	// MilliAmps - расчётный ток ленты, если HasPwr: лента считает его только при включённом ABL.
+	MilliAmps int
+	HasPwr    bool
+}
+
+// caps - что лента умеет: от этого зависит её описание для Алисы.
+type caps struct {
+	CCT     bool `json:"cct,omitempty"`
+	Current bool `json:"current,omitempty"`
+}
+
+func (s *status) caps() caps {
+	return caps{CCT: s.LC&lcCCT != 0, Current: s.ABL}
+}
+
+// white сообщает, что лента светит белым, а не цветом: команда температуры оставляет цвет белым, и
+// только так цвет ленты отличается от температуры после перезапуска шлюза.
+func (s *status) white() bool {
+	switch {
+	case s.LC&lcCCT == 0 || s.Kelvin == 0:
+		return false
+	case s.LC&lcRGB == 0:
+		return true
+	case s.LC&lcWhite != 0:
+		return s.Color == 0 && s.White > 0
+	}
+	return s.Color == 0xFFFFFF
+}
+
+// kelvinForAlice - цветовая температура в пределах, объявленных Алисе.
+func (s *status) kelvinForAlice() int {
+	return min(maxKelvin, max(minKelvin, s.Kelvin))
+}
+
+// setCCT запоминает cct сегмента. Лента хранит её числом 0-255 и переводит из кельвинов так:
+// (K - 1900) >> 5. Температура из последней команды остаётся, пока лента сообщает то же число: иначе
+// Алиса увидела бы вместо заданных 4000 K округлённые 3980 K.
+func (s *status) setCCT(cct int) {
+	switch {
+	case cct < 0:
+	case cct > 255:
+		s.Kelvin = cct
+	case s.Kelvin < 1900 || (s.Kelvin-1900)>>5 != cct:
+		s.Kelvin = 1900 + cct<<5
+	}
+}
+
+func (d *Device) capsPath() string {
+	return filepath.Join(d.Dir, d.ID+".json")
+}
+
+// loadLocked читает возможности ленты из файла один раз; d.mu захвачен. Описание ленты должно быть
+// полным ещё до её подключения: иначе после каждого запуска шлюза умения пропадали бы до ответа ленты.
+func (d *Device) loadLocked() {
+	if d.loaded || d.Dir == "" {
+		return
+	}
+	d.loaded = true
+	data, err := os.ReadFile(d.capsPath())
+	var c caps
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return
+	case err != nil:
+		d.Log.Warn("лента WLED: файл возможностей не прочитан", "device", d.ID, "err", err)
+		return
+	case len(data) > maxCapsFile:
+		d.Log.Warn("лента WLED: файл возможностей больше предела", "device", d.ID)
+		return
+	}
+	if err := json.Unmarshal(data, &c); err != nil {
+		d.Log.Warn("лента WLED: файл возможностей не разобран", "device", d.ID, "err", err)
+		return
+	}
+	if c.CCT {
+		d.st.LC |= lcCCT
+	}
+	d.st.ABL = c.Current
+}
+
+// saveCaps запоминает возможности ленты.
+func (d *Device) saveCaps(c caps) {
+	if d.Dir == "" {
+		return
+	}
+	data, err := json.Marshal(c)
+	if err == nil {
+		err = os.MkdirAll(d.Dir, 0o700)
+	}
+	if err == nil {
+		err = atomicfile.Write(d.capsPath(), data)
+	}
+	if err != nil {
+		d.Log.Warn("лента WLED: файл возможностей не записан", "device", d.ID, "err", err)
+	}
 }
 
 // Strip - связь с лентой и что она сообщила о себе: имя и платформу.
@@ -113,6 +235,12 @@ func (d *Device) Values() (values map[string]any, ok bool) {
 	values = map[string]any{"on": st.On, "brightness": float64(percent(st.Bri)), "rgb": fmt.Sprintf("#%06X", st.Color)}
 	if scene, ok := d.Presets[st.PS]; ok {
 		values["scene"] = scene
+	}
+	if st.white() {
+		values["temperature_k"] = float64(st.kelvinForAlice())
+	}
+	if st.ABL && st.HasPwr {
+		values["amperage"] = float64(st.MilliAmps) / 1000
 	}
 	return values, true
 }
@@ -215,8 +343,17 @@ func (d *Device) Info() []alice.DeviceInfo {
 		color.ColorScene = &alice.SceneParams{Scenes: scenes}
 	}
 	d.mu.Lock()
-	version := d.st.Version
+	d.loadLocked()
+	version, c := d.st.Version, d.st.caps()
 	d.mu.Unlock()
+	if c.CCT {
+		color.TemperatureK = &alice.KelvinLimits{Min: minKelvin, Max: maxKelvin}
+	}
+	var properties []alice.Capability
+	if c.Current {
+		properties = []alice.Capability{{Type: alice.PropFloat, Retrievable: true, Reportable: true,
+			Parameters: alice.FloatParams{Instance: "amperage", Unit: "unit.ampere"}}}
+	}
 	return []alice.DeviceInfo{{
 		ID: d.ID, Name: d.Name, Room: d.Room, Type: alice.TypeLight,
 		DeviceInfo: alice.Manufacturer{Manufacturer: "WLED", SWVersion: version},
@@ -227,6 +364,7 @@ func (d *Device) Info() []alice.DeviceInfo {
 				Unit: "unit.percent", RandomAccess: true, Range: alice.RangeLimit{Min: 1, Max: 100, Precision: 1}}},
 			{Type: alice.CapColor, Retrievable: true, Reportable: true, Parameters: color},
 		},
+		Properties: properties,
 	}}
 }
 
@@ -238,10 +376,18 @@ func (d *Device) States() []alice.DeviceState {
 		return []alice.DeviceState{{ID: d.ID, ErrorCode: alice.CodeUnreachable}}
 	}
 	color := alice.StateValue{Instance: "rgb", Value: st.Color}
+	if st.white() {
+		color = alice.StateValue{Instance: "temperature_k", Value: st.kelvinForAlice()}
+	}
 	if scene, ok := d.Presets[st.PS]; ok {
 		color = alice.StateValue{Instance: "scene", Value: scene}
 	}
-	return []alice.DeviceState{{ID: d.ID, Capabilities: []alice.CapState{
+	var properties []alice.CapState
+	if st.ABL && st.HasPwr {
+		properties = []alice.CapState{{Type: alice.PropFloat,
+			State: alice.StateValue{Instance: "amperage", Value: float64(st.MilliAmps) / 1000}}}
+	}
+	return []alice.DeviceState{{ID: d.ID, Properties: properties, Capabilities: []alice.CapState{
 		{Type: alice.CapOnOff, State: alice.StateValue{Instance: "on", Value: st.On}},
 		{Type: alice.CapRange, State: alice.StateValue{Instance: "brightness", Value: percent(st.Bri)}},
 		{Type: alice.CapColor, State: color},
@@ -316,7 +462,7 @@ func (d *Device) command(a *alice.Action) (map[string]any, func(*status), string
 			c := int(v)
 			// fx 0 - эффект «Solid»: иначе цвет менялся бы внутри эффекта пресета.
 			seg := map[string]any{"col": [][]int{{c >> 16 & 0xFF, c >> 8 & 0xFF, c & 0xFF}}, "fx": 0}
-			return map[string]any{"on": true, "seg": []any{seg}}, func(s *status) { s.On, s.Color, s.PS = true, c, -1 }, ""
+			return map[string]any{"on": true, "seg": []any{seg}}, func(s *status) { s.On, s.Color, s.White, s.PS = true, c, 0, -1 }, ""
 		case "scene":
 			scene, _ := a.State.Value.(string)
 			p := d.presetFor(scene)
@@ -324,9 +470,35 @@ func (d *Device) command(a *alice.Action) (map[string]any, func(*status), string
 				return nil, nil, alice.CodeInvalidValue
 			}
 			return map[string]any{"ps": p}, func(s *status) { s.On, s.PS = true, p }, ""
+		case "temperature_k":
+			return d.temperature(a)
 		}
 	}
 	return nil, nil, alice.CodeInvalidAction
+}
+
+// temperature - команда цветовой температуры. Цвет сегмента становится белым: иначе у ленты с цветными
+// светодиодами температура не была бы видна. Белый канал - только у ленты, которая его сообщает.
+func (d *Device) temperature(a *alice.Action) (map[string]any, func(*status), string) {
+	d.mu.Lock()
+	lc := d.st.LC
+	d.mu.Unlock()
+	if lc&lcCCT == 0 {
+		return nil, nil, alice.CodeInvalidAction
+	}
+	v, ok := a.State.Value.(float64)
+	if !ok || v < minKelvin || v > maxKelvin || v != math.Trunc(v) {
+		return nil, nil, alice.CodeInvalidValue
+	}
+	k := int(v)
+	col, color, white := []int{255, 255, 255}, 0xFFFFFF, 0
+	if lc&lcWhite != 0 {
+		col, color, white = []int{0, 0, 0, 255}, 0, 255
+	}
+	seg := map[string]any{"cct": k, "col": [][]int{col}, "fx": 0}
+	return map[string]any{"on": true, "seg": []any{seg}}, func(s *status) {
+		s.On, s.Kelvin, s.Color, s.White, s.PS = true, k, color, white, -1
+	}, ""
 }
 
 // send отправляет команду по текущему соединению. Команда - один кадр: 528 байт на ESP8266, 1428 на ESP32.
@@ -473,6 +645,11 @@ type message struct {
 		Arch string `json:"arch"`
 		MAC  string `json:"mac"`
 		Ver  string `json:"ver"`
+		Leds *struct {
+			LC     *int `json:"lc"`
+			Pwr    *int `json:"pwr"`
+			MaxPwr *int `json:"maxpwr"`
+		} `json:"leds"`
 	} `json:"info"`
 	Error *int `json:"error"`
 }
@@ -480,6 +657,7 @@ type message struct {
 type segment struct {
 	ID  int               `json:"id"`
 	Col []json.RawMessage `json:"col"`
+	CCT *int              `json:"cct"`
 }
 
 // apply применяет сообщение ленты и сообщает, изменилось ли то, что видит Алиса.
@@ -498,12 +676,15 @@ func (d *Device) apply(data []byte) bool {
 		return false
 	}
 	d.mu.Lock()
-	defer d.mu.Unlock()
+	d.loadLocked()
 	before, had := d.st, d.have
 	if m.Info != nil {
 		d.st.Name, d.st.Arch, d.st.Version = m.Info.Name, m.Info.Arch, m.Info.Ver
 		if mac := colonMAC(m.Info.MAC); mac != "" {
 			d.st.MAC = mac
+		}
+		if l := m.Info.Leds; l != nil {
+			d.applyLeds(l.LC, l.Pwr, l.MaxPwr)
 		}
 	}
 	if s := m.State; s != nil {
@@ -524,11 +705,50 @@ func (d *Device) apply(data []byte) bool {
 		if i >= 0 && len(s.Seg[i].Col) > 0 {
 			if c, ok := parseColor(s.Seg[i].Col[0]); ok {
 				d.st.Color = c
+				d.st.White = parseWhite(s.Seg[i].Col[0])
 			}
+		}
+		if i >= 0 && s.Seg[i].CCT != nil {
+			d.st.setCCT(*s.Seg[i].CCT)
 		}
 		d.have = true
 	}
-	return d.st != before || d.have != had
+	changed := d.st != before || d.have != had
+	c, renew := d.st.caps(), d.st.caps() != before.caps()
+	d.mu.Unlock()
+	if renew {
+		d.saveCaps(c)
+		if d.ListChanged != nil {
+			d.ListChanged()
+		}
+	}
+	return changed
+}
+
+// applyLeds применяет сведения о светодиодах; d.mu захвачен. maxpwr 0 значит, что ABL выключен: тогда
+// и pwr 0 - не ток ленты, а «не известно». Чего лента не прислала, остаётся прежним.
+func (d *Device) applyLeds(lc, pwr, maxpower *int) {
+	if lc != nil {
+		d.st.LC = *lc
+	}
+	if maxpower != nil {
+		d.st.ABL = *maxpower > 0
+		if !d.st.ABL {
+			d.st.MilliAmps, d.st.HasPwr = 0, false
+		}
+	}
+	if pwr != nil && d.st.ABL && *pwr >= 0 && *pwr <= maxPwr {
+		d.st.MilliAmps, d.st.HasPwr = *pwr, true
+	}
+}
+
+// parseWhite - белый канал цвета WLED [r,g,b,w]; нет его - 0.
+func parseWhite(raw json.RawMessage) int {
+	var arr []int
+	if json.Unmarshal(raw, &arr) == nil && len(arr) >= 4 {
+		return min(255, max(0, arr[3]))
+	}
+	return 0
 }
 
 // parseColor разбирает цвет WLED: массив [r,g,b] или [r,g,b,w] или строку "RRGGBB".

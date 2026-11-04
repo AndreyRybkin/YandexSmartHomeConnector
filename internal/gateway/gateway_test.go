@@ -497,3 +497,59 @@ func TestRefreshOnStart(t *testing.T) {
 		t.Fatal("пауза не прервана")
 	}
 }
+
+// Телевизор LG: без приложений режима нет и профиль прежний, со списком - режим program, правка списка
+// не теряет входы. У Samsung подсветки нет.
+func TestTVApps(t *testing.T) {
+	g := newGateway(t)
+	cfg := baseConfig()
+	cfg.Devices["tv"] = config.Device{Name: "Телевизор", Source: config.SourceWebOS, Host: "127.0.0.1:1"}
+	cfg.Devices["samsung"] = config.Device{Name: "Телевизор 2", Source: config.SourceSamsungTV, Host: "127.0.0.2:1"}
+	if err := g.Apply(cfg); err != nil {
+		t.Fatal(err)
+	}
+	has := func(id string, typ, instance string) bool {
+		for _, c := range hc(t, g, id).Info()[0].Capabilities {
+			if c.Type != typ {
+				continue
+			}
+			switch p := c.Parameters.(type) {
+			case alice.ModeParams:
+				if p.Instance == instance {
+					return true
+				}
+			case alice.InstanceParams:
+				if p.Instance == instance {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	if has("tv", alice.CapMode, "program") || !has("tv", alice.CapToggle, "backlight") || !has("tv", alice.CapMode, "input_source") {
+		t.Fatalf("без приложений: %+v", hc(t, g, "tv").Info())
+	}
+	if has("samsung", alice.CapToggle, "backlight") || has("samsung", alice.CapMode, "program") {
+		t.Fatalf("Samsung: %+v", hc(t, g, "samsung").Info())
+	}
+	cfg = cfg.Clone()
+	c := cfg.Devices["tv"]
+	c.Apps = map[string]string{"one": "example.app.one", "two": "example.app.two"}
+	cfg.Devices["tv"] = c
+	if err := g.Apply(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !has("tv", alice.CapMode, "program") || !has("tv", alice.CapMode, "input_source") {
+		t.Fatalf("с приложениями: %+v", hc(t, g, "tv").Info())
+	}
+	for _, m := range hc(t, g, "tv").Profile.Modes {
+		if m.Instance == "program" && (m.Values["example.app.two"] != "two" || m.Option != "TV.App") {
+			t.Fatalf("режим: %+v", m)
+		}
+	}
+	for _, c := range hc(t, g, "tv").Info()[0].Capabilities {
+		if p, ok := c.Parameters.(alice.ModeParams); ok && p.Instance == "program" && len(p.Modes) != 2 {
+			t.Fatalf("режимы: %+v", p.Modes)
+		}
+	}
+}

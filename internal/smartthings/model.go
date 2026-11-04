@@ -270,7 +270,7 @@ func toCelsius(f float64) float64 {
 // scalar - значение атрибута для прибора: строка как есть, число - float64, флаг - bool.
 // Списки и объекты в состояние не попадают. Температура в °F - в °C: шлюз работает в
 // градусах Цельсия. Энергия в Wh - в кВт·ч, как ждёт Алиса, а значения в mWh и kVAh шлюз не
-// передаёт: их нельзя перевести в кВт·ч без догадки.
+// передаёт: их нельзя перевести в кВт·ч без догадки. Объём газа в ccf - в м³, ток в mA - в А.
 func scalar(v AttrValue, s *Schema) (any, bool) {
 	var x any
 	if len(v.Value) == 0 || json.Unmarshal(v.Value, &x) != nil {
@@ -290,12 +290,57 @@ func scalar(v AttrValue, s *Schema) (any, bool) {
 			return t / 1000, true
 		case "mWh", "kVAh":
 			return nil, false
+		case "ccf":
+			return t * cubicMetersPerCcf, true
+		case "mA":
+			return t / 1000, true
 		}
 		return t, true
 	case bool:
 		return t, true
 	}
 	return nil, false
+}
+
+// cubicMetersPerCcf - кубометров в сотне кубических футов, ccf.
+const cubicMetersPerCcf = 2.83168
+
+// numberField - поле-число атрибута-объекта: шлюз хранит его отдельным значением «атрибут.поле».
+type numberField struct {
+	Name string
+	// Divisor переводит значение устройства в единицу Алисы.
+	Divisor float64
+	// Counter - счётчик: отрицательное значение значит, что устройство счётчика не знает, Алиса его не получает.
+	Counter bool
+}
+
+// objectFields - атрибуты-объекты, из которых шлюз берёт числа. Отчёт о расходе сообщает энергию в Wh, а
+// мощность в Вт; расход воды - в мл: так его понимает Home Assistant.
+var objectFields = map[string][]numberField{
+	"powerConsumptionReport.powerConsumption":           {{Name: "energy", Divisor: 1000, Counter: true}, {Name: "power", Divisor: 1}},
+	"samsungce.waterConsumptionReport.waterConsumption": {{Name: "cumulativeAmount", Divisor: 1_000_000, Counter: true}},
+}
+
+// fieldValues - поля атрибута-объекта key, которые сообщило устройство: имя значения и число. nil вместо
+// числа - поле есть, но Алисе его передавать нельзя.
+func fieldValues(key string, v AttrValue) map[string]*float64 {
+	var obj map[string]any
+	if len(v.Value) == 0 || json.Unmarshal(v.Value, &obj) != nil {
+		return nil
+	}
+	out := map[string]*float64{}
+	for _, f := range objectFields[key] {
+		x, ok := obj[f.Name].(float64)
+		switch {
+		case !ok && obj[f.Name] == nil:
+		case !ok || (f.Counter && x < 0):
+			out[Key(key, f.Name)] = nil
+		default:
+			x /= f.Divisor
+			out[Key(key, f.Name)] = &x
+		}
+	}
+	return out
 }
 
 // setpointRange - пределы уставки из атрибута вроде coolingSetpointRange в °C. unit - единица, если у

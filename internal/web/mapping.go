@@ -75,6 +75,9 @@ func (s *Server) previewProfile(w http.ResponseWriter, sess *session, id, field 
 	if dc.Source == config.SourceDeLonghi {
 		forDevice = profile.Merge(profile.DeLonghiLayer(dc.Recipes, dc.DefaultDrink), next)
 	}
+	if dc.Source == config.SourceWebOS && len(dc.Apps) > 0 {
+		forDevice = profile.Merge(profile.TVAppsLayer(dc.Apps, cfg.Profiles[haType]), next)
+	}
 	p, err := profile.Resolve(haType, cfg.Profiles[haType], forDevice)
 	if err != nil {
 		s.renderDevice(w, sess, http.StatusBadRequest, id, &draft{section: field, err: err.Error(), profile: next})

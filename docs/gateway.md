@@ -54,6 +54,8 @@ ThinQ Connect (раздел 7.5), приборами Home Connect в домаш�
   которого Яндекс получает токены для запросов к шлюзу.
 - **Профиль прибора LG** - описание прибора в ThinQ Connect: свойства,
   их значения и пределы, коды уведомлений и камеры.
+- **Профиль энергии** - список свойств потребления прибора LG в
+  ThinQ Connect. Прибор без него показания энергии не имеет.
 - **Камера** - часть прибора LG со своими свойствами, например
   морозильная камера холодильника.
 - **Источник** - откуда шлюз берёт прибор: демо-прибор, облако
@@ -71,6 +73,9 @@ ThinQ Connect (раздел 7.5), приборами Home Connect в домаш�
   ссылку и код, владелец вводит код на странице Home Connect.
 - **Поток событий** - соединение, по которому облако сообщает об
   изменениях приборов сразу, без опроса.
+- **CCT** - белый свет с настраиваемой цветовой температурой. Лента WLED
+  сообщает, что умеет его, битом 2 в `info.leds.lc`.
+- **ABL** - ограничение тока в WLED. Оно же считает примерный ток ленты.
 - **WLED** - прошивка для светодиодных лент на ESP32 и ESP8266 с API в
   домашней сети.
 - **Пресет** - сохранённое на ленте WLED состояние: цвет, эффект и
@@ -413,6 +418,7 @@ MQTT, опубликуйте порт только для домашней се�
 | `devices.<id>.location` | - | камера прибора LG из его профиля, например `FREEZER`, или компонент устройства SmartThings, например `freezer`; пусто - камера по умолчанию или `main` |
 | `devices.<id>.mac` | - | MAC телевизора для Wake-on-LAN; пусто - тот, что сообщил телевизор |
 | `devices.<id>.broadcast` | `255.255.255.255` | широковещательный адрес для Wake-on-LAN, например `192.168.1.255` |
+| `devices.<id>.apps` | - | режим Алисы от `one` до `ten` -> идентификатор приложения webOS, только у `webos`; пусто - режима `program` нет |
 | `devices.<id>.serial` | - | серийный номер кофемашины De'Longhi |
 | `devices.<id>.pin` | - | подтверждённый отпечаток сертификата кофемашины, 64 шестнадцатеричных знака |
 | `devices.<id>.profile_id` | `1` | профиль пользователя кофемашины для напитков, от 0 до 15 |
@@ -470,6 +476,10 @@ MQTT, опубликуйте порт только для домашней се�
    указать на чужой компьютер. `mac` - вида `AA:BB:CC:DD:EE:FF` или
    через `-`, шлюз хранит его заглавными через двоеточие. `broadcast` -
    частный или loopback IPv4 или `255.255.255.255`.
+   `apps` задаётся только для `webos`: не больше 10 записей, ключи - от
+   `one` до `ten`, идентификатор - от 1 до 128 латинских букв, цифр, точек,
+   `_` и `-`. Одно приложение - у одного режима: по приложению на экране шлюз
+   называет Алисе режим. Правка `apps` переподключает телевизор.
 9. Строки разделов `yandex`, `homeconnect`, `thinq`, `delonghi` и
    `smartthings` и `metrics.token` - до 1024 байт. В `redirect_uris` и
    `trusted_proxies` - не больше 16 записей. `homeconnect.api_url` и
@@ -890,7 +900,8 @@ docker compose exec -T hcgateway /hcgateway -config /config/config.yaml web-user
    комната «Кухня»». Если в той же комнате уже есть прибор с таким же
    именем без учёта регистра, страница предупреждает: голосом их не
    различить. Сохранить такое имя можно.
-3. Вкладки: «Прибор» - имя, комната, значок, поля источника, рецепты и
+3. Вкладки: «Прибор» - имя, комната, значок, поля источника, приложения
+   телевизора LG, рецепты и
    сертификат кофемашины, связь с телевизором, перевод между облаком и
    домашней сетью (раздел 7.3.4), раздел «Удаление и сброс»; «Состояние и
    команды»; «Сопоставления» - сводка, несопоставленные значения, редактор
@@ -1440,7 +1451,7 @@ docker compose exec -T hcgateway /hcgateway -config /config/config.yaml web-user
 | `REMOTE_CONTROL_DISABLED` | удалённый старт на приборе не разрешён |
 | `DEVICE_UNREACHABLE` | прибор недоступен или не ответил за 3 с |
 | `DEVICE_BUSY` | прибор занят |
-| `NOT_ENOUGH_WATER` | мало воды: чайник с `error/code` `01`, отказ кофемашины с тревогой воды |
+| `NOT_ENOUGH_WATER` | мало воды: чайник с `error/code` `1` или `2`, отказ кофемашины с тревогой воды |
 | `CONTAINER_EMPTY` | отказ кофемашины с тревогой `NoCoffee` |
 | `CONTAINER_FULL` | отказ кофемашины с тревогой `Waste` |
 | `DRIP_TRAY_FULL` | отказ кофемашины с тревогой `Drain` |
@@ -1520,8 +1531,8 @@ docker compose exec -T hcgateway /hcgateway -config /config/config.yaml web-user
 | `default_program` | программа для «включи», если не выбрана другая; при `on_off: power` - программа для «включи» уже включённого прибора |
 | `default_options` | параметры программы при запуске; `200` и `200.0` - одно и то же число |
 | `modes` | список: `instance` и либо `programs` (программа -> режим Алисы), либо `option` и `values` (значение -> режим Алисы). С `option` необязательны запасная настройка `fallback_option` и другие значения прибора `also_values` (значение -> режим Алисы) |
-| `ranges` | список: `instance`, `option`, `unit`, необязательные `min`, `max`, `precision` |
-| `toggles` | список: `instance` и `setting` - флаг или свойство со значениями `on` и `off`. Без `setting` бывает только `pause`: пауза и продолжение программы командами; `optional: true` - только если прибор описывает настройку и разрешает её менять |
+| `ranges` | список: `instance`, `option`, `unit`, необязательные `min`, `max`, `precision` и запасная настройка `fallback_option`: она действует, если у прибора нет `option` |
+| `toggles` | список: `instance` и `setting` - флаг или свойство со значениями `on` и `off`. Без `setting` бывает только `pause`: пауза и продолжение программы командами; `optional: true` - только если прибор описывает настройку, разрешает её менять и, если перечисляет её значения, называет среди них `on` |
 | `color` | цвет: `setting` - команда цвета с `hue` и `saturation` - значениями оттенка и насыщенности, `hue_max` - верх шкалы оттенка прибора, по умолчанию 360; `temperature` - цветовая температура в кельвинах с пределами `min_k` и `max_k`. Задаётся HSV, температура или оба; пустой `color` - умения нет |
 | `properties` | список: `type` (`event` или `float`), `instance`, `status`, `unit`; для `event` - `values`; для `float` - пересчёт `convert` или `scale` и `offset`, объём `volume`, границы `min` и `max`; `if_known: true` - свойство есть, только если прибор описывает `status` в списке событий. Оставшееся время программы - `float` `remaining_time` (правила ниже) |
 | `events.button` | событие прибора -> `click`, `double_click` или `long_press`. Событие - имя, шаблон с `*` или переход значения `состояние=значение` |
@@ -1643,26 +1654,46 @@ unexpected type at 38: number».
 
 | Тип Home Connect | Устройство Алисы | Умения | Раздел `events` |
 |---|---|---|---|
-| `Oven` | `cooking` | программа (`program`), температура 30-275 °C, пауза, подсветка камеры; свойства: дверца, температура в камере | `click` - программа закончилась, `double_click` - разогрелась; `water_level` - вода |
-| `Dishwasher` | `dishwasher` | программа (`dishwashing`), пауза; свойства: дверца, протечка `water_leak` | `click`; `double_click` - напоминание об уходе и фильтре; `long_press` - фильтр, слив, нагреватель, давление воды; `food_level` - соль, `empty` и при блокировке программы; `water_level` - ополаскиватель |
-| `Washer` | `washing_machine` | программа, пауза; свойства: дверца, протечка `water_leak` | `click`; `double_click` - чистка барабана, мало средства i-Dos; `long_press` - насос, пена, отжим, авария, давление воды; `water_level` - средство i-Dos |
-| `WasherDryer` | `washing_machine` | программа `LaundryCare.WasherDryer.Program.*`: `Cotton` - `normal`, `Cotton.Eco4060` - `eco`, `EasyCare` - `one`, `Mix` - `two`, `WashAndDry.60` - `three`, `WashAndDry.90` - `four`; пауза; свойства: дверца, протечка `water_leak` | как у `Washer` |
-| `Dryer` | `washing_machine` | программа, пауза; свойство: дверца | `click`; `double_click` - сушка закончилась, защита от складок ещё идёт; `long_press` - конденсат, фильтр, обслуживание |
-| `CoffeeMaker` | `cooking.coffee_maker` | питание, напиток (`coffee_mode`) | `double_click` - накипь и очистка; `long_press` - поддон и молоко; `food_level` - зёрна; `water_level` - вода, в том числе мало воды и снятый бак, если прибор описывает эти события |
-| `Hood` | `ventilation` | вытяжка, скорость (`fan_speed`), подсветка | `double_click` - пора помыть жировой фильтр |
-| `Refrigerator`, `FridgeFreezer`, `Freezer` | `cooking` | температура; свойство: дверца | - |
-| `WineCooler` | `cooking` | температура винной камеры; свойство: дверца | - |
-| `CleaningRobot` | `vacuum_cleaner` | уборка, программа, пауза; свойство: заряд `BSH.Common.Status.BatteryLevel` | `click`; `double_click` - пылесборник и фильтр; `long_press` - застрял, не нашёл базу, потерялся, поднят, вынут контейнер |
-| `AirConditioner` | `thermostat.ac` | питание; режим `thermostat` из программ `Auto`, `Cool`, `Dry`, `Fan`, `Heat`; температура `SetpointTemperature` | - |
-| `Microwave` | `cooking` | программа: мощность от `90Watt` до `1000Watt` - режимы от `one` до `seven`, `Max` - `max`; пауза; свойство: дверца | `click` |
+| `Oven` | `cooking` | программа (`program`), температура 30-275 °C, пауза, подсветка камеры; свойства: дверца, температура в камере | `click` - программа закончилась, `double_click` - разогрелась, `long_press` - авария; `water_level` - вода |
+| `Dishwasher` | `dishwasher` | программа (`dishwashing`), пауза, световая точка; свойства: дверца, протечка `water_leak` | `click`; `double_click` - напоминание об уходе и фильтре; `long_press` - фильтр, слив, нагреватель, давление воды; `food_level` - соль, `empty` и при блокировке программы; `water_level` - ополаскиватель |
+| `Washer` | `washing_machine` | программа, скорость отжима, пауза, свет в барабане, без звука; свойства: дверца, протечка `water_leak` | `click`; `double_click` - чистка барабана, мало средства i-Dos; `long_press` - насос, пена, отжим, авария, давление воды; `water_level` - средство i-Dos |
+| `WasherDryer` | `washing_machine` | программа `LaundryCare.WasherDryer.Program.*`: `Cotton` - `normal`, `Cotton.Eco4060` - `eco`, `EasyCare` - `one`, `Mix` - `two`, `WashAndDry.60` - `three`, `WashAndDry.90` - `four`; скорость отжима, степень сушки, пауза, свет в барабане, без звука; свойства: дверца, протечка `water_leak` | как у `Washer` |
+| `Dryer` | `washing_machine` | программа, степень сушки, пауза, без звука; свойство: дверца | `click`; `double_click` - сушка закончилась, защита от складок ещё идёт; `long_press` - конденсат, фильтр, обслуживание |
+| `CoffeeMaker` | `cooking.coffee_maker` | питание, напиток (`coffee_mode`), подогрев чашек; свойство: счётчик кофе | `double_click` - накипь и очистка; `long_press` - поддон и молоко; `food_level` - зёрна; `water_level` - вода, в том числе мало воды и снятый бак, если прибор описывает эти события |
+| `Hood` | `ventilation` | вытяжка, скорость (`fan_speed`), интенсивный режим (`work_speed`), подсветка, яркость | `click` и `long_press` - кнопка избранного; `double_click` - пора помыть жировой фильтр |
+| `Refrigerator`, `FridgeFreezer`, `Freezer` | `cooking` | температура, подсветка, яркость; свойство: дверца | `double_click` - дверь открыта слишком долго; `long_press` - морозильная камера нагрелась, кроме `Refrigerator` |
+| `WineCooler` | `cooking` | температура винной камеры, подсветка, яркость; свойство: дверца | - |
+| `CleaningRobot` | `vacuum_cleaner` | уборка, программа, режим уборки (`cleanup_mode`), мощность всасывания (`work_speed`), пауза; свойство: заряд `BSH.Common.Status.BatteryLevel` | `click`; `double_click` - пылесборник и фильтр; `long_press` - застрял, не нашёл базу, потерялся, поднят, вынут контейнер |
+| `AirConditioner` | `thermostat.ac` | питание; режим `thermostat` из программ `Auto`, `Cool`, `Dry`, `Fan`, `Heat`; температура `SetpointTemperature`; скорость вентилятора (`fan_speed`) | `long_press` - авария |
+| `Microwave` | `cooking` | программа: мощность от `90Watt` до `1000Watt` - режимы от `one` до `seven`, `Max` - `max`; пауза; свойство: дверца | `click`; `long_press` - авария |
 | `WarmingDrawer` | `cooking` | подогрев (`program`), режим `heat`: `Low`, `Medium`, `High`; свойство: дверца | `click` |
-| `Hob`, `Cooktop` | `cooking` | питание | - |
-| `CookProcessor` | `cooking.multicooker` | питание | - |
+| `Hob`, `Cooktop` | `cooking` | питание, вытяжка в панели (`fan_speed`) | `click` и `long_press` - кнопка избранного; `double_click` - сработал таймер на приборе |
+| `CookProcessor` | `cooking.multicooker` | питание | `click` - программа закончилась, `double_click` - отмена программы |
+
+Переключатель `controls_locked` по `BSH.Common.Setting.ChildLock` есть у
+`Oven`, `Dishwasher`, `Washer`, `WasherDryer`, `Dryer`, `CoffeeMaker`,
+`Microwave`, `Hob`, `Cooktop` и `CookProcessor`, если прибор описывает эту
+настройку и разрешает её менять.
+У `Washer` и `WasherDryer` режим `work_speed` - скорость отжима
+`LaundryCare.Washer.Option.SpinSpeed`: `RPM400` - `slow`, `RPM800` - `medium`,
+`RPM1200` - `fast`, `RPM1400` - `turbo`, `RPM1600` - `max`. `RPM600` и `RPM1000`
+в Алису не передаются.
 
 Переход `BSH.Common.Status.OperationState` в `Error` - `long_press` у `Oven`,
 `Dishwasher`, `Washer`, `WasherDryer`, `Dryer`, `Microwave`, `CleaningRobot`,
 `CoffeeMaker` и `AirConditioner`. `ActionRequired` кнопку не нажимает: прибор
 ждёт человека и при обычной работе.
+
+Программы и режимы Алисы. Программа в режиме есть, только если её сообщает
+прибор.
+
+| Тип | Префикс программы | Программа - режим |
+|---|---|---|
+| `Oven` | `Cooking.Oven.Program.HeatingMode.` | `HotAir` - `baking`, `TopBottomHeating` - `normal`, `HotAirEco` - `eco`, `PizzaSetting` - `pizza`, `PreHeating` - `preheat`, `SlowCook` - `slow_cook`, `GrillLargeArea` - `frying`, `Defrost` - `one`, `HotAirGrilling` - `two`, `GrillSmallArea` - `three`, `BottomHeating` - `four`, `TopBottomHeatingEco` - `five`, `IntensiveHeat` - `six`, `FrozenHeatupSpecial` - `ten`, `HotAir100Steam` - `steam` |
+| `Dishwasher` | `Dishcare.Dishwasher.Program.` | `Auto2` - `auto`, `Eco50` - `eco`, `Quick45` - `express`, `Intensiv70` - `intensive`, `Normal65` - `normal`, `Glas40` - `glass`, `PreRinse` - `pre_rinse`, `NightWash` - `quiet`, `Auto1` - `one`, `Auto3` - `two`, `GlassCare` - `three`, `MachineCare` - `four`, `Quick65` - `five`, `Normal45` - `six`, `Intensiv45` - `seven`, `AutoHalfLoad` - `eight`, `Super60` - `nine`, `MixedLoad` - `ten` |
+| `Washer` | `LaundryCare.Washer.Program.` | `Cotton` - `normal`, `EasyCare` - `one`, `Mix` - `two`, `DelicatesSilk` - `three`, `Wool` - `four`, `Sensitive` - `five`, `Auto30` - `auto`, `Super153045.Super1530` - `express`, `Cotton.CottonEco` - `eco`, `Mix.NightWash` - `quiet`, `Auto40` - `six`, `Auto60` - `seven`, `Towels` - `eight`, `ShirtsBlouses` - `nine`, `SportFitness` - `ten` |
+| `Dryer` | `LaundryCare.Dryer.Program.` | `Cotton` - `normal`, `Synthetic` - `one`, `Mix` - `two`, `Super40` - `express`, `Towels` - `three`, `Jeans` - `four`, `Delicates` - `five`, `Hygiene` - `six`, `Blankets` - `seven`, `BusinessShirts` - `eight`, `TimeCold` - `nine`, `TimeWarm` - `ten` |
+| `CoffeeMaker` | `ConsumerProducts.CoffeeMaker.Program.Beverage.` | `Espresso` - `espresso`, `Coffee` - `americano`, `Cappuccino` - `cappuccino`, `CaffeLatte` - `latte`, `LatteMacchiato` - `one`, `EspressoDoppio` - `double_espresso`, `Ristretto` - `two`, `EspressoMacchiato` - `three`, `XLCoffee` - `four`, `CaffeGrande` - `five`, `MilkFroth` - `six`, `WarmMilk` - `seven`, `HotWater` - `eight` |
 
 Программа духовки по умолчанию - `HotAir` на 180 °C, посудомойки -
 `Auto2`, шкафа для подогрева - `WarmingDrawer`, стиральной и
@@ -1721,6 +1752,91 @@ unexpected type at 38: number».
     профиль есть у обоих.
 13. Профиль `WasherDryer` составлен по документации Home Connect, на настоящей
     машине не проверен.
+14. Кнопка избранного на вытяжке и варочной панели: короткое нажатие
+    `BSH.Common.Event.Favorite.001.ExternalTrigger` - `click`, удержание от
+    4 с `BSH.Common.Event.Favorite.002.ExternalTrigger` - `long_press`.
+    Действие кнопки назначают в приложении Home Connect, иначе прибор не
+    пришлёт событие.
+15. Тревоги холодильных приборов понимаются под двумя именами.
+    `Refrigerator`:
+    `Refrigeration.FridgeFreezer.Event.DoorAlarmRefrigerator` и
+    `Refrigeration.Common.Event.Door.AlarmRefrigerator`. `Freezer`:
+    `Refrigeration.FridgeFreezer.Event.DoorAlarmFreezer`,
+    `Refrigeration.Common.Event.Door.AlarmFreezer`,
+    `Refrigeration.FridgeFreezer.Event.TemperatureAlarmFreezer` и
+    `Refrigeration.Common.Event.Freezer.TemperatureAlarm`.
+    `FridgeFreezer` - все.
+16. Таймер на приборе `BSH.Common.Event.AlarmClockElapsed` есть только у
+    варочной панели. У духовки все три значения кнопки заняты, а `long_press` -
+    авария: таймер запускал бы сценарий аварии.
+17. Отмена программы `BSH.Common.Event.ProgramAborted` есть только у кухонного
+    процессора. У посудомойки, микроволновки и робота она приходила бы и после
+    команды «выключи» от Алисы и запускала бы сценарий неполадки.
+18. Режимы робота-пылесоса. `cleanup_mode` по
+    `ConsumerProducts.CleaningRobot.Option.CleaningMode`: у Roxxter
+    `Silent` - `quiet`, `Standard` - `normal`, `Power` - `express`; у
+    Spotless `IntelligentMode` - `auto`, `VacuumOnly` - `dry_cleaning`,
+    `MopOnly` - `wet_cleaning`, `VacuumAndMop` - `mixed_cleaning`,
+    `MopAfterVacuum` - `smart`. `work_speed` по
+    `ConsumerProducts.CleaningRobot.Option.SuctionPower`, только у
+    Spotless: `Silent` - `min`, `Standard` - `medium`, `Max` - `max`.
+19. Интенсивный режим вытяжки `work_speed` по
+    `Cooking.Common.Option.Hood.IntensiveLevel`: `IntensiveStageOff` -
+    `normal`, `IntensiveStage1` - `fast`, `IntensiveStage2` - `turbo`. Если
+    выбрать его до запуска, шлюз отправит прибору и его, и `VentingLevel`
+    из `default_options`. Документация описывает программу как выбор
+    скорости или интенсивного режима. [уточнить: принимает ли вытяжка оба
+    параметра сразу]
+20. Яркость - умение `brightness` по
+    `Cooking.Common.Setting.LightingBrightness` или
+    `Cooking.Hood.Setting.LightingBrightness` у вытяжки и
+    `Refrigeration.Common.Setting.Light.Internal.Brightness` у холодильных
+    приборов. Пределы шлюз берёт только из описания прибора, поэтому без
+    настройки или её пределов умения нет.
+21. Вытяжка в панели `fan_speed` по `Cooking.Hob.Setting.Ventilation`,
+    префикс значений `Cooking.Hob.EnumType.Ventilation.`: `Level01` -
+    `one`, `Level03` - `two`, `Level05` - `three`, `Level07` - `four`,
+    `Level09` - `five`, `Level11` - `six`, `Level13` - `seven`, `Level15` -
+    `eight`, `Level17` - `nine`, `BoostLevel1` - `turbo`, `BoostLevel2` -
+    `max`. `Off` и `AfterRun` в Алису не передаются: при них состояния
+    режима нет.
+22. Необязательные переключатели есть, только если прибор описывает
+    настройку и разрешает её менять. `backlight`:
+    `Refrigeration.Common.Setting.Light.Internal.Power` у холодильных
+    приборов, `Dishcare.Dishwasher.Setting.InfoLight` у посудомойки,
+    `LaundryCare.Common.Setting.DrumLight.Active` у `Washer` и
+    `WasherDryer`. `mute`: `LaundryCare.Common.Setting.Sound.Mute` у
+    `Washer`, `WasherDryer` и `Dryer`. `keep_warm`:
+    `ConsumerProducts.CoffeeMaker.Setting.CupWarmer`. `InfoLight`,
+    `DrumLight` и `Sound.Mute` есть в открытой интеграции
+    `homeconnect_local_hass`, в документации облака их нет.
+23. Степень сушки `heat` по `LaundryCare.Dryer.Option.DryingTarget`:
+    `GentleDry` - `min`, `IronDry` - `low`, `CupboardDry` - `normal`,
+    `CupboardDryPlus` - `high`, `ExtraDry` - `max`. Алиса назовёт её
+    режимом нагрева: своего имени у Яндекса нет.
+24. Счётчик кофе `meter` - значение
+    `ConsumerProducts.CoffeeMaker.Status.BeverageCounterCoffee`, без
+    единицы. Другие напитки он не считает. Свойство есть у всех кофемашин:
+    через облако шлюз не знает заранее, сообщает ли машина этот счётчик. У
+    машины без счётчика свойство остаётся без значения.
+25. Скорость вентилятора кондиционера `fan_speed` по
+    `HeatingVentilationAirConditioning.AirConditioner.Option.FanSpeedMode`:
+    `Automatic` - `auto`, `Manual` - `medium`. Процент скорости Алисе не
+    передаётся.
+26. Другие имена двери и температуры.
+    `Cooking.Oven.Status.Cavity.001.DoorState` - то же, что
+    `BSH.Common.Status.DoorState`, в том числе в проверке перед запуском.
+    `Refrigeration.FridgeFreezer.Status.DoorRefrigerator` - то же, что
+    `Refrigeration.Common.Status.Door.Refrigerator`,
+    `Refrigeration.FridgeFreezer.Status.DoorFreezer` - то же, что
+    `Refrigeration.Common.Status.Door.Freezer`. Основное имя важнее.
+    Настройка температуры действует и как
+    `Refrigeration.Common.Setting.Refrigerator.SetpointTemperature` у
+    `Refrigerator` и `FridgeFreezer`,
+    `Refrigeration.Common.Setting.Freezer.SetpointTemperature` у `Freezer`,
+    если прибор не описывает основное имя (`fallback_option`).
+27. `default_options` духовки уходят во все её программы. Поэтому `KeepWarm`,
+    `Desiccation` и `Proof` в профиле нет: они получили бы 180 °C.
 
 ### 6.3. Встроенные профили LG
 
@@ -1763,7 +1879,10 @@ Home Assistant. На настоящем приборе проверен толь
    `RESERVATION` и `SETDATE`.
 5. Команда температуры духовки только записывает настройку и не шлёт
    `START`: голос не запускает нагрев сам. Запускает его отдельное
-   «включи».
+   «включи». Режим `program` тоже только записывает `cook.cookMode` без
+   `START`. Состояния режима нет: свойство только для записи, поэтому
+   Алиса не показывает выбранный режим. Если облако отвергнет такую
+   команду, Алиса получит ошибку, а духовка не включится (раздел 10).
 6. Режимы очистителя с вентилятором сопоставлены приблизительно:
    `SPACE_CLEAN` - `normal`, `SPOT_CLEAN` - `express`, `DIRECT_CLEAN` -
    `turbo`, `NATURE_CLEAN` - `auto`. [уточнить: подходят ли эти значения
@@ -1773,31 +1892,62 @@ Home Assistant. На настоящем приборе проверен толь
 8. Тип LG без встроенного профиля добавляется только со своим профилем,
    в котором задан `yandex_type`.
 9. ThinQ Connect знает 30 типов приборов, и встроенных профилей нет у
-   четырёх из них: у них нет управления, которое понимает Алиса.
+   трёх из них: у них нет управления, которое понимает Алиса.
    Телевизоров в ThinQ Connect нет: телевизор LG - источник `webos`
    (раздел 7.8).
+10. «Выключи» вытяжки ставит `ventilation.fanSpeed` = 0, а «включи» - 1, а
+    не прошлую скорость: команда несёт и текущую яркость (раздел 7.5.4,
+    п. 4). Вытяжка включена, пока скорость не 0. У микроволновки `on_off`
+    нет: вытяжка там - не весь прибор.
+11. Пауза робота-пылесоса - `PAUSE` в `operation.cleanOperationMode`,
+    снятие паузы - `RESUME`. Положение переключателя шлюз читает из
+    `runState.currentState`: само `operation.cleanOperationMode` не
+    читается. Снятие паузы вне паузы ничего не отправляет: иначе команда
+    запустила бы робота.
+12. Режим `work_speed` холодильника меняет флаг быстрой заморозки:
+    `refrigeration.rapidFreeze`, а у модели без него -
+    `refrigeration.expressMode` или `refrigeration.expressFridge`. Значение
+    `true` - `turbo`, `false` - `normal`. Флаг общий на прибор, поэтому
+    режим есть у каждой камеры, и обе меняют один флаг.
+13. Часть значений сопоставлена условно, потому что точных у Алисы нет:
+
+    | Тип LG | Умение | Значения |
+    |---|---|---|
+    | `DEVICE_AIR_PURIFIER_FAN` | `swing` | `OFF` - `stationary`, `ANGLE_45` - `one`, `ANGLE_60` - `two`, `ANGLE_90` - `three`, `ANGLE_140` - `four` |
+    | `DEVICE_AIR_PURIFIER_FAN`, `DEVICE_HUMIDIFIER` | `keep_warm` | нагрев воздуха `airFlow.warmMode` и тёплый пар `humidity.warmMode`: `WARM_ON`, `WARM_OFF` |
+    | `DEVICE_HUMIDIFIER` | `program` | `HUMIDIFY` - `one`, `HUMIDIFY_AND_AIR_CLEAN` - `two`, `AIR_CLEAN` - `three` |
+    | `DEVICE_DEHUMIDIFIER` | `program` | `SMART_HUMIDITY` - `smart`, `RAPID_HUMIDITY` - `fast`, `QUIET_HUMIDITY` - `quiet`, `INTENSIVE_DRY` - `intensive`, `CLOTHES_DRY` - `dry`, `AIR_CLEAN` - `normal` |
+    | `DEVICE_OVEN` | `program` | `BAKE` - `baking`, `ROAST` - `frying`, `CONVECTION_BAKE` - `one`, `CONVECTION_ROAST` - `two`, `CRISP_CONVECTION` - `three` |
+    | `DEVICE_WATER_HEATER` | `heat` | `HEAT_PUMP` - `normal`, `VACATION` - `min` |
+    | `DEVICE_SYSTEM_BOILER` | `keep_warm` | горячая вода `operation.hotWaterMode`: `ON`, `OFF` |
+    | `DEVICE_HOME_BREW` | свойство `water_level` | `recipe.beerRemain` в процентах |
+
+14. Все встроенные профили LG содержат свойство `electricity_meter` по
+    значению шлюза `energy.monthUsageKwh`. В Алисе оно появляется только
+    у прибора с профилем энергии (раздел 7.5.5).
 
 | Тип LG | Устройство Алисы | Умения | Свойства |
 |---|---|---|---|
-| `DEVICE_WASHER`, `DEVICE_DRYER`, `DEVICE_STYLER`, `DEVICE_WASHTOWER`, `DEVICE_WASHTOWER_WASHER`, `DEVICE_WASHTOWER_DRYER`, `DEVICE_WASHCOMBO_MAIN`, `DEVICE_WASHCOMBO_MINI` | `washing_machine` | запуск и остановка: `START` и `STOP` в `operation.<прибор>OperationMode`, включён по `runState.currentState` | - |
+| `DEVICE_WASHER`, `DEVICE_DRYER`, `DEVICE_STYLER`, `DEVICE_WASHTOWER`, `DEVICE_WASHTOWER_WASHER`, `DEVICE_WASHTOWER_DRYER`, `DEVICE_WASHCOMBO_MAIN`, `DEVICE_WASHCOMBO_MINI` | `washing_machine` | запуск и остановка: `START` и `STOP` в `operation.<прибор>OperationMode`, включён по `runState.currentState` | у стиральных машин - счётчик стирок `meter` по `cycle.cycleCount` |
 | `DEVICE_DISH_WASHER` | `dishwasher` | запуск и остановка: `operation.dishWasherOperationMode` | дверца `open` по `doorStatus.doorState`; `water_level` `low`, пока `dishWashingStatus.rinseRefill` = `true` |
-| `DEVICE_AIR_CONDITIONER` | `thermostat.ac` | питание `operation.airConOperationMode`; режим `thermostat` по `airConJobMode.currentJobMode`; `fan_speed` по `airFlow.windStrength`; температура `temperatureInUnits.targetTemperatureC`; `oscillation` по `windDirection.rotateUpDown` | температура `temperatureInUnits.currentTemperatureC`; влажность, PM1, PM2.5 и PM10 из `airQualitySensor` |
-| `DEVICE_AIR_PURIFIER`, `DEVICE_AIR_PURIFIER_FAN` | `purifier` | питание; режим работы `program`: у очистителя `AUTO`, `CLEAN`, `SLEEP`, у очистителя с вентилятором - значения из п. 6; скорость `fan_speed` | влажность, PM1, PM2.5, PM10; у очистителя с вентилятором - ещё температура |
-| `DEVICE_HUMIDIFIER` | `humidifier` | питание; влажность `humidity.targetHumidity`; скорость `fan_speed`; ночник `backlight` по `moodLamp.moodLampState`, значения `ON` и `OFF` | влажность, температура |
-| `DEVICE_DEHUMIDIFIER` | `humidifier` | питание; влажность `humidity.targetHumidity`; скорость `fan_speed` по `airFlow.windStrength` или `airFlow.windStrengthLevel` | влажность `humidity.currentHumidity` |
+| `DEVICE_AIR_CONDITIONER` | `thermostat.ac` | питание `operation.airConOperationMode`; режим `thermostat` по `airConJobMode.currentJobMode`, с `ENERGY_SAVING` - `eco`; `fan_speed` по `airFlow.windStrength`; `swing` по `windDirection.rotateLeftRight`: `true` - `horizontal`, `false` - `stationary`; температура `temperatureInUnits.targetTemperatureC`; `oscillation` по `windDirection.rotateUpDown`; подсветка `backlight` по `display.light`, значения `ON` и `OFF` | температура `temperatureInUnits.currentTemperatureC`; влажность, PM1, PM2.5 и PM10 из `airQualitySensor` |
+| `DEVICE_AIR_PURIFIER`, `DEVICE_AIR_PURIFIER_FAN` | `purifier` | питание; режим работы `program`: у очистителя `AUTO`, `CLEAN`, `SLEEP`, `FAST`, `SMART`, у очистителя с вентилятором - значения из п. 6; скорость `fan_speed`, `SLOW` - `quiet`. У очистителя с вентилятором ещё: ступени `WIND_1`...`WIND_10` - `one`...`ten`; `swing`, `keep_warm` (п. 13); температура `airFlow.windTemperature` | влажность, PM1, PM2.5, PM10; у очистителя с вентилятором - ещё температура |
+| `DEVICE_HUMIDIFIER` | `humidifier` | питание; режим `program` и `keep_warm` (п. 13); влажность `humidity.targetHumidity`; скорость `fan_speed`; ночник `backlight` по `moodLamp.moodLampState`, значения `ON` и `OFF` | влажность, температура |
+| `DEVICE_DEHUMIDIFIER` | `humidifier` | питание; режим `program` (п. 13); влажность `humidity.targetHumidity`; скорость `fan_speed` по `airFlow.windStrength` или `airFlow.windStrengthLevel` | влажность `humidity.currentHumidity` |
 | `DEVICE_VENTILATOR` | `ventilation` | питание `operation.ventOperationMode`; режим работы `program` по `ventJobMode.currentJobMode`: `VENT_AUTO` - `auto`, `VENT_NATURE` - `normal`, `VENT_HEAT_EXCHANGE` - `heat`; скорость `fan_speed` | PM1, PM2.5, PM10, температура. CO2 нет: прибор сообщает уровень словом, а не число ppm |
 | `DEVICE_CEILING_FAN` | `ventilation.fan` | питание `operation.ceilingfanOperationMode`; скорость `fan_speed`: `LOW`, `MID`, `HIGH`, `TURBO` | - |
-| `DEVICE_HOOD` | `ventilation` | скорость `fan_speed` по `ventilation.fanSpeed`, от 1 до 5; подсветка `backlight` по `lamp.lampEnabled` | - |
+| `DEVICE_HOOD` | `ventilation` | питание по `ventilation.fanSpeed` (п. 10); скорость `fan_speed` по `ventilation.fanSpeed`, от 1 до 5; подсветка `backlight` по `lamp.lampEnabled` | - |
 | `DEVICE_MICROWAVE_OVEN` | `cooking` | у модели с вытяжкой - скорость `fan_speed` и подсветка `backlight`, как у вытяжки | - |
-| `DEVICE_OVEN` | `cooking`, по камере | запуск и остановка; температура `temperature.targetTemperatureC` | - |
-| `DEVICE_REFRIGERATOR` | `cooking`, по камере | температура камеры `temperatureInUnits.targetTemperatureC` | дверца `open` по `doorStatus.doorState` |
+| `DEVICE_OVEN` | `cooking`, по камере | запуск и остановка; режим `program` по `cook.cookMode` (п. 5, п. 13); температура `temperature.targetTemperatureC` | - |
+| `DEVICE_REFRIGERATOR` | `cooking`, по камере | температура камеры `temperatureInUnits.targetTemperatureC`; `work_speed` (п. 12) | дверца `open` по `doorStatus.doorState` |
 | `DEVICE_KIMCHI_REFRIGERATOR` | `cooking`, по камере | - | заданная температура `temperature` по `temperature.targetTemperature`; у камеры с текстовым режимом значения нет |
 | `DEVICE_WINE_CELLAR` | `cooking`, по камере | температура камеры; яркость `brightness` в процентах по `operation.lightStatus` | - |
-| `DEVICE_WATER_HEATER` | `thermostat` | питание, если прибор разрешает его менять; температура воды; режим `heat` | температура воды |
-| `DEVICE_SYSTEM_BOILER` | `thermostat` | питание; режим `thermostat`; температура `roomTemperatureInUnits.targetTemperatureC` | температура `roomTemperatureInUnits.currentTemperatureC` |
-| `DEVICE_ROBOT_CLEANER` | `vacuum_cleaner` | запуск уборки `START` и возврат на базу `HOMING` в `operation.cleanOperationMode` | заряд `battery_level` по `battery.percent` и событием по `battery.level` |
+| `DEVICE_WATER_HEATER` | `thermostat` | питание, если прибор разрешает его менять; температура воды; режим `heat`: `AUTO`, `TURBO` и значения из п. 13 | температура воды |
+| `DEVICE_SYSTEM_BOILER` | `thermostat` | питание; режим `thermostat`; температура `roomTemperatureInUnits.targetTemperatureC`; `keep_warm` (п. 13) | температура `roomTemperatureInUnits.currentTemperatureC` |
+| `DEVICE_ROBOT_CLEANER` | `vacuum_cleaner` | запуск уборки `START` и возврат на базу `HOMING` в `operation.cleanOperationMode`; пауза `pause` (п. 11) | заряд `battery_level` по `battery.percent` и событием по `battery.level` |
 | `DEVICE_STICK_CLEANER` | `vacuum_cleaner` | - | заряд `battery_level` по `battery.percent` и событием по `battery.level` |
-| `DEVICE_COOKTOP`, `DEVICE_WATER_PURIFIER`, `DEVICE_HOME_BREW`, `DEVICE_PLANT_CULTIVATOR` | встроенного профиля нет: у них нет управления, которое понимает Алиса | - | - |
+| `DEVICE_HOME_BREW` | `other` | - | `water_level` (п. 13) |
+| `DEVICE_COOKTOP`, `DEVICE_WATER_PURIFIER`, `DEVICE_PLANT_CULTIVATOR` | встроенного профиля нет: у них нет управления, которое понимает Алиса | - | - |
 
 ### 6.4. Встроенный профиль кофемашины De'Longhi
 
@@ -1814,7 +1964,7 @@ ECAM630.75.
 | `default_program` | `DeLonghi.Recipe.6` |
 | `events.button` | `DeLonghi.Event.BeverageFinished` - `click`, `DeLonghi.Event.LoginRequired` - `long_press`, появление тревог из раздела 7.6.5 - `double_click` |
 | `events.food_level` | `DeLonghi.Alarm.NoCoffee`, при нём уровень `empty` |
-| `events.water_level` | `DeLonghi.Alarm.TankLevel`, `DeLonghi.Peripheral.WaterTankLow=true`; `DeLonghi.Alarm.TankPresence` и `DeLonghi.Peripheral.TankPresence=false`, при них уровень `empty` |
+| `events.water_level` | `DeLonghi.Alarm.TankLevel`; `DeLonghi.Alarm.TankPresence`, при нём уровень `empty` |
 | `tile` | `status: DeLonghi.Status.Pouring`, `label: налито`, `unit: unit.percent` |
 | `properties` | `float` `meter` по `DeLonghi.Status.Brews` |
 
@@ -1831,7 +1981,8 @@ ECAM630.75.
 
 Телевизоры в домашней сети - типы `LGTV` (раздел 7.8) и `SamsungTV`
 (раздел 7.9). Функции у обоих одинаковые, отличаются только имена
-входов. Профили проверены на настоящих телевизорах в домашней сети.
+входов и умениями только у LG. Профили проверены на настоящих телевизорах в
+домашней сети, кроме `backlight` и `program`.
 
 | Поле | Значение |
 |---|---|
@@ -1839,7 +1990,7 @@ ECAM630.75.
 | `on_off` | `power`: `setting: TV.Power`, `on: on`, `off: off` |
 | `modes` | `input_source` по `TV.Input`: у LG `HDMI_1`-`HDMI_4` - режимы от `one` до `four`, у Samsung `HDMI1`-`HDMI4`; эфир `LIVE_TV` - `five` |
 | `ranges` | `volume` по `TV.Volume`, `unit.percent`; `channel` по `TV.Channel` |
-| `toggles` | `mute` по `TV.Mute`; `pause` по `TV.Playback`: `on: paused`, `off: playing` |
+| `toggles` | `mute` по `TV.Mute`; `pause` по `TV.Playback`: `on: paused`, `off: playing`; у LG `backlight` по `TV.Screen`: `on: on`, `off: off` |
 
 | Функция | Что |
 |---|---|
@@ -1849,7 +2000,16 @@ ECAM630.75.
 | `TV.Channel` | номер канала, от 1 до 9999 |
 | `TV.Input` | источник сигнала: вход телевизора или `LIVE_TV` |
 | `TV.Playback` | воспроизведение: `playing` или `paused` |
-| `TV.App` | приложение на экране, только для чтения, у LG |
+| `TV.Screen` | экран включённого телевизора: `on` или `off`, у LG |
+| `TV.App` | приложение на экране, у LG; настройка только при заданном `apps` |
+
+Умение `backlight` у LG - экран: телевизор гасит его, а звук продолжает играть.
+У OLED подсветки нет, поэтому смысл только близкий.
+
+`apps` из настроек прибора (раздел 3) шлюз превращает в слой профиля под
+`devices.<id>.profile`: к режимам типа добавляется `program` по `TV.App`,
+значения - идентификаторы из `apps`. Без `apps` слоя и режима нет: списки
+приложений у телевизоров разные, поэтому во встроенном профиле значений нет.
 
 ### 6.6. Встроенные профили SmartThings
 
@@ -1860,38 +2020,42 @@ ECAM630.75.
 устройствах профили не проверены. Свойства и переключатели, которых
 устройство не сообщает, в Алису не попадают (раздел 5.3, п. 5).
 Редактор профилей не показывает `fallback_option` и `also_values`, а при
-сохранении режима с той же настройкой оставляет их как есть.
+сохранении режима или числа с той же настройкой оставляет их как есть.
+Новые умения, свойства и кнопки на устройствах не проверены (раздел 10).
 
 | Категории | Устройство Алисы | Умения |
 |---|---|---|
 | `Light` | `light` | питание `switch.switch`; яркость `switchLevel.level`; цвет `colorControl.setColor` с `hue` и `saturation` в шкале 0-100 и температура `colorTemperature.colorTemperature` |
-| `Switch`, `SmartPlug` | `switch`, `socket` | питание; свойства датчиков |
+| `Switch`, `SmartPlug` | `switch`, `socket` | питание; яркость `switchLevel.level`, если устройство её описывает; свойства датчиков |
 | `ContactSensor`, `MotionSensor`, `LeakSensor`, `SmokeDetector` | `sensor.open`, `sensor.motion`, `sensor.water_leak`, `sensor.smoke` | свойства датчиков |
 | `PresenceSensor` | `sensor.motion` | свойства датчиков |
 | `Siren` | `sensor` | свойства датчиков |
 | `TempSensor`, `TempHumiditySensor`, `HumiditySensor`, `EnvironmentSensor`, `AirQualityDetector`, `WeatherStation` | `sensor.climate` | свойства датчиков |
 | `LightSensor`, `MultiFunctionalSensor`, `GenericSensor` | `sensor.illumination`, `sensor` | свойства датчиков |
 | `PowerMeasurementSensor`, `CurbPowerMeter` | `smart_meter.electricity` | свойства датчиков |
-| `Button` | `sensor.button` | событие `button`: `pushed` - `click`, `double` и `pushed_2x` - `double_click`, `held` и `down_hold` - `long_press`; заряд |
-| `Thermostat` | `thermostat` | питание и режим `thermostatMode.thermostatMode`; температура - уставка по режиму `hcgateway.thermostatSetpoint` (раздел 7.7.3); свойства датчиков |
-| `AirConditioner` | `thermostat.ac` | питание; режим `airConditionerMode.airConditionerMode`, `wind`, `fan` и `fanOnly` - `fan_only`, `auto` и `aIComfort` - `auto`; скорость `airConditionerFanMode.fanMode`; температура `thermostatCoolingSetpoint.coolingSetpoint`; направление воздуха `swing` по `fanOscillationMode.fanOscillationMode`: `fixed` - `stationary`, `vertical`, `horizontal`, `all` - `auto`; свойства датчиков |
-| `AirPurifier` | `purifier` | питание; скорость `airPurifierFanMode.airPurifierFanMode`, а без неё `airConditionerFanMode.fanMode`; свойства датчиков |
-| `Humidifier`, `Dehumidifier`, `AirpurifyHumidifier` | `humidifier` | питание; свойства датчиков |
+| `GasMeter` | `smart_meter.gas` | свойства датчиков |
+| `Button`, `RemoteController`, `PanicButton` | `sensor.button` | событие `button`: `pushed` - `click`, `double` и `pushed_2x` - `double_click`, `held` и `down_hold` - `long_press`; заряд |
+| `Other`, `Others` | `other` | питание `switch.switch` и событие `button` по `button.button`, если устройство их описывает; свойства датчиков |
+| `Thermostat` | `thermostat` | питание и режим `thermostatMode.thermostatMode`; температура - уставка по режиму `hcgateway.thermostatSetpoint` (раздел 7.7.3); скорость `thermostatFanMode.thermostatFanMode`: `auto` - `auto`, `on` - `high`, `circulate` - `low`; свойства датчиков |
+| `AirConditioner` | `thermostat.ac` | питание; режим `airConditionerMode.airConditionerMode`, `wind`, `fan` и `fanOnly` - `fan_only`, `auto` и `aIComfort` - `auto`; скорость `airConditionerFanMode.fanMode`; температура `thermostatCoolingSetpoint.coolingSetpoint`; направление воздуха `swing` по `fanOscillationMode.fanOscillationMode`: `fixed` - `stationary`, `vertical`, `horizontal`, `all` - `auto`; ионизация `custom.spiMode.spiMode`; подсветка `samsungce.airConditionerLighting.lighting`; кнопка фильтра; свойства датчиков |
+| `AirPurifier` | `purifier` | питание; скорость `airPurifierFanMode.airPurifierFanMode`, а без неё `airConditionerFanMode.fanMode`; подсветка `samsungce.lamp.brightnessLevel`: `high` и `off`; кнопка фильтра; свойства датчиков |
+| `Humidifier`, `AirpurifyHumidifier` | `humidifier` | питание; скорость `humidifierMode.humidifierMode`: `auto`, `low`, `medium`, `high`. Значения не подтверждены: режим появится, только если устройство их сообщает; свойства датчиков |
+| `Dehumidifier` | `humidifier` | питание; свойства датчиков |
 | `Fan` | `ventilation.fan` | питание; скорость `fanSpeed.fanSpeed`: 1-4 - от `low` до `turbo` |
-| `Blind`, `Shade`, `WindowOpener` | `openable.curtain` | «включи» - `open`, «выключи» - `close` в `windowShade.windowShade`, включено, пока не `closed`; открытие `windowShadeLevel.shadeLevel` |
+| `Blind`, `Shade`, `WindowOpener` | `openable.curtain` | «включи» - `open`, «выключи» - `close` в `windowShade.windowShade`, включено, пока не `closed`; открытие `windowShadeLevel.shadeLevel`, а без неё `switchLevel.level`; пауза - команда `pause`, только если она есть в `supportedWindowShadeCommands`: включена при `paused`; снятие паузы при другом положении ничего не отправляет, а при `paused` открывает штору |
 | `WaterValve` | `openable.valve` | `open` и `close` в `valve.valve` |
 | `Television` | `media_device.tv` | питание; громкость `audioVolume.volume`; канал `tvChannel.tvChannel`, 1-999; звук `audioMute.mute`; пауза `mediaPlayback.playbackStatus`; источник `samsungvd.mediaInputSource.inputSource`: `HDMI1`-`HDMI4` - от `one` до `four`, `dtv` - `five` |
-| `Speaker`, `NetworkAudio`, `SoundBar`, `MusicSystem`, `HomeTheater`, `Receiver`, `SetTop` | `media_device`, `media_device.receiver`, `media_device.tv_box` | питание, громкость, звук, пауза |
-| `Washer`, `Dryer`, `Dishwasher` | `washing_machine`, `dishwasher` | запуск `run` и остановка `stop` в `<прибор>OperatingState.machineState`, разрешение `remoteControlStatus.remoteControlEnabled`; пауза `pause`; окончание - свойство `button` по `<прибор>JobState`: `finish`, у сушильной - `finished`, - `click` |
-| `Refrigerator`, `KimchiRefrigerator`, `CubeRefrigerator`, `WineCellar` | `cooking` | температура `thermostatCoolingSetpoint.coolingSetpoint`; дверца `contactSensor.contact`, температура в камере |
-| `Oven`, `Range`, `Microwave` | `cooking` | температура `ovenSetpoint.ovenSetpoint`; температура в камере |
-| `RobotCleaner` | `vacuum_cleaner` | уборка `cleaning` и возврат на базу `homing` в `robotCleanerMovement.robotCleanerMovement`; пауза; заряд |
+| `Speaker`, `NetworkAudio`, `SoundBar`, `MusicSystem`, `HomeTheater`, `Receiver`, `SetTop` | `media_device`, `media_device.receiver`, `media_device.tv_box` | питание, громкость, звук, пауза; источник `mediaInputSource.inputSource`: `HDMI1` - `one`, `HDMI2` - `two`, `digital` - `three`, `wifi` - `four`, `bluetooth` - `five` |
+| `Washer`, `Dryer`, `Dishwasher` | `washing_machine`, `dishwasher` | запуск `run` и остановка `stop` в `<прибор>OperatingState.machineState`, разрешение `remoteControlStatus.remoteControlEnabled`; пауза `pause`; окончание - свойство `button` по `<прибор>JobState`: `finish`, у сушильной - `finished`, - `click`. У стиральной и посудомоечной - счётчик воды. У посудомоечной - программа `dishwashing` по `samsungce.dishwasherWashingCourse.washingCourse`: `auto`, `eco`, `normal`, `intensive`, `express` - как есть, `heavy` - `max`, `delicate` - `glass`, `express_0C` - `fast`, `preWash` - `pre_rinse`, `rinseOnly` - `one`, `extraSilence` - `quiet` |
+| `Refrigerator`, `KimchiRefrigerator`, `CubeRefrigerator`, `WineCellar` | `cooking` | температура `thermostatCoolingSetpoint.coolingSetpoint`; питание `switch.switch` у компонента с выключателем, например `icemaker`; дверца `contactSensor.contact`, температура в камере; у `Refrigerator` - кнопка фильтра воды |
+| `Oven`, `Range`, `Microwave` | `cooking` | температура `ovenSetpoint.ovenSetpoint`; температура в камере; свет `samsungce.lamp.brightnessLevel`: `off` и `high`, у `Range` - `off` и `extraHigh`; окончание - свойство `button` по `ovenOperatingState.ovenJobState`: `finished` - `click` |
+| `RobotCleaner` | `vacuum_cleaner` | уборка `cleaning` и возврат на базу `homing` в `robotCleanerMovement.robotCleanerMovement`; пауза; заряд; мощность `work_speed` по `robotCleanerTurboMode.robotCleanerTurboMode`: `off` - `auto`, `on` - `turbo`, `silence` - `normal`, `extraSilence` - `quiet`; уборка `cleanup_mode` по `samsungce.robotCleanerCleaningType.cleaningType`: `vacuum` - `dry_cleaning`, `mop` - `wet_cleaning`, `vacuumAndMopTogether` - `mixed_cleaning`, `mopAfterVacuum` - `normal`; кнопка: `alarm` - `double_click` |
 
 Свойства датчиков:
 
 | Свойство | Значение SmartThings |
 |---|---|
-| `event` `open` | `contactSensor.contact`: `open` - `opened`, `closed` - `closed` |
+| `event` `open` | `contactSensor.contact`, `samsungce.doorState.doorState`, `doorControl.door` или `garageDoorControl.door`: `open` - `opened`, `closed` - `closed`; `opening`, `closing` и `unknown` Алиса не получает |
 | `event` `motion` | `motionSensor.motion`: `active` - `detected`, `inactive` - `not_detected`; `presenceSensor.presence`: `present` - `detected`, `not present` - `not_detected` |
 | `event` `water_leak` | `waterSensor.water`: `wet` - `leak`, `dry` - `dry` |
 | `event` `smoke` | `smokeDetector.smoke`: `detected` - `detected`, `clear` - `not_detected` |
@@ -1900,16 +2064,37 @@ ECAM630.75.
 | `float` `temperature`, °C | `temperatureMeasurement.temperature` |
 | `float` `humidity`, % | `relativeHumidityMeasurement.humidity` |
 | `float` `illumination`, лк | `illuminanceMeasurement.illuminance` |
-| `float` `battery_level`, % | `battery.battery` |
+| `float` `battery_level`, % | `battery.battery` или `samsungce.rechargeableBattery.battery` |
+| `event` `battery_level` | `batteryLevel.battery`: `normal` - `normal`, `warning` и `critical` - `low` |
 | `float` `co2_level`, ppm | `carbonDioxideMeasurement.carbonDioxide` |
-| `float` `pm1_density`, `pm2.5_density`, `pm10_density` | `veryFineDustSensor.veryFineDustLevel`, `dustSensor.fineDustLevel`, `dustSensor.dustLevel` |
-| `float` `power`, `electricity_meter`, `voltage` | `powerMeter.power`, `energyMeter.energy`, `voltageMeasurement.voltage` |
+| `float` `pm1_density`, `pm2.5_density`, `pm10_density` | `veryFineDustSensor.veryFineDustLevel`, `dustSensor.fineDustLevel` или `fineDustSensor.fineDustLevel`, `dustSensor.dustLevel` |
+| `float` `tvoc` | `tvocMeasurement.tvocLevel`: шлюз передаёт число ppm как есть с единицей `unit.density.mcg_m3`. Пересчёт зависит от состава смеси, поэтому в Алисе значение не в настоящих мкг/м³ |
+| `float` `amperage`, А | `currentMeasurement.current`; `mA` шлюз переводит в А |
+| `float` `gas_meter`, м³ | `gasMeter.gasMeterVolume`; `ccf` шлюз умножает на 2,83168 |
+| `float` `power` | `powerMeter.power` или поле `power` из `powerConsumptionReport.powerConsumption` |
+| `float` `electricity_meter` | `energyMeter.energy` или поле `energy` из `powerConsumptionReport.powerConsumption` |
+| `float` `voltage` | `voltageMeasurement.voltage` |
 | `float` `pressure`, мм рт. ст. | `atmosphericPressureMeasurement.atmosphericPressure` в кПа × 7,50062; другую единицу шлюз не пересчитывает |
 
 Эти свойства есть в профилях всех категорий. В Алису попадает только то, что
 устройство сообщает.
 
-Энергию `energyMeter.energy` шлюз передаёт в кВт·ч (раздел 7.7.3, п. 5).
+Энергию шлюз передаёт в кВт·ч (раздел 7.7.3, п. 5).
+
+Значение ищется сначала по первому имени в таблице, затем по остальным.
+Кнопка сообщает о событиях, для которых у Яндекса нет своего свойства. Она
+срабатывает только при переходе в значение, а значение при запуске шлюза
+нажатием не считается:
+
+| Кнопка | Значение SmartThings | У кого |
+|---|---|---|
+| вскрытие, `double_click` | `tamperAlert.tamper`: `detected` | категории, у которых есть только свойства датчиков |
+| фильтр воды, `double_click` | `custom.waterFilter.waterFilterStatus`: `replace` | `Refrigerator` |
+| фильтр, `double_click` | `filterStatus.filterStatus`: `replace` | `AirConditioner`, `AirPurifier` |
+
+У счётчика воды стиральной и посудомоечной машины значение -
+`cumulativeAmount` из `samsungce.waterConsumptionReport.waterConsumption`
+в мл, шлюз передаёт его в м³.
 
 Замков и гаражных ворот во встроенных профилях нет: открыть дверь голосом
 можно, только задав свой профиль. Категория `Siren` передаёт только показания:
@@ -1949,13 +2134,15 @@ ECAM630.75.
 #### 7.1.1. Прибор `AllInOne`
 
 Тип устройства по умолчанию - `cooking`. Другой тип задаётся в редакторе
-профиля прибора. Умения: включение, режимы `program` `one` и `two`,
+профиля прибора. Умения: включение, режим `program` со всеми значениями режима
+из документации Яндекса,
 `temperature` от 30 до 100 °C с шагом 5, `pause`, переключатели и режимы из
 таблицы. Они - настройки: меняются и без программы, запуск их не сбрасывает.
 
 | Умение | Значения |
 |---|---|
-| `toggle` | `controls_locked`, `mute`, `ionization`, `keep_warm`, `backlight` |
+| `toggle` | `controls_locked`, `mute`, `ionization`, `keep_warm`, `backlight`, `oscillation` |
+| `range` | `brightness`, `humidity`, `open`, `volume` от 1 до 100 %, `channel` от 1 до 999 |
 | `mode` `work_speed` | `slow`, `medium`, `fast`, `turbo`, `max` |
 | `mode` `swing` | `stationary`, `vertical`, `horizontal`, `auto` |
 | `mode` `heat` | `min`, `low`, `normal`, `high`, `max` |
@@ -2376,7 +2563,8 @@ API приборов и в API аккаунта у одного прибора `
 
 Источник `wled` показывает в Алисе светодиодные ленты WLED из домашней
 сети: включение, яркость, цвет и сцены, которым сопоставлены пресеты
-ленты.
+ленты. Лента с CCT получает ещё цветовую температуру, а лента с включённым
+ABL - показание тока.
 
 Сценарий:
 
@@ -2418,6 +2606,8 @@ API приборов и в API аккаунта у одного прибора `
 | `range` `brightness`, 1-100 % | `bri` 1-255 в процентах | `{"on":true,"bri":N}` |
 | `color_setting` `rgb` | основной цвет главного сегмента | `{"on":true,"seg":[{"col":[[r,g,b]],"fx":0}]}`, эффект `fx` 0 - цвет без эффекта |
 | `color_setting` `scene` | сцена, если включён сопоставленный ей пресет | `{"ps":N}` |
+| `color_setting` `temperature_k`, 2000-9000 K, только с CCT | `cct` главного сегмента, пока лента светит белым | `{"on":true,"seg":[{"cct":K,"col":[[0,0,0,255]],"fx":0}]}`, без белого канала - `"col":[[255,255,255]]` |
+| `float` `amperage`, `unit.ampere`, только с ABL | `info.leds.pwr` / 1000 | - |
 
 Правила:
 
@@ -2431,9 +2621,27 @@ API приборов и в API аккаунта у одного прибора `
    в команде получает `INVALID_VALUE`.
 4. Шлюз отвечает Яндексу, как только команда ушла ленте, и сразу меняет
    известное состояние. Лента подтверждает его своим состоянием.
-5. Команда без соединения получает `DEVICE_UNREACHABLE`. Цветовой
-   температуры у ленты нет: `INVALID_ACTION`.
+5. Команда без соединения получает `DEVICE_UNREACHABLE`. Цветовая
+   температура у ленты без CCT - `INVALID_ACTION`, вне 2000-9000 K -
+   `INVALID_VALUE`.
 6. Любая правка ленты в настройках пересоздаёт её с новым соединением.
+7. Лента с CCT - та, что сообщает бит 2 в `info.leds.lc`. Температуру лента
+   хранит числом 0-255: шлюз отправляет кельвины, а получает
+   K = 1900 + `cct` × 32 и ограничивает её пределами Алисы. Пока лента сообщает
+   число, соответствующее последней команде, Алиса видит заданную температуру.
+8. Лента показывает температуру, а не цвет, если у неё нет цветных светодиодов
+   (бит 0 в `lc` не задан) или её цвет такой, какой задаёт команда температуры:
+   только белый канал при бите 1, иначе `#FFFFFF`. Сцена важнее обоих.
+9. Ограничение тока включено, когда `info.leds.maxpwr` больше 0. Тогда `pwr` 0 -
+   настоящий ток. При `maxpwr` 0 лента сообщает `pwr` 0, потому что не считает
+   ток: шлюз его не передаёт. Ток - расчёт ленты, а не измерение. Лента
+   присылает его только с изменением состояния, отдельно шлюз его не опрашивает.
+10. Температура и ток есть в описании ленты, только если лента о них сообщила.
+    Шлюз хранит это в `wled/<id>.json`, чтобы описание было полным до
+    подключения ленты: иначе умения пропадали бы после каждого запуска шлюза.
+    Новый список устройств Яндекс получает, только когда бит CCT или
+    включённость ABL изменились. Лента без CCT и с выключенным ABL файла не
+    получает.
 
 ### 7.5. Приборы LG
 
@@ -2475,10 +2683,12 @@ API приборов и в API аккаунта у одного прибора `
    `GET devices/{id}/state`, `POST devices/{id}/control`, подписки
    `POST event/{id}/subscribe` и `POST push/{id}/subscribe`,
    регистрация клиента MQTT `POST client` и `POST client/certificate`,
-   адрес сервера MQTT `GET route`.
+   адрес сервера MQTT `GET route`, энергия
+   `GET devices/energy/{id}/profile` и `GET devices/energy/{id}/usage`.
 5. Таймаут - 15 с, ответ - не больше 1 МБ. Чтение после 5xx или сбоя
-   сети повторяется не больше 2 раз с паузой 1 и 2 с. Остальные запросы
-   не повторяются: повтор мог бы запустить стирку дважды.
+   сети повторяется не больше 2 раз с паузой 1 и 2 с. Запросы энергии не
+   повторяются: следующая попытка - через час. Остальные запросы не
+   повторяются: повтор мог бы запустить стирку дважды.
 
 #### 7.5.2. Профиль прибора и камеры
 
@@ -2640,9 +2850,9 @@ API приборов и в API аккаунта у одного прибора `
     "temperature":{"targetTemperature":180,"unit":"C"}}
    ```
 
-6. Программ, команд и паузы у прибора LG нет: ThinQ Connect меняет
-   только свойства. Программу стиральной машины выбирают на самой
-   машине.
+6. Программ и команд у прибора LG нет: ThinQ Connect меняет только
+   свойства, и пауза робота-пылесоса - тоже свойство (раздел 6.3, п. 11).
+   Программу стиральной машины выбирают на самой машине.
 7. Если у профиля задан `power.allowed`, а прибор сообщил `false`,
    «включи» получает `REMOTE_CONTROL_DISABLED` без запроса к облаку. У
    встроенных профилей стиральных машин, посудомойки и духовки это
@@ -2793,7 +3003,7 @@ API у De'Longhi нет: адреса, ключи и сообщения взят
 | `DeLonghi.Status.BeverageDispensing` | сколько процентов напитка налито |
 | `DeLonghi.Status.Pouring` | то же значение, но только во время налива; его показывает плитка: `налито 40 %` |
 | `DeLonghi.Alarm.<имя>` | тревога из `alarms`: `BSH.Common.EnumType.EventPresentState.Present` или `Off` |
-| `DeLonghi.Peripheral.<имя>` | датчик из `peripherals`, `true` или `false` |
+| `DeLonghi.Peripheral.<имя>` | датчик из `peripherals`, `true` или `false`. В уровень воды не входит: `TankPresence` был `false` с баком на месте и не обновился после включения машины (проверено 2026-11-04) |
 | `DeLonghi.Status.Brews` | сколько напитков сварено за всё время: сумма `Brew` из тени `BrewingStatisticsTotals`. Шлюз читает её через 30 с после запуска и после напитка, затем раз в час, если выполнен вход в аккаунт |
 | `DeLonghi.Event.BeverageFinished` | напиток налит |
 | `DeLonghi.Event.LoginRequired` | нужен новый вход в аккаунт |
@@ -2943,7 +3153,17 @@ SSE - только в платном плане, поэтому без план�
    строкой, например канал `5`, - числом. Температуру в °F шлюз
    переводит в °C с точностью 0,1, а энергию в `Wh` делит на 1000. Значения
    в `mWh` и `kVAh` шлюз не передаёт: смысл `mWh` не ясен (раздел 10).
-   Списки и объекты в состояние не попадают.
+   Объём газа в `ccf` шлюз переводит в м³, а ток в `mA` - в А. Списки в
+   состояние не попадают, объекты - кроме двух отчётов о расходе.
+   Из `powerConsumptionReport.powerConsumption` шлюз берёт `energy` и
+   `power`, а из `samsungce.waterConsumptionReport.waterConsumption` -
+   `cumulativeAmount`. Каждое поле - отдельное значение
+   `<атрибут>.<поле>`. Энергию в Wh шлюз делит на 1000, а воду в мл - на
+   1 000 000. Отрицательный счётчик Алиса не получает. Поле считается
+   описанным, когда устройство его прислало, и остаётся описанным до
+   следующей загрузки состояния: так значение без поля не меняет список
+   устройств Алисы. Устройство, у которого нет ни одного атрибута, в
+   Алису не попадает.
 6. Значения атрибута - его перечисление из описания. Если у capability
    есть список `supported*` из состояния устройства, значения - этот
    список: так в Алисе только те входы телевизора, которые у него есть.
@@ -3062,7 +3282,9 @@ SSE - только в платном плане, поэтому без план�
 2. Шлюз подключается к включённому телевизору, и телевизор спрашивает
    разрешение на экране. Владелец нажимает «Разрешить» пультом.
 3. Алиса включает и выключает телевизор, меняет громкость и канал,
-   выключает звук, ставит на паузу и переключает вход.
+   выключает звук, ставит на паузу, переключает вход и гасит экран.
+4. Владелец по желанию задаёт приложения для режимов Алисы (раздел 7.8.2):
+   сценарий запускает их на телевизоре.
 
 #### 7.8.1. Связь
 
@@ -3106,6 +3328,8 @@ SSE - только в платном плане, поэтому без план�
 | `TV.Channel` | `ssap://tv/openChannel` с `channelId` из списка каналов по номеру; шаг - `tv/channelUp` и `tv/channelDown` |
 | `TV.Input` | `ssap://tv/switchInput` с `inputId`; `LIVE_TV` - `ssap://com.webos.applicationManager/launch` приложения `com.webos.app.livetv` |
 | `TV.Playback` | `ssap://media.controls/play` или `pause` |
+| `TV.Screen` | `ssap://com.webos.service.tvpower/power/turnOnScreen` или `turnOffScreen` |
+| `TV.App` | `ssap://com.webos.applicationManager/launch` с `id` приложения |
 
 1. Кроме включения, команды доходят только до включённого телевизора;
    выключенному - `NOT_SUPPORTED_IN_CURRENT_MODE`.
@@ -3116,6 +3340,18 @@ SSE - только в платном плане, поэтому без план�
 3. Номер канала - из `channelNumber`: `12` или `12-1` у цифрового
    канала, шлюз берёт число до дефиса.
 4. Шагов громкости и канала одной командой - не больше 20.
+5. `TV.Screen` шлюз читает из подписки на питание: `Screen Off` - `off`, другое
+   состояние включённого телевизора - `on`. У выключенного телевизора значения
+   нет. `backlight` есть у всех телевизоров LG; телевизор, который не знает
+   команду, отвечает отказом: `NOT_SUPPORTED_IN_CURRENT_MODE`.
+6. Режим `program` есть, только если в настройках прибора задан `apps`:
+   значения - режимы из `apps`. Приложение не из списка шлюз не запускает:
+   `INVALID_VALUE`. Состояние режима - из `TV.App`, и только для приложений из
+   списка: при другом приложении на экране Алиса значения режима не получает.
+7. Голосом это «программа один», а не название приложения: значения режимов у
+   Яндекса только из общего списка.
+8. Поля приложений - на странице прибора, вкладка «Прибор». Идентификатор
+   приложения на экране видно в значении `TV.App` на странице «Всё о приборе».
 
 ### 7.9. Телевизоры Samsung
 
@@ -3273,19 +3509,29 @@ Samsung через облако - устройство SmartThings катего�
 | `on_off` | включение - `mode` `1`, выключение - `mode` `0`; чайник работает, пока `mode` не `0` |
 | `range` `temperature`, 30-100 °C | `control/temperature`, затем `control/mode` `3`: команда сразу запускает разогрев. `temperature` ниже 30 значит, что цель не задана: Алиса её не получает, а относительная команда считается от `sensor/temperature` |
 | `mode` `tea_mode` | температура по виду чая, затем `control/mode` `3`: чёрный 100 °C, зелёный и цветочный 80 °C, красный, улун и травяной 90 °C, пуэр 95 °C, белый 65 °C |
-| `toggle` `backlight`, `controls_locked` | `backlight`, `child_lock`, если прибор их сообщает |
+| `toggle` `backlight`, `controls_locked`, `mute` | `backlight`, `child_lock`, `sound` (`mute` включён, когда `sound` `false`), если прибор их сообщает |
+| `mode` `program` | `control/mode`, команда сразу запускает работу: `1` - `boiling`, `2` - `one`, `3` - `heat`, `4` - `two`, `5` - `smart`, `6` - `three`. У `mode` `0` режима нет |
 | `float` `temperature` | `sensor/temperature` |
+| `toggle` `keep_warm` | `Polaris.KeepWarm`, виртуальная функция шлюза из `mode`: включено, пока `mode` `2` или `4`. Значение есть и у выключенного чайника: `false` |
 | `button` | конец работы - `click`; `error/empty_base` `true` - `long_press`; `error/code` `03`, `04` (сбой датчика температуры), `06`, `07` (пора сменить воду) - `double_click` |
 | `float` `water_level`, % | пересчёт `weight_to_percent`: `weight` × 100 / (`volume` × 1000), от 0 до 100; чайник на 1,7 литра показывает полным 1630-1700 |
-| `event` `water_level` | `low`, пока `error/code` равен `01`, иначе `normal` |
+| `event` `water_level` | `empty`, пока `error/code` равен `2`; `low`, пока он равен `1`; иначе `normal`. Ведущие нули не важны. Пустой чайник сообщает `weight` 0-50 и код `2`, после доливки код `0` (проверено 2026-11-04) |
 
-Команды нагрева снятый с базы чайник не получает: Алиса отвечает
-`HUMAN_INVOLVEMENT_NEEDED`, а при `error/code` `01` - `NOT_ENOUGH_WATER`.
-Выключить чайник можно всегда.
+Включение удержания: выключенный чайник получает `mode` `2`, `1` меняется на
+`2`, `3` на `4`. При `2` и `4` команды нет. При `5` и `6` удержания нет:
+`NOT_SUPPORTED_IN_CURRENT_MODE`. Выключение удержания: `2` меняется на `1`, `4`
+на `3`, при других режимах команды нет. Переключатель - только у чайников.
 
-Концом работы шлюз считает переход `mode` в `0`, если за 2 с после него
-чайник не сообщил `error/empty_base` `true` и не включился снова. Выключение
-командой шлюза за последние 10 с концом работы не считается. Выключение кнопкой
+Команды нагрева и включение удержания снятый с базы чайник не получает:
+Алиса отвечает `HUMAN_INVOLVEMENT_NEEDED`, а при `error/code` `1` или `2` -
+`NOT_ENOUGH_WATER`. Разогрев `mode` `3` и `4` без заданной цели получает
+`NOT_SUPPORTED_IN_CURRENT_MODE`. Выключить чайник и снять удержание можно
+всегда.
+
+Концом работы шлюз считает переход `mode` в `0` из любого режима, в том числе
+из режима с удержанием, если за 2 с после него чайник не сообщил
+`error/empty_base` `true` и не включился снова. Выключение командой шлюза за
+последние 10 с концом работы не считается. Выключение кнопкой
 на чайнике от конца работы не отличить. В профиле конец работы - виртуальное
 событие `Polaris.Event.BoilFinished`.
 
@@ -3295,6 +3541,39 @@ Samsung через облако - устройство SmartThings катего�
 Объём чайника в литрах задаётся полем `volume` этого свойства, по умолчанию
 1,7. На странице прибора поле видно, только если чайник прислал `weight`
 (раздел 6.1).
+
+#### 7.5.5. Потребление энергии
+
+Шлюз показывает в Алисе потребление прибора LG за текущий месяц свойством
+`electricity_meter` в кВт·ч. Счётчик обнуляется в начале каждого месяца:
+это сумма за месяц, а не показание счётчика.
+
+1. Раз в минуту шлюз ищет работающие приборы, которым пора запросить
+   энергию. Пока не заданы PAT и страна или нет профиля прибора, запросов
+   нет.
+2. Сначала шлюз спрашивает профиль энергии:
+   `GET devices/energy/{id}/profile`, в ответе `result.property`. Шлюз
+   берёт из него только `energyUsage` и `energyUsage_<часть>`.
+3. Прибор без профиля энергии запросов потребления не получает, и свойства
+   у него нет. Ответ 400 или 404 и пустой список значат «профиля нет»:
+   шлюз спросит снова через 24 часа и после своего перезапуска. Другая
+   ошибка - вопрос через час.
+4. Свойства потребления шлюз хранит рядом с профилем прибора (раздел 8).
+   После перезапуска показание остаётся объявленным, даже если облако
+   недоступно. Обновление профиля прибора их не стирает.
+5. Потребление шлюз запрашивает не чаще раза в час на прибор:
+   `GET devices/energy/{id}/usage` с `property`, `period=MONTHLY`,
+   `startDate` и `endDate` = месяц вида `202601` по часам шлюза. Ответ -
+   `result.dataList`: шлюз складывает ватт-часы записей и делит на 1000.
+   Значение шлюза - `energy.monthUsageKwh`. После перезапуска шлюза первый
+   запрос уходит сразу, а значения до него нет.
+6. Ошибка запроса пишется в журнал и откладывает следующий запрос на час.
+   Состояние прибора и прошлое показание она не меняет. Показание хранится
+   в памяти, а полный отчёт прибора его не стирает.
+7. Показание, общее на прибор, получает только камера по умолчанию: `MAIN`,
+   а без неё первая. Иначе одно и то же потребление было бы у двух
+   устройств Алисы. Часть колонны со своим `energyUsage_<часть>` получает
+   своё. Если владелец добавил только другую камеру, показания нет.
 
 ## 8. Хранение
 
@@ -3312,7 +3591,7 @@ Samsung через облако - устройство SmartThings катего�
 | `appliances/<haId>/description.json` | функции прибора в JSON, для просмотра: номер, имя, вид, атрибуты, значения и имя перечисления |
 | `appliances/<haId>/FeatureMapping.xml`, `DeviceDescription.xml` | описание прибора как есть; по нему работает источник `homeconnect-local` |
 | `thinq-client.json` | `x-client-id` ThinQ, ключ и сертификат MQTT, топик, SHA-256 PAT |
-| `thinq/<deviceId>.json` | тип прибора LG и его профиль ThinQ как есть |
+| `thinq/<deviceId>.json` | тип прибора LG, его профиль ThinQ как есть и свойства потребления из профиля энергии |
 | `delonghi/session.json` | сессия Gigya аккаунта De'Longhi: пул, `apiKey`, токен и секрет; до 64 КБ |
 | `smartthings-tokens.json` | access token, refresh token, срок access token и установленное приложение SmartThings |
 | `smartthings/devices.json` | список устройств аккаунта SmartThings как есть и отключённые компоненты, до 4 МБ |
@@ -3320,6 +3599,7 @@ Samsung через облако - устройство SmartThings катего�
 | `smartthings/usage.json` | месяц и число запросов к SmartThings за него |
 | `webos/<id>.json` | ключ телевизора LG, отпечаток сертификата, MAC, модель и входы; до 64 КБ |
 | `polaris/<id>.json` | номер типа прибора Polaris и список его значений |
+| `wled/<id>.json` | есть ли у ленты WLED CCT и ABL; до 4 КБ |
 | `samsung-tv/<id>.json` | разрешение и токен телевизора Samsung, отпечаток сертификата, MAC и модель; до 64 КБ |
 | `paired-appliances.json` | ответ облака, если список приборов пуст |
 
@@ -3542,9 +3822,8 @@ scrape_configs:
     открытой интеграции `samoswall/polaris-mqtt` и на чайнике не проверены.
     [уточнить: до какой температуры греет `mode` `1`; что делают `mode` от
     `2` до `6`; работает ли нагрев до заданной температуры и по виду чая;
-    значит ли `error/code` `01`, что воды мало; сколько показывает `weight` у
-    пустого чайника на базе; успевает ли чайник сообщить `error/empty_base`
-    за 2 с после `mode` `0`]
+    значит ли `error/code` `1`, что воды мало; успевает ли чайник сообщить
+    `error/empty_base` за 2 с после `mode` `0`]
 13. Тревоги кофемашины De'Longhi проверены на поддельной машине, а на настоящей
     не срабатывали: все значения были `Off`. [уточнить: какая тревога появляется
     при снятии бака, контейнера гущи и поддона; что значат `Imbocco`,
@@ -3592,14 +3871,65 @@ scrape_configs:
     духовки `ovenSetpointRange`: в известных снимках он пуст]
 24. Новые свойства и значения кнопки сверены с документацией и открытыми
     интеграциями, на приборах не проверены. Коды `error/code` чайника: на
-    настоящем виден только `00`. [уточнить: что значат `WaterTankLow` и
-    `TankPresence` на настоящей кофемашине: смысл взят из имён; принимает ли
-    Яндекс `float` со значением 0 у частиц увлажнителя LG]
+    настоящем виден только `00`. [уточнить: принимает ли Яндекс `float` со
+    значением 0 у частиц увлажнителя LG]
 25. `status_info.reportable`, `sw_version` и новые коды отказа взяты из
     документации Яндекса, у Яндекса не проверены. [уточнить: появляется ли в
     приложении настройка уведомлений; даёт ли лишнее уведомление кофемашина,
-    которая рвёт соединение при включении; снимается ли `error/code` `01`
+    которая рвёт соединение при включении; снимается ли `error/code` `1`
     у чайника после доливки: пока он не снят, Алиса не греет; отказывает ли
     кофемашина при тревогах]
-26. Переключатели и режимы `AllInOne` (раздел 7.1.1) у Яндекса не проверены, в
-    профилях настоящих приборов их пока нет.
+26. Переключатели и режимы `AllInOne` владелец проверил у Яндекса
+    (2026-11-04): команды доходят, отказа в журнале нет. Весь список значений
+    `program`, числа и `oscillation` добавлены после этой проверки. [уточнить:
+    принимает ли Яндекс их; меняется ли `ChildLock` во время программы;
+    работает ли `control/sound`; что чайник делает при `mode` от `2` до `6` и
+    при `mode` `3` без заданной цели; есть ли эти режимы у всех типов чайников]
+27. Новые умения Home Connect (раздел 6.2, пп. 14-27) сверены с
+    документацией Home Connect и открытыми интеграциями, на приборах не
+    проверены. Не сделаны: температура стирки, для неё нужен пересчёт числа
+    в значение перечисления; программы вытяжки `Automatic` и
+    `DelayedShutOff`, для них нужны `default_options` по программам;
+    программа робота `GoHome`, режим её только выбирает, а не запускает;
+    комнатная температура холодильника, шлюз не знает, сообщает ли её
+    прибор. [уточнить: проходит ли кофемашина через `Finished` после
+    напитка; приходит ли событие конца программы от кухонного процессора;
+    какое полное имя значений у `Cooking.Oven.Status.Cavity.001.DoorState`]
+28. Этап новых умений SmartThings (раздел 6.6): категории `GasMeter`,
+    `RemoteController`, `PanicButton`, `Other` и `Others`, новые режимы,
+    переключатели, свойства, кнопки и другие имена значений сверены со
+    снимками Home Assistant и описаниями capability, на устройствах не
+    проверены. Яндекс принял эти instance на `AllInOne`. Не сделаны: остаток
+    средства `samsungce.autoDispenseDetergent.remainingAmount`, в снимках и
+    Home Assistant есть только `normal`; кнопка
+    `custom.dustFilter.dustFilterStatus`, значение `replace` у него не
+    подтверждено. [уточнить: единица `currentMeasurement.current` на
+    устройстве; значения `humidifierMode.humidifierMode`; значит ли `alarm`
+    у робота, что он застрял; сообщает ли духовка `finished`; значит ли 100
+    у `switchLevel.level` шторы «открыто» на всех устройствах; значит ли
+    `spiMode` ионизацию]
+29. Удержание тепла чайника (раздел 7.12), экран и приложения телевизора LG
+    (раздел 7.8.2), температура и ток ленты WLED (раздел 7.4) проверены только
+    на поддельных приборах в тестах. `mode` `2` и `4` на настоящем чайнике не
+    проверены, переключатель есть у всех чайников, а режим `2` по открытой
+    интеграции есть только у типов 177, 205, 262 и 294. [уточнить: сколько
+    чайник держит тепло; отвечает ли отказом тип без удержания; гаснет ли экран
+    на старых webOS и зажигается ли он командой; виден ли `cct` при белом канале
+    255 на ленте с цветными светодиодами; принимает ли Яндекс `amperage` у
+    ленты]
+30. Этап новых умений LG (раздел 6.3, пункты 5 и 10-14, раздел 7.5.5):
+    пауза робота, питание вытяжки, режимы и переключатели, показание
+    пивоварни и потребление сверены с библиотекой LG и интеграцией Home
+    Assistant, на приборах не проверены. Страницы LG при сверке были
+    недоступны. Яндекс принял эти значения на `AllInOne`. Команда режима
+    духовки уходит без `START`: облако LG может её отвергнуть, тогда Алиса
+    получит ошибку, а духовка не включится. Если у кондиционера
+    `display.light` принимает `LEVEL_1`...`LEVEL_3`, а не `ON`, «включи
+    подсветку» получит `INVALID_VALUE`. Не сделаны: `ionization`
+    кондиционера, значения `operation.airCleanOperationMode` спорные;
+    `motion` робота и `water_leak` и `water_level` из поля `error`
+    состояния. [уточнить: значит ли `recipe.beerRemain` остаток пива, Home
+    Assistant называет его «Recipe progress»; примет ли облако
+    `RESUME` у робота без отдельного значения в схеме; ответ облака на
+    запрос энергии прибора без её поддержки; отвергает ли
+    `airFlow.windTemperature` команду без нагрева]

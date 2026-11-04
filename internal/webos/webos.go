@@ -80,6 +80,8 @@ const (
 	uriMedia       = "ssap://com.webos.media/getForegroundAppInfo"
 	uriConnection  = "ssap://com.webos.service.connectionmanager/getinfo"
 	uriTurnOff     = "ssap://system/turnOff"
+	uriScreenOn    = "ssap://com.webos.service.tvpower/power/turnOnScreen"
+	uriScreenOff   = "ssap://com.webos.service.tvpower/power/turnOffScreen"
 	uriSetVolume   = "ssap://audio/setVolume"
 	uriVolumeUp    = "ssap://audio/volumeUp"
 	uriVolumeDown  = "ssap://audio/volumeDown"
@@ -105,6 +107,9 @@ var permissions = []string{"APP_TO_APP", "CLOSE", "CONTROL_AUDIO", "CONTROL_DISP
 
 // offStates - состояния питания, в которых телевизор выключен, как в aiowebostv.
 var offStates = []string{"", "Power Off", "Suspend", "Active Standby"}
+
+// screenOffState - состояние питания включённого телевизора с погашенным экраном, как в aiowebostv.
+const screenOffState = "Screen Off"
 
 // Ошибки подключения: их видно на странице прибора.
 var (
@@ -134,6 +139,8 @@ type Config struct {
 	MAC string
 	// Broadcast - широковещательный адрес для Wake-on-LAN; пусто - 255.255.255.255.
 	Broadcast string
+	// Apps - идентификаторы приложений, которые Алиса может запускать; пусто - режима приложений нет.
+	Apps []string
 	// Dir - каталог файлов телевизоров, data_dir/webos.
 	Dir string
 	// Changed вызывается, когда шлюз узнал новые входы телевизора: Алисе нужен новый список
@@ -307,14 +314,19 @@ func (t *TV) Describe() appliance.Description {
 	inputs := append([]string{tv.LiveTV}, t.pair.Inputs...)
 	model := t.pair.Model
 	t.mu.Unlock()
-	return appliance.Description{Type: Type, Model: model, Options: map[string]appliance.Option{
+	d := appliance.Description{Type: Type, Model: model, Options: map[string]appliance.Option{
 		tv.Power:    {Key: tv.Power, Values: []string{tv.On, tv.Off}, Setting: true},
 		tv.Volume:   {Key: tv.Volume, Min: 0, Max: 100, Step: 1, Setting: true},
 		tv.Mute:     {Key: tv.Mute, Setting: true},
 		tv.Channel:  {Key: tv.Channel, Min: 1, Max: tv.MaxChannel, Step: 1, Setting: true},
 		tv.Input:    {Key: tv.Input, Values: inputs, Setting: true},
 		tv.Playback: {Key: tv.Playback, Values: []string{tv.Playing, tv.Paused}, Setting: true},
-	}, Reports: []string{tv.Power, tv.Volume, tv.Mute, tv.Channel, tv.Input, tv.Playback, tv.App}}
+		tv.Screen:   {Key: tv.Screen, Values: []string{tv.On, tv.Off}, Setting: true},
+	}, Reports: []string{tv.Power, tv.Volume, tv.Mute, tv.Channel, tv.Input, tv.Playback, tv.Screen, tv.App}}
+	if len(t.cfg.Apps) > 0 {
+		d.Options[tv.App] = appliance.Option{Key: tv.App, Values: slices.Clone(t.cfg.Apps), Setting: true}
+	}
+	return d
 }
 
 // State - состояние телевизора. Телевизор, который разрешил подключение, на связи и
@@ -601,6 +613,12 @@ func (t *TV) onPower(raw json.RawMessage) {
 		v[tv.Power] = tv.On
 		if slices.Contains(offStates, p.State) {
 			v[tv.Power] = tv.Off
+			delete(v, tv.Screen)
+			return
+		}
+		v[tv.Screen] = tv.On
+		if p.State == screenOffState {
+			v[tv.Screen] = tv.Off
 		}
 	})
 }
@@ -906,6 +924,20 @@ func (t *TV) command(key string, value any) (string, map[string]any, error) {
 			return "", nil, fmt.Errorf("%w: входа %v нет у телевизора", appliance.ErrInvalidValue, value)
 		}
 		return uriSwitchInput, map[string]any{"inputId": v}, nil
+	case tv.App:
+		v, _ := value.(string)
+		if !slices.Contains(t.cfg.Apps, v) {
+			return "", nil, fmt.Errorf("%w: приложения %v нет в настройках", appliance.ErrInvalidValue, value)
+		}
+		return uriLaunch, map[string]any{"id": v}, nil
+	case tv.Screen:
+		switch value {
+		case tv.On:
+			return uriScreenOn, nil, nil
+		case tv.Off:
+			return uriScreenOff, nil, nil
+		}
+		return "", nil, fmt.Errorf("%w: экран %v", appliance.ErrInvalidValue, value)
 	case tv.Playback:
 		switch value {
 		case tv.Playing:

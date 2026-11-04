@@ -135,7 +135,9 @@ func (m *Mode) ValueFor(mode string, known []string) string {
 type Range struct {
 	Instance string `yaml:"instance"`
 	Option   string `yaml:"option"`
-	Unit     string `yaml:"unit,omitempty"`
+	// FallbackOption - другая настройка с тем же смыслом и шкалой: она действует, если у прибора нет Option.
+	FallbackOption string `yaml:"fallback_option,omitempty"`
+	Unit           string `yaml:"unit,omitempty"`
 	// Min, Max и Precision берутся из описания прибора, если не заданы.
 	Min       *float64 `yaml:"min,omitempty"`
 	Max       *float64 `yaml:"max,omitempty"`
@@ -151,6 +153,10 @@ type Toggle struct {
 	// On и Off - значения настройки для «включено» и «выключено»; без них - true и false.
 	On  string `yaml:"on,omitempty"`
 	Off string `yaml:"off,omitempty"`
+	// State и StateOn - положение читается из другого значения: включён, пока State равно StateOn. Так
+	// робот-пылесос принимает команду PAUSE, а сообщает состояние работы.
+	State   string `yaml:"state,omitempty"`
+	StateOn string `yaml:"state_on,omitempty"`
 	// Optional - переключатель есть, только если прибор описывает эту настройку и разрешает её менять:
 	// такая настройка есть не у всех приборов типа.
 	Optional bool `yaml:"optional,omitempty"`
@@ -197,9 +203,21 @@ type Property struct {
 // например духовка с номером камеры в именах. Профиль хранит основное имя, а значение ищется по всем.
 var otherNames = map[string][]string{
 	"Cooking.Oven.Status.CurrentCavityTemperature": {"Cooking.Oven.Status.Cavity.001.CurrentTemperature"},
+	"BSH.Common.Status.DoorState":                  {"Cooking.Oven.Status.Cavity.001.DoorState"},
+	// Двери холодильных приборов: в домашней сети модели сообщают то одно, то другое имя.
+	"Refrigeration.Common.Status.Door.Refrigerator": {"Refrigeration.FridgeFreezer.Status.DoorRefrigerator"},
+	"Refrigeration.Common.Status.Door.Freezer":      {"Refrigeration.FridgeFreezer.Status.DoorFreezer"},
 	// Датчик присутствия - то же свойство motion, угарный газ - то же свойство gas.
 	"motionSensor.motion": {"presenceSensor.presence"},
 	"gasDetector.gas":     {"carbonMonoxideDetector.carbonMonoxide"},
+	// Дверца техники Samsung и ворота - то же свойство open.
+	"contactSensor.contact": {"samsungce.doorState.doorState", "doorControl.door", "garageDoorControl.door"},
+	// PM2.5 и заряд у части устройств SmartThings называются иначе.
+	"dustSensor.fineDustLevel": {"fineDustSensor.fineDustLevel"},
+	"battery.battery":          {"samsungce.rechargeableBattery.battery"},
+	// Поля отчёта о расходе техники Samsung: шлюз разворачивает его в отдельные значения.
+	"powerMeter.power":   {"powerConsumptionReport.powerConsumption.power"},
+	"energyMeter.energy": {"powerConsumptionReport.powerConsumption.energy"},
 }
 
 // StatusNames - все имена значения status: основное и другие.
@@ -568,6 +586,9 @@ func (p *Profile) Validate() error {
 		}
 		if r.Option == "" {
 			return fmt.Errorf("ranges %s: не задан option", r.Instance)
+		}
+		if r.FallbackOption == r.Option {
+			return fmt.Errorf("ranges %s: fallback_option отличается от option", r.Instance)
 		}
 		if r.Min != nil && r.Max != nil && *r.Min >= *r.Max {
 			return fmt.Errorf("ranges %s: min не меньше max", r.Instance)

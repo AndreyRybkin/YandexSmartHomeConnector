@@ -35,6 +35,9 @@ type Appliance struct {
 	lists map[string]map[string][]string
 	// limits - пределы уставок в °C, которые сообщает устройство, по имени уставки.
 	limits map[string]limit
+	// reported - поля атрибутов-объектов, которые устройство сообщило с прошлой загрузки состояния. Поле
+	// не пропадает до новой загрузки, чтобы редкое значение без него не меняло список устройств Алисы.
+	reported map[string]bool
 	// disabled - отключённые capability по компонентам, как их сообщает устройство.
 	disabled map[string][]string
 	have     bool
@@ -75,6 +78,10 @@ const (
 	keyMaximum      = capSetpointControl + ".maximumSetpoint"
 	keyOscillation  = "fanOscillationMode.fanOscillationMode"
 	keyThermostat   = "thermostatMode.thermostatMode"
+	keyShade        = "windowShade.windowShade"
+	shadeCommands   = "supportedWindowShadeCommands"
+	shadePause      = "pause"
+	noValues        = "hcgateway.noValues"
 	thermostatList  = "supportedThermostatModes"
 	categoryAC      = "AirConditioner"
 	categoryHeating = "Thermostat"
@@ -126,6 +133,7 @@ func (a *Appliance) Describe() appliance.Description {
 	desc := appliance.Description{Type: d.Type(a.component), Options: map[string]appliance.Option{}}
 	a.mu.Lock()
 	lists := maps.Clone(a.lists)
+	reported := maps.Clone(a.reported)
 	off := a.offLocked(d)
 	limits := a.limitsLocked(d, off)
 	a.mu.Unlock()
@@ -144,6 +152,11 @@ func (a *Appliance) Describe() appliance.Description {
 			ad := def.Attributes[name]
 			key := Key(ref.ID, name)
 			desc.Reports = append(desc.Reports, key)
+			for _, f := range objectFields[key] {
+				if reported[Key(key, f.Name)] {
+					desc.Reports = append(desc.Reports, Key(key, f.Name))
+				}
+			}
 			if !ad.writable() {
 				continue
 			}
@@ -198,6 +211,16 @@ func (a *Appliance) Describe() appliance.Description {
 		l := widest(limits[keyHeating], limits[keyCooling])
 		desc.Options[ThermostatSetpoint] = appliance.Option{Key: ThermostatSetpoint, Setting: true, Min: l.Min, Max: l.Max, Step: l.Step}
 		desc.Reports = append(desc.Reports, ThermostatSetpoint)
+	}
+	// Штора принимает паузу командой: настройка есть, только если устройство назвало её в своём списке команд.
+	delete(desc.Options, keyShade)
+	if cmds := lists["windowShade"][shadeCommands]; slices.ContainsFunc(refs, enabledCap(off, keyShade)) && slices.Contains(cmds, shadePause) {
+		desc.Options[keyShade] = appliance.Option{Key: keyShade, Setting: true, Values: slices.Clone(cmds)}
+	}
+	if len(desc.Reports) == 0 {
+		// Пустой список значил бы «прибор может сообщать всё»: устройство только с командами получило бы все
+		// свойства профиля.
+		desc.Reports = []string{noValues}
 	}
 	return desc
 }
@@ -292,7 +315,7 @@ func (a *Appliance) limitsLocked(d *Device, off map[string]bool) map[string]limi
 // shapeLocked - то, от чего зависит описание прибора, кроме описаний capability. a.mu захвачен.
 func (a *Appliance) shapeLocked(d *Device) string {
 	off := a.offLocked(d)
-	data, _ := json.Marshal(map[string]any{"lists": a.lists, "off": off, "limits": a.limitsLocked(d, off)})
+	data, _ := json.Marshal(map[string]any{"lists": a.lists, "off": off, "limits": a.limitsLocked(d, off), "fields": a.reported})
 	return string(data)
 }
 
@@ -330,6 +353,9 @@ func (a *Appliance) State() appliance.State {
 	delete(values, buttonKey)
 	maps.DeleteFunc(values, func(key string, _ any) bool {
 		capability, _, ok := SplitKey(key)
+		if _, field := objectFields[capability]; field {
+			capability, _, ok = SplitKey(capability)
+		}
 		return ok && off[capability]
 	})
 	if key := a.setpointLocked(d, off); key != "" {
@@ -441,6 +467,18 @@ func (a *Appliance) setLocked(d *Device, capability, attribute string, v AttrVal
 		}
 		return
 	}
+	if fields, ok := objectFields[key]; ok {
+		for _, f := range fields {
+			delete(a.values, Key(key, f.Name))
+		}
+		for name, x := range fieldValues(key, v) {
+			a.reported[name] = true
+			if x != nil {
+				a.values[name] = *x
+			}
+		}
+		return
+	}
 	// Уставка духовки и пределы приходят без единицы: она та же, что у температуры в камере.
 	if v.Unit == "" && (key == keyOven || key == keyMinimum || key == keyMaximum) {
 		v.Unit = a.units[keyTemperature]
@@ -489,6 +527,7 @@ func (a *Appliance) load(st Status) {
 	a.values = map[string]any{}
 	a.lists = map[string]map[string][]string{}
 	a.limits = map[string]limit{}
+	a.reported = map[string]bool{}
 	a.disabled = map[string][]string{}
 	for comp, caps := range st {
 		if v, ok := caps[capDisabledCapabilities]["disabledCapabilities"]; ok {

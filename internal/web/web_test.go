@@ -1096,8 +1096,9 @@ func TestEditorHelpers(t *testing.T) {
 	if !strings.Contains(body, `value="preview">Предпросмотр</button>`) {
 		t.Fatal("нет кнопки предпросмотра")
 	}
-	// «Проверить» у режима отправляет прибору команду, как Алиса.
-	m := regexp.MustCompile(`name="probe" value="([^"]+)"`).FindStringSubmatch(body)
+	// «Проверить» у режима отправляет прибору команду, как Алиса. Берётся программа, которая есть у
+	// демо-духовки: кнопка есть у всех программ профиля.
+	m := regexp.MustCompile(`name="probe" value="([^"]+baking)"`).FindStringSubmatch(body)
 	if m == nil {
 		t.Fatal("нет кнопки «Проверить» у режима")
 	}
@@ -1133,6 +1134,17 @@ func TestUnmapped(t *testing.T) {
 	want := map[string]string{"flag": "toggles", "mode": "modes", "alarm": "events", "num": "ranges"}
 	if !maps.Equal(got, want) {
 		t.Fatalf("несопоставленные %v", got)
+	}
+}
+
+// Сохранение чисел из редактора не теряет запасную настройку, которой в форме нет.
+func TestEditorKeepsRangeFallback(t *testing.T) {
+	builtin := &profile.Profile{Ranges: []profile.Range{{Instance: "open", Option: "a", FallbackOption: "b"}}}
+	te := &editTarget{builtin: builtin}
+	patch := &profile.Profile{Ranges: []profile.Range{{Instance: "open", Option: "a", Max: new(float64)}}}
+	next := applyField(te, "ranges", patch, false)
+	if next.Ranges[0].FallbackOption != "b" {
+		t.Fatalf("число: %+v", next.Ranges[0])
 	}
 }
 

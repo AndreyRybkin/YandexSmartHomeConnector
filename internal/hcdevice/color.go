@@ -3,6 +3,7 @@ package hcdevice
 import (
 	"context"
 	"math"
+	"slices"
 
 	"hcgateway/internal/alice"
 	"hcgateway/internal/appliance"
@@ -23,14 +24,16 @@ const (
 )
 
 // hasToggle сообщает, есть ли у прибора переключатель. Пауза без настройки - это команды
-// паузы и продолжения программы, переключатель с настройкой есть, если прибор её сообщает.
+// паузы и продолжения программы, переключатель с настройкой есть, если прибор её сообщает. Необязательного
+// переключателя нет и у прибора, который перечисляет значения настройки без значения «включено»: команда
+// ушла бы впустую.
 func hasToggle(t *profile.Toggle, desc *appliance.Description) bool {
 	if t.Instance == "pause" && t.Setting == "" {
 		return desc.HasCommand(appliance.CommandPause) && desc.HasCommand(appliance.CommandResume)
 	}
 	if t.Optional {
 		o, ok := desc.Options[t.Setting]
-		return ok && !o.ReadOnly
+		return ok && !o.ReadOnly && (t.On == "" || len(o.Values) == 0 || slices.Contains(o.Values, t.On))
 	}
 	return desc.Knows(t.Setting)
 }

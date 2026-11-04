@@ -286,6 +286,52 @@ func (c *Client) Control(ctx context.Context, deviceID string, payload map[strin
 	return c.call(ctx, http.MethodPost, "devices/"+url.PathEscape(deviceID)+"/control", payload, true, nil)
 }
 
+// getOnce - чтение без повторов: показание энергии подождёт следующего часа.
+func (c *Client) getOnce(ctx context.Context, path string, out any) error {
+	base, pat, country, clientID := c.settings()
+	if pat == "" || base == "" {
+		return ErrNotConfigured
+	}
+	status, data, err := c.once(ctx, http.MethodGet, base+"/"+path, nil, pat, country, clientID, false)
+	if err != nil {
+		return err
+	}
+	return decode(status, data, out)
+}
+
+// EnergyProfile - свойства потребления прибора из профиля энергии.
+func (c *Client) EnergyProfile(ctx context.Context, deviceID string) ([]string, error) {
+	var out struct {
+		Result struct {
+			Property []string `json:"property"`
+		} `json:"result"`
+	}
+	err := c.getOnce(ctx, "devices/energy/"+url.PathEscape(deviceID)+"/profile", &out)
+	return out.Result.Property, err
+}
+
+// EnergyUsage - потребление за месяц month вида 200601 в ватт-часах.
+func (c *Client) EnergyUsage(ctx context.Context, deviceID, property, month string) (float64, error) {
+	var out struct {
+		Result struct {
+			DataList []map[string]any `json:"dataList"`
+		} `json:"result"`
+	}
+	query := url.Values{"property": {property}, "period": {"MONTHLY"}, "startDate": {month}, "endDate": {month}}
+	if err := c.getOnce(ctx, "devices/energy/"+url.PathEscape(deviceID)+"/usage?"+query.Encode(), &out); err != nil {
+		return 0, err
+	}
+	var sum float64
+	for _, entry := range out.Result.DataList {
+		v, _ := entry[property].(float64)
+		sum += v
+	}
+	if sum < 0 {
+		return 0, errors.New("ThinQ: отрицательное потребление")
+	}
+	return sum, nil
+}
+
 // SubscribeEvents подписывает клиента на события прибора на 4464 часа.
 func (c *Client) SubscribeEvents(ctx context.Context, deviceID string) error {
 	return c.call(ctx, http.MethodPost, "event/"+url.PathEscape(deviceID)+"/subscribe",

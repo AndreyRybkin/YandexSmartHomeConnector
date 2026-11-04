@@ -54,12 +54,12 @@ func TestEditorWarnings(t *testing.T) {
 		desc: appliance.Description{Options: map[string]appliance.Option{"mode": {Values: []string{"A", "B", "C"}}, "level": {Min: 0, Max: 100}}},
 		now:  map[string]any{"flag": true, "level": 40.0, "mode": "A"}}
 	v := buildEditor(tg, "", "", nil, "", "")
-	for i, want := range []string{"у функции значения да/нет: числу Алисы она не подходит", "эту функцию уже меняет «Переключатель «Подсветка»»"} {
+	for i, want := range []string{"у функции значения да/нет: числу Алисы она не подходит", "эту функцию уже меняет Переключатель «Подсветка»"} {
 		if !strings.Contains(v.Ranges[i].Warn, want) {
 			t.Fatalf("число %d: %q, нужно %q", i, v.Ranges[i].Warn, want)
 		}
 	}
-	if w := v.Toggles[0].Warn; !strings.Contains(w, "у функции число") || !strings.Contains(w, "«Число «Яркость»»") {
+	if w := v.Toggles[0].Warn; !strings.Contains(w, "у функции число") || !strings.Contains(w, "Число «Яркость»") {
 		t.Fatalf("переключатель на число: %q", w)
 	}
 	if w := v.Toggles[1].Warn; !strings.Contains(w, "задайте значения «включено» и «выключено»") {

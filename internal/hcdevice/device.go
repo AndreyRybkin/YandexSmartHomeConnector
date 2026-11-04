@@ -233,6 +233,10 @@ func powered(pw *profile.Power, st *appliance.State) bool {
 
 // toggleState - положение переключателя: флаг настройки или её значения on и off из профиля.
 func toggleState(t *profile.Toggle, st *appliance.State) (bool, bool) {
+	if t.State != "" {
+		raw, ok := st.Values[t.State]
+		return ok && valueString(raw) == t.StateOn, ok
+	}
 	raw, ok := st.Values[t.Setting]
 	if !ok {
 		return false, false
@@ -600,9 +604,20 @@ func modeOption(m *profile.Mode, desc *appliance.Description) string {
 	return m.Option
 }
 
+// rangeOption - настройка умения у этого прибора: основная, а если у прибора её нет - запасная.
+func rangeOption(r *profile.Range, desc *appliance.Description) string {
+	if _, ok := desc.Options[r.Option]; ok || r.FallbackOption == "" {
+		return r.Option
+	}
+	if _, ok := desc.Options[r.FallbackOption]; ok {
+		return r.FallbackOption
+	}
+	return r.Option
+}
+
 // rangeLimits берёт пределы из профиля, а недостающие - из описания прибора.
 func rangeLimits(r *profile.Range, desc *appliance.Description) (alice.RangeLimit, bool) {
-	opt, known := desc.Options[r.Option]
+	opt, known := desc.Options[rangeOption(r, desc)]
 	lim := alice.RangeLimit{Min: opt.Min, Max: opt.Max, Precision: opt.Step}
 	if r.Min != nil {
 		lim.Min = *r.Min
@@ -742,17 +757,18 @@ func typeOf(pr *profile.Property) string {
 // rangeValue - значение для Алисы: у работающей программы - текущее,
 // иначе заданное голосом для следующего запуска или значение по умолчанию.
 func (d *Device) rangeValue(r *profile.Range, desc *appliance.Description, st *appliance.State, pending map[string]any) (float64, bool) {
-	if isSetting(desc, r.Option) || st.Running() {
-		v, ok := st.Values[r.Option].(float64)
+	option := rangeOption(r, desc)
+	if isSetting(desc, option) || st.Running() {
+		v, ok := st.Values[option].(float64)
 		return v, ok
 	}
-	if v, ok := pending[r.Option].(float64); ok {
+	if v, ok := pending[option].(float64); ok {
 		return v, true
 	}
-	if v, ok := d.Profile.DefaultOptions[r.Option].(float64); ok {
+	if v, ok := d.Profile.DefaultOptions[option].(float64); ok {
 		return v, true
 	}
-	v, ok := st.Values[r.Option].(float64)
+	v, ok := st.Values[option].(float64)
 	return v, ok
 }
 
@@ -915,14 +931,14 @@ func (d *Device) Act(ctx context.Context, id string, a *alice.Action) string {
 			d.mu.Unlock()
 			if s, ok := d.Appliance.(appliance.Stepper); ok && !known {
 				// Текущего значения прибор не сообщает: шаг уходит ему как есть.
-				return code(s.Step(ctx, r.Option, f))
+				return code(s.Step(ctx, rangeOption(r, &desc), f))
 			}
 			f += cur
 		}
 		if f < lim.Min || f > lim.Max {
 			return alice.CodeInvalidValue
 		}
-		return d.setOption(ctx, &st, r.Option, f)
+		return d.setOption(ctx, &st, rangeOption(r, &desc), f)
 	case alice.CapToggle:
 		on, ok := a.State.Value.(bool)
 		if !ok {
@@ -935,8 +951,14 @@ func (d *Device) Act(ctx context.Context, id string, a *alice.Action) string {
 		if t.Instance != "pause" || t.Setting != "" {
 			// Снятие паузы запускает прибор: если он не на паузе, команда запустила бы его зря. Значение
 			// прибора вроде stop - тоже не пауза.
-			if raw, known := st.Values[t.Setting]; t.Instance == "pause" && !on && known && t.On != "" && valueString(raw) != t.On {
-				return ""
+			if t.Instance == "pause" && !on {
+				if t.State != "" {
+					if paused, known := toggleState(t, &st); known && !paused {
+						return ""
+					}
+				} else if raw, known := st.Values[t.Setting]; known && t.On != "" && valueString(raw) != t.On {
+					return ""
+				}
 			}
 			return code(d.Appliance.Set(ctx, t.Setting, toggleValue(t, on)))
 		}
@@ -964,7 +986,7 @@ func (d *Device) start(ctx context.Context, st *appliance.State, program string)
 	if v, ok := st.Values[appliance.StatusRemoteStartAllowed].(bool); ok && !v {
 		return alice.CodeRemoteDisabled
 	}
-	if st.Values[appliance.StatusDoorState] == appliance.DoorOpen {
+	if door, _ := profile.StatusValue(st.Values, appliance.StatusDoorState); door == appliance.DoorOpen {
 		return alice.CodeDoorOpen
 	}
 	desc := d.Appliance.Describe()

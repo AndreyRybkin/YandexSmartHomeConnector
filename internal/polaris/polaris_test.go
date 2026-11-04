@@ -458,3 +458,243 @@ func TestKettleRefusesHeat(t *testing.T) {
 		t.Fatalf("мало воды: %v", err)
 	}
 }
+
+// Звук и режим работы чайника: mute обратен sound, режим запускает работу, у выключенного режима нет.
+func TestKettleMuteAndProgram(t *testing.T) {
+	f := newFixture(t, t.TempDir(), nil)
+	a := f.hub.Appliance(testID)
+	f.connect()
+	waitFor(t, "значения", func() bool { return a.State().Values["sound"] == true && a.State().Values[KeySensor] == 31.0 })
+	p, err := profile.Resolve(profile.PolarisKettleType, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &hcdevice.Device{ID: "kettle", Profile: p, Appliance: a}
+	state := func(instance string) any {
+		for _, ds := range d.States() {
+			for _, c := range ds.Capabilities {
+				if sv, ok := c.State.(alice.StateValue); ok && sv.Instance == instance {
+					return sv.Value
+				}
+			}
+		}
+		return nil
+	}
+	if state("mute") != false || state("program") != nil {
+		t.Fatalf("в простое: mute %v, program %v", state("mute"), state("program"))
+	}
+	if code := d.Act(context.Background(), "kettle", action(alice.CapToggle, "mute", true)); code != "" {
+		t.Fatal(code)
+	}
+	f.expect("sound=false")
+	if code := d.Act(context.Background(), "kettle", action(alice.CapMode, "program", "smart")); code != "" {
+		t.Fatal(code)
+	}
+	f.expect("mode=5")
+	f.state(KeyMode, "5")
+	waitFor(t, "режим", func() bool { return state("program") == "smart" })
+}
+
+// Удержание тепла: значение считается из режима и есть у выключенного чайника, команда меняет режим,
+// конец работы с удержанием - тоже конец работы.
+func TestKettleKeepWarm(t *testing.T) {
+	f := newFixture(t, t.TempDir(), nil)
+	a := f.hub.Appliance(testID)
+	a.finishAfter = 10 * time.Millisecond
+	events := make(chan []string, 16)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go a.Run(ctx, func(e []string) {
+		if e != nil {
+			events <- e
+		}
+	})
+	f.connect()
+	waitFor(t, "значения", func() bool { return a.State().Values["sound"] == true && a.State().Values[KeyMode] == "0" })
+	p, err := profile.Resolve(profile.PolarisKettleType, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &hcdevice.Device{ID: "kettle", Profile: p, Appliance: a}
+	state := func() any {
+		for _, ds := range d.States() {
+			for _, c := range ds.Capabilities {
+				if sv, ok := c.State.(alice.StateValue); ok && sv.Instance == "keep_warm" {
+					return sv.Value
+				}
+			}
+		}
+		return nil
+	}
+	if o := a.Describe().Options[KeyKeepWarm]; !o.Setting || !slices.Contains(a.Describe().Reports, KeyKeepWarm) {
+		t.Fatalf("настройка %+v, значения %v", o, a.Describe().Reports)
+	}
+	if state() != false {
+		t.Fatalf("выключенный чайник: %v", state())
+	}
+	act := func(on bool) {
+		t.Helper()
+		if code := d.Act(ctx, "kettle", action(alice.CapToggle, "keep_warm", on)); code != "" {
+			t.Fatal(code)
+		}
+	}
+	mode := func(m string) {
+		t.Helper()
+		f.state(KeyMode, m)
+		waitFor(t, "режим "+m, func() bool { return a.State().Values[KeyMode] == m })
+	}
+	// Выключенный чайник получает кипячение с удержанием, а снять нечего.
+	act(false)
+	act(true)
+	f.expect("mode=2")
+	mode("2")
+	if state() != true {
+		t.Fatalf("режим 2: %v", state())
+	}
+	act(true)
+	act(false)
+	f.expect("mode=1")
+	mode("1")
+	if state() != false {
+		t.Fatalf("режим 1: %v", state())
+	}
+	act(true)
+	f.expect("mode=2")
+	mode("3")
+	act(true)
+	f.expect("mode=4")
+	mode("4")
+	if state() != true {
+		t.Fatalf("режим 4: %v", state())
+	}
+	act(false)
+	f.expect("mode=3")
+	// Режимы 5 и 6 удержания не знают: включить нельзя, снимать нечего.
+	mode("5")
+	if err := a.Set(ctx, KeyKeepWarm, true); !errors.Is(err, appliance.ErrWrongMode) {
+		t.Fatalf("режим 5: %v", err)
+	}
+	act(false)
+	if err := a.Set(ctx, KeyKeepWarm, "да"); !errors.Is(err, appliance.ErrInvalidValue) {
+		t.Fatalf("не флаг: %v", err)
+	}
+	// Конец работы с удержанием: режим 2 переходит в 0.
+	mode("2")
+	mode("0")
+	select {
+	case e := <-events:
+		if !slices.Contains(e, EventBoilFinished) {
+			t.Fatalf("события: %v", e)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("нет конца работы")
+	}
+	f.expect()
+}
+
+// Снятый с базы чайник и чайник без воды удержание не включают, а снять его можно всегда.
+func TestKettleKeepWarmRefused(t *testing.T) {
+	f := newFixture(t, t.TempDir(), nil)
+	a := f.hub.Appliance(testID)
+	f.connect()
+	waitFor(t, "значения", func() bool { return a.State().Values["sound"] == true && a.State().Values[KeyMode] == "0" })
+	ctx := context.Background()
+	f.state(KeyEmptyBase, "true")
+	waitFor(t, "снят с базы", func() bool { return a.State().Values[KeyEmptyBase] == true })
+	if err := a.Set(ctx, KeyKeepWarm, true); !errors.Is(err, appliance.ErrHumanNeeded) {
+		t.Fatalf("снят с базы: %v", err)
+	}
+	f.state(KeyEmptyBase, "false")
+	f.state(KeyErrorCode, "01")
+	waitFor(t, "мало воды", func() bool { return a.State().Values[KeyWaterAlarm] == appliance.EventPresent })
+	if err := a.Set(ctx, KeyKeepWarm, true); !errors.Is(err, appliance.ErrNotEnoughWater) {
+		t.Fatalf("мало воды: %v", err)
+	}
+	f.state(KeyMode, "2")
+	waitFor(t, "режим 2", func() bool { return a.State().Values[KeyMode] == "2" })
+	if err := a.Set(ctx, KeyKeepWarm, false); err != nil {
+		t.Fatalf("снятие удержания: %v", err)
+	}
+	f.expect("mode=1")
+}
+
+// Удержание тепла только у чайника: у другого прибора функции нет и команда её не отправляет.
+func TestKeepWarmOnlyKettle(t *testing.T) {
+	f := newFixture(t, t.TempDir(), nil)
+	a := f.hub.Appliance(testID)
+	a.message("c", KeyDevType, "1000")
+	a.message("c", KeyMode, "2")
+	d := a.Describe()
+	if _, ok := d.Options[KeyKeepWarm]; ok || slices.Contains(d.Reports, KeyKeepWarm) {
+		t.Fatalf("описание: %+v", d)
+	}
+	if _, ok := a.State().Values[KeyKeepWarm]; ok {
+		t.Fatalf("значения: %v", a.State().Values)
+	}
+	if err := a.Set(context.Background(), KeyKeepWarm, true); !errors.Is(err, appliance.ErrNotSupported) {
+		t.Fatalf("команда: %v", err)
+	}
+}
+
+// Пустой чайник: код 2 даёт уровень empty и отказ в нагреве, код 0 после доливки снимает оба.
+func TestKettleEmpty(t *testing.T) {
+	f := newFixture(t, t.TempDir(), nil)
+	a := f.hub.Appliance(testID)
+	a.message("c", KeyDevType, "294")
+	p, err := profile.Resolve(profile.PolarisKettleType, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &hcdevice.Device{ID: "kettle", Profile: p, Appliance: a}
+	level := func() any {
+		for _, ds := range d.States() {
+			for _, c := range ds.Properties {
+				if sv, ok := c.State.(alice.StateValue); ok && c.Type == alice.PropEvent && sv.Instance == "water_level" {
+					return sv.Value
+				}
+			}
+		}
+		return nil
+	}
+	for _, code := range []string{"2", "02"} {
+		a.message("c", KeyErrorCode, code)
+		if level() != "empty" {
+			t.Fatalf("код %s: %v", code, level())
+		}
+		if err := a.Set(context.Background(), KeyMode, "1"); !errors.Is(err, appliance.ErrNotEnoughWater) {
+			t.Fatalf("код %s, нагрев: %v", code, err)
+		}
+	}
+	a.message("c", KeyErrorCode, "0")
+	if level() != "normal" {
+		t.Fatalf("после доливки: %v", level())
+	}
+	if err := a.Set(context.Background(), KeyMode, "1"); errors.Is(err, appliance.ErrNotEnoughWater) {
+		t.Fatalf("нагрев после доливки: %v", err)
+	}
+}
+
+// Разогрев без цели не запускается; чай сбрасывается при режиме без цели.
+func TestKettleHeatNeedsTarget(t *testing.T) {
+	f := newFixture(t, t.TempDir(), nil)
+	a := f.hub.Appliance(testID)
+	a.message("c", KeyDevType, "294")
+	a.message("c", KeyTemperature, "0")
+	for _, mode := range []string{"3", "4"} {
+		if err := a.Set(context.Background(), KeyMode, mode); !errors.Is(err, appliance.ErrWrongMode) {
+			t.Fatalf("режим %s без цели: %v", mode, err)
+		}
+	}
+	a.message("c", KeyTemperature, "80")
+	a.mu.Lock()
+	a.values[KeyTea] = "green"
+	a.mu.Unlock()
+	a.message("c", KeyMode, "3")
+	if a.State().Values[KeyTea] != "green" {
+		t.Fatal("чай сброшен при разогреве")
+	}
+	a.message("c", KeyMode, "1")
+	if _, ok := a.State().Values[KeyTea]; ok {
+		t.Fatal("чай остался при кипячении")
+	}
+}

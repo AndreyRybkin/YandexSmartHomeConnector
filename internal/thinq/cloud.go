@@ -66,6 +66,9 @@ type credentials struct {
 type stored struct {
 	DeviceType string          `json:"deviceType"`
 	Profile    json.RawMessage `json:"profile"`
+	// Energy - свойства потребления из профиля энергии: так показание не пропадает из Алисы после
+	// перезапуска, пока облако недоступно.
+	Energy []string `json:"energy,omitempty"`
 }
 
 // Cloud - аккаунт LG: клиент API, профили приборов, одно соединение MQTT и приборы.
@@ -91,6 +94,8 @@ type Cloud struct {
 	profiles  map[string]*stored
 	account   []DeviceInfo
 	connected bool
+	// energyNext - когда можно снова запросить энергию прибора.
+	energyNext map[string]time.Time
 }
 
 // New открывает файл клиента path, а если его нет - создаёт идентификатор клиента.
@@ -98,7 +103,7 @@ type Cloud struct {
 func New(path, dir string, log *slog.Logger) (*Cloud, error) {
 	c := &Cloud{path: path, dir: dir, log: log, wake: make(chan struct{}, 1), changes: make(chan struct{}, 1),
 		fetch: make(chan struct{}, 1), appliances: map[string]*Appliance{}, attached: map[*Appliance]bool{},
-		profiles: map[string]*stored{}}
+		profiles: map[string]*stored{}, energyNext: map[string]time.Time{}}
 	data, err := os.ReadFile(path)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
@@ -233,6 +238,7 @@ func (c *Cloud) Appliance(deviceID, location string) (*Appliance, error) {
 		a.model = m
 	}
 	a.mu.Unlock()
+	a.useEnergy(st.Energy)
 	return a, nil
 }
 
@@ -290,6 +296,11 @@ func (c *Cloud) loadProfile(ctx context.Context, deviceID, deviceType string) er
 		return fmt.Errorf("профиль прибора LG %s: %w", deviceID, err)
 	}
 	st := &stored{DeviceType: deviceType, Profile: raw}
+	c.mu.Lock()
+	if old := c.profileLocked(deviceID); old != nil {
+		st.Energy = old.Energy
+	}
+	c.mu.Unlock()
 	data, err := json.MarshalIndent(st, "", "  ")
 	if err == nil && len(data) > maxProfileFile {
 		err = fmt.Errorf("профиль прибора LG %s больше %d байт", deviceID, maxProfileFile)
@@ -427,12 +438,10 @@ func (c *Cloud) runningIDs() []string {
 // Run загружает профили приборов, держит MQTT и переподключается после обрыва, пока ctx
 // не отменён.
 func (c *Cloud) Run(ctx context.Context) {
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		c.watchProfiles(ctx)
-	}()
-	defer func() { <-done }()
+	var wg sync.WaitGroup
+	wg.Go(func() { c.watchProfiles(ctx) })
+	wg.Go(func() { c.watchEnergy(ctx) })
+	defer wg.Wait()
 	// Настройки, применённые до запуска, первое подключение и так учтёт.
 	drain(c.wake)
 	pause := reconnectMin

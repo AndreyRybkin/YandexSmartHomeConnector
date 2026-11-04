@@ -50,8 +50,39 @@ var (
 		"LaundryCare.Common.Event.DoorLock.WaterLevelTooHigh": "long_press",
 		"BSH.Common.Event.LowWaterPressure":                   "long_press",
 	}
+	// spinSpeed - скорость отжима. RPM600 и RPM1000 остаются без пары: у Алисы нет таких значений.
+	spinSpeed = Mode{Instance: "work_speed", Option: "LaundryCare.Washer.Option.SpinSpeed", Values: map[string]string{
+		"LaundryCare.Washer.EnumType.SpinSpeed.RPM400":  "slow",
+		"LaundryCare.Washer.EnumType.SpinSpeed.RPM800":  "medium",
+		"LaundryCare.Washer.EnumType.SpinSpeed.RPM1200": "fast",
+		"LaundryCare.Washer.EnumType.SpinSpeed.RPM1400": "turbo",
+		"LaundryCare.Washer.EnumType.SpinSpeed.RPM1600": "max",
+	}}
 	// iDosLevel - мало средства в дозаторе i-Dos: средство не вода, но так же устроен ополаскиватель.
 	iDosLevel = []string{"LaundryCare.Washer.Event.IDos1FillLevelPoor", "LaundryCare.Washer.Event.IDos2FillLevelPoor"}
+	// dryingTarget - степень сушки. У Алисы нет своего имени для неё, ближе всего режим нагрева.
+	dryingTarget = Mode{Instance: "heat", Option: "LaundryCare.Dryer.Option.DryingTarget", Values: map[string]string{
+		"LaundryCare.Dryer.EnumType.DryingTarget.GentleDry":       "min",
+		"LaundryCare.Dryer.EnumType.DryingTarget.IronDry":         "low",
+		"LaundryCare.Dryer.EnumType.DryingTarget.CupboardDry":     "normal",
+		"LaundryCare.Dryer.EnumType.DryingTarget.CupboardDryPlus": "high",
+		"LaundryCare.Dryer.EnumType.DryingTarget.ExtraDry":        "max",
+	}}
+	// Настройки стирки, которые есть не у всех приборов типа.
+	drumLight = Toggle{Instance: "backlight", Setting: "LaundryCare.Common.Setting.DrumLight.Active", Optional: true}
+	soundMute = Toggle{Instance: "mute", Setting: "LaundryCare.Common.Setting.Sound.Mute", Optional: true}
+	// Тревоги холодильных приборов: дверь открыта слишком долго - double_click, морозильная камера
+	// нагрелась - long_press. В домашней сети те же события называются иначе.
+	refrigeratorAlarms = map[string]string{
+		"Refrigeration.FridgeFreezer.Event.DoorAlarmRefrigerator": "double_click",
+		"Refrigeration.Common.Event.Door.AlarmRefrigerator":       "double_click",
+	}
+	freezerAlarms = map[string]string{
+		"Refrigeration.FridgeFreezer.Event.DoorAlarmFreezer":        "double_click",
+		"Refrigeration.Common.Event.Door.AlarmFreezer":              "double_click",
+		"Refrigeration.FridgeFreezer.Event.TemperatureAlarmFreezer": "long_press",
+		"Refrigeration.Common.Event.Freezer.TemperatureAlarm":       "long_press",
+	}
 )
 
 func programs(prefix string, m map[string]string) map[string]string {
@@ -69,8 +100,10 @@ var washer = &Profile{
 	Modes: []Mode{{Instance: "program", Programs: programs("LaundryCare.Washer.Program.", map[string]string{
 		"Cotton": "normal", "EasyCare": "one", "Mix": "two", "DelicatesSilk": "three", "Wool": "four",
 		"Sensitive": "five", "Auto30": "auto", "Super153045.Super1530": "express",
-	})}},
-	Toggles:    []Toggle{pause},
+		"Cotton.CottonEco": "eco", "Mix.NightWash": "quiet", "Auto40": "six", "Auto60": "seven",
+		"Towels": "eight", "ShirtsBlouses": "nine", "SportFitness": "ten",
+	})}, spinSpeed},
+	Toggles:    []Toggle{pause, drumLight, soundMute},
 	Properties: []Property{doorOpen, aquaStop},
 	Events:     &Events{Button: laundryButton, WaterLevelIfKnown: iDosLevel},
 }
@@ -84,24 +117,61 @@ var washerDryer = &Profile{
 	Modes: []Mode{{Instance: "program", Programs: programs("LaundryCare.WasherDryer.Program.", map[string]string{
 		"Cotton": "normal", "Cotton.Eco4060": "eco", "EasyCare": "one", "Mix": "two",
 		"WashAndDry.60": "three", "WashAndDry.90": "four",
-	})}},
-	Toggles:    []Toggle{pause},
+	})}, spinSpeed, dryingTarget},
+	Toggles:    []Toggle{pause, drumLight, soundMute},
 	Properties: []Property{doorOpen, aquaStop},
 	Events:     &Events{Button: laundryButton, WaterLevelIfKnown: iDosLevel},
 }
 
 // Варочную панель и кухонный процессор облако только показывает: программ для запуска в
 // API нет, а включит ли их облако по питанию, не проверено.
-var hob = &Profile{YandexType: "cooking", OnOff: "power"}
+var hob = &Profile{
+	YandexType: "cooking",
+	OnOff:      "power",
+	// Вытяжка, встроенная в панель. Значения Off и AfterRun остаются без пары: у Алисы нет таких режимов.
+	Modes: []Mode{{Instance: "fan_speed", Option: "Cooking.Hob.Setting.Ventilation", Values: map[string]string{
+		"Cooking.Hob.EnumType.Ventilation.Level01":     "one",
+		"Cooking.Hob.EnumType.Ventilation.Level03":     "two",
+		"Cooking.Hob.EnumType.Ventilation.Level05":     "three",
+		"Cooking.Hob.EnumType.Ventilation.Level07":     "four",
+		"Cooking.Hob.EnumType.Ventilation.Level09":     "five",
+		"Cooking.Hob.EnumType.Ventilation.Level11":     "six",
+		"Cooking.Hob.EnumType.Ventilation.Level13":     "seven",
+		"Cooking.Hob.EnumType.Ventilation.Level15":     "eight",
+		"Cooking.Hob.EnumType.Ventilation.Level17":     "nine",
+		"Cooking.Hob.EnumType.Ventilation.BoostLevel1": "turbo",
+		"Cooking.Hob.EnumType.Ventilation.BoostLevel2": "max",
+	}}},
+	Events: &Events{Button: map[string]string{
+		// Кнопка избранного на самом приборе: действие назначают в приложении Home Connect.
+		"BSH.Common.Event.Favorite.001.ExternalTrigger": "click",
+		"BSH.Common.Event.Favorite.002.ExternalTrigger": "long_press",
+		"BSH.Common.Event.AlarmClockElapsed":            "double_click",
+	}},
+}
 
-var fridge = func(setting, door string) *Profile {
-	return &Profile{
+// fridge - холодильный прибор. fallback - другое имя настройки температуры: в домашней сети модели
+// сообщают то одно, то другое.
+var fridge = func(setting, fallback, door string, alarms ...map[string]string) *Profile {
+	p := &Profile{
 		YandexType: "cooking",
 		OnOff:      "none",
-		Ranges:     []Range{{Instance: "temperature", Option: setting, Unit: celsius}},
+		// Пределы яркости - только из описания прибора: заданные в профиле создали бы умение и у прибора
+		// без этой настройки.
+		Ranges: []Range{{Instance: "temperature", Option: setting, FallbackOption: fallback, Unit: celsius},
+			{Instance: "brightness", Option: "Refrigeration.Common.Setting.Light.Internal.Brightness", Unit: percent}},
+		Toggles: []Toggle{{Instance: "backlight", Setting: "Refrigeration.Common.Setting.Light.Internal.Power", Optional: true}},
 		Properties: []Property{{Type: "event", Instance: "open", Status: door,
 			Values: fridgeDoorValues}},
 	}
+	if len(alarms) > 0 {
+		button := map[string]string{}
+		for _, a := range alarms {
+			maps.Copy(button, a)
+		}
+		p.Events = &Events{Button: button}
+	}
+	return p
 }
 
 var builtin = map[string]*Profile{
@@ -113,6 +183,8 @@ var builtin = map[string]*Profile{
 		Modes: []Mode{{Instance: "program", Programs: programs("Cooking.Oven.Program.HeatingMode.", map[string]string{
 			"HotAir": "baking", "TopBottomHeating": "normal", "HotAirEco": "eco", "PizzaSetting": "pizza",
 			"PreHeating": "preheat", "SlowCook": "slow_cook", "GrillLargeArea": "frying", "Defrost": "one",
+			"HotAirGrilling": "two", "GrillSmallArea": "three", "BottomHeating": "four", "TopBottomHeatingEco": "five",
+			"IntensiveHeat": "six", "FrozenHeatupSpecial": "ten", "HotAir100Steam": "steam",
 		})}},
 		Ranges:  []Range{{Instance: "temperature", Option: "Cooking.Oven.Option.SetpointTemperature", Unit: celsius}},
 		Toggles: []Toggle{pause, {Instance: "backlight", Setting: "Cooking.Oven.Setting.Light.Cavity.001.Power", Optional: true}},
@@ -138,8 +210,10 @@ var builtin = map[string]*Profile{
 		Modes: []Mode{{Instance: "dishwashing", Programs: programs("Dishcare.Dishwasher.Program.", map[string]string{
 			"Auto2": "auto", "Eco50": "eco", "Quick45": "express", "Intensiv70": "intensive",
 			"Normal65": "normal", "Glas40": "glass", "PreRinse": "pre_rinse", "NightWash": "quiet",
+			"Auto1": "one", "Auto3": "two", "GlassCare": "three", "MachineCare": "four", "Quick65": "five",
+			"Normal45": "six", "Intensiv45": "seven", "AutoHalfLoad": "eight", "Super60": "nine", "MixedLoad": "ten",
 		})}},
-		Toggles:    []Toggle{pause},
+		Toggles:    []Toggle{pause, {Instance: "backlight", Setting: "Dishcare.Dishwasher.Setting.InfoLight", Optional: true}},
 		Properties: []Property{doorOpen, aquaStop},
 		Events: &Events{
 			Button: map[string]string{
@@ -170,8 +244,10 @@ var builtin = map[string]*Profile{
 		DefaultProgram: "LaundryCare.Dryer.Program.Cotton",
 		Modes: []Mode{{Instance: "program", Programs: programs("LaundryCare.Dryer.Program.", map[string]string{
 			"Cotton": "normal", "Synthetic": "one", "Mix": "two",
-		})}},
-		Toggles:    []Toggle{pause},
+			"Super40": "express", "Towels": "three", "Jeans": "four", "Delicates": "five", "Hygiene": "six",
+			"Blankets": "seven", "BusinessShirts": "eight", "TimeCold": "nine", "TimeWarm": "ten",
+		})}, dryingTarget},
+		Toggles:    []Toggle{pause, soundMute},
 		Properties: []Property{doorOpen},
 		Events: &Events{Button: map[string]string{
 			"BSH.Common.Event.ProgramFinished": "click",
@@ -187,8 +263,12 @@ var builtin = map[string]*Profile{
 		OnOff:      "power",
 		Modes: []Mode{{Instance: "coffee_mode", Programs: programs("ConsumerProducts.CoffeeMaker.Program.Beverage.", map[string]string{
 			"Espresso": "espresso", "Coffee": "americano", "Cappuccino": "cappuccino", "CaffeLatte": "latte",
-			"LatteMacchiato": "one",
+			"LatteMacchiato": "one", "EspressoDoppio": "double_espresso", "Ristretto": "two", "EspressoMacchiato": "three",
+			"XLCoffee": "four", "CaffeGrande": "five", "MilkFroth": "six", "WarmMilk": "seven", "HotWater": "eight",
 		})}},
+		Toggles: []Toggle{{Instance: "keep_warm", Setting: "ConsumerProducts.CoffeeMaker.Setting.CupWarmer", Optional: true}},
+		// Счётчик сваренного кофе: другие напитки он не считает.
+		Properties: []Property{{Type: "float", Instance: "meter", Status: "ConsumerProducts.CoffeeMaker.Status.BeverageCounterCoffee"}},
 		Events: &Events{
 			Button: map[string]string{
 				// Обслуживание.
@@ -223,25 +303,38 @@ var builtin = map[string]*Profile{
 			"Cooking.Hood.EnumType.Stage.FanStage03": "three",
 			"Cooking.Hood.EnumType.Stage.FanStage04": "four",
 			"Cooking.Hood.EnumType.Stage.FanStage05": "five",
+		}}, {Instance: "work_speed", Option: "Cooking.Common.Option.Hood.IntensiveLevel", Values: map[string]string{
+			"Cooking.Hood.EnumType.IntensiveStage.IntensiveStageOff": "normal",
+			"Cooking.Hood.EnumType.IntensiveStage.IntensiveStage1":   "fast",
+			"Cooking.Hood.EnumType.IntensiveStage.IntensiveStage2":   "turbo",
 		}}},
+		// Пределы яркости - только из описания прибора: заданные в профиле создали бы умение и у вытяжки
+		// без этой настройки.
+		Ranges:  []Range{{Instance: "brightness", Option: "Cooking.Common.Setting.LightingBrightness", FallbackOption: "Cooking.Hood.Setting.LightingBrightness", Unit: percent}},
 		Toggles: []Toggle{{Instance: "backlight", Setting: "Cooking.Common.Setting.Lighting", Optional: true}},
-		// Жировой фильтр пора помыть.
 		Events: &Events{Button: map[string]string{
+			// Кнопка избранного на самом приборе: действие назначают в приложении Home Connect.
+			"BSH.Common.Event.Favorite.001.ExternalTrigger": "click",
+			"BSH.Common.Event.Favorite.002.ExternalTrigger": "long_press",
+			// Жировой фильтр пора помыть.
 			"Cooking.Common.Event.Hood.GreaseFilterMaxSaturationNearlyReached": "double_click",
 			"Cooking.Common.Event.Hood.GreaseFilterMaxSaturationReached":       "double_click",
 		}},
 	},
-	"Refrigerator":  fridge("Refrigeration.FridgeFreezer.Setting.SetpointTemperatureRefrigerator", "Refrigeration.Common.Status.Door.Refrigerator"),
-	"FridgeFreezer": fridge("Refrigeration.FridgeFreezer.Setting.SetpointTemperatureRefrigerator", "Refrigeration.Common.Status.Door.Refrigerator"),
-	"Freezer":       fridge("Refrigeration.FridgeFreezer.Setting.SetpointTemperatureFreezer", "Refrigeration.Common.Status.Door.Freezer"),
-	"WineCooler":    fridge("Refrigeration.Common.Setting.WineCompartment.SetpointTemperature", "Refrigeration.Common.Status.Door.WineCompartment"),
+	"Refrigerator":  fridge("Refrigeration.FridgeFreezer.Setting.SetpointTemperatureRefrigerator", "Refrigeration.Common.Setting.Refrigerator.SetpointTemperature", "Refrigeration.Common.Status.Door.Refrigerator", refrigeratorAlarms),
+	"FridgeFreezer": fridge("Refrigeration.FridgeFreezer.Setting.SetpointTemperatureRefrigerator", "Refrigeration.Common.Setting.Refrigerator.SetpointTemperature", "Refrigeration.Common.Status.Door.Refrigerator", refrigeratorAlarms, freezerAlarms),
+	"Freezer":       fridge("Refrigeration.FridgeFreezer.Setting.SetpointTemperatureFreezer", "Refrigeration.Common.Setting.Freezer.SetpointTemperature", "Refrigeration.Common.Status.Door.Freezer", freezerAlarms),
+	"WineCooler":    fridge("Refrigeration.Common.Setting.WineCompartment.SetpointTemperature", "", "Refrigeration.Common.Status.Door.WineCompartment"),
 	// Кондиционер включается питанием, а режим - программа: выбор режима сразу её запускает.
 	"AirConditioner": {
 		YandexType: "thermostat.ac",
 		OnOff:      "power",
 		Modes: []Mode{{Instance: "thermostat", Programs: programs("HeatingVentilationAirConditioning.AirConditioner.Program.", map[string]string{
 			"Auto": "auto", "Cool": "cool", "Dry": "dry", "Fan": "fan_only", "Heat": "heat",
-		})}},
+		})}, {Instance: "fan_speed", Option: "HeatingVentilationAirConditioning.AirConditioner.Option.FanSpeedMode", Values: map[string]string{
+			"HeatingVentilationAirConditioning.AirConditioner.EnumType.FanSpeedMode.Automatic": "auto",
+			"HeatingVentilationAirConditioning.AirConditioner.EnumType.FanSpeedMode.Manual":    "medium",
+		}}},
 		Ranges: []Range{{Instance: "temperature", Option: "HeatingVentilationAirConditioning.AirConditioner.Option.SetpointTemperature", Unit: celsius}},
 	},
 	// Микроволновка без программы по умолчанию: «включи» не греет, пока не выбрана мощность.
@@ -255,7 +348,9 @@ var builtin = map[string]*Profile{
 		})}},
 		Toggles:    []Toggle{pause},
 		Properties: []Property{doorOpen},
-		Events:     &Events{Button: finished},
+		Events: &Events{Button: map[string]string{
+			"BSH.Common.Event.ProgramFinished": "click",
+		}},
 	},
 	"WarmingDrawer": {
 		YandexType:     "cooking",
@@ -270,9 +365,12 @@ var builtin = map[string]*Profile{
 		Events:     &Events{Button: finished},
 	},
 	// Документация Home Connect называет варочную панель Cooktop, области доступа - Hob.
-	"Cooktop":       hob,
-	"Hob":           hob,
-	"CookProcessor": {YandexType: "cooking.multicooker", OnOff: "power"},
+	"Cooktop": hob,
+	"Hob":     hob,
+	"CookProcessor": {YandexType: "cooking.multicooker", OnOff: "power", Events: &Events{Button: map[string]string{
+		"BSH.Common.Event.ProgramFinished": "click",
+		"BSH.Common.Event.ProgramAborted":  "double_click",
+	}}},
 	"CleaningRobot": {
 		YandexType:     "vacuum_cleaner",
 		OnOff:          "program",
@@ -280,6 +378,21 @@ var builtin = map[string]*Profile{
 		Modes: []Mode{{Instance: "program", Programs: map[string]string{
 			"ConsumerProducts.CleaningRobot.Program.Cleaning.CleanAll": "auto",
 			"ConsumerProducts.CleaningRobot.Program.Cleaning.CleanMap": "one",
+		}}, {Instance: "cleanup_mode", Option: "ConsumerProducts.CleaningRobot.Option.CleaningMode", Values: map[string]string{
+			// Серия Roxxter.
+			"ConsumerProducts.CleaningRobot.EnumType.CleaningModes.Silent":   "quiet",
+			"ConsumerProducts.CleaningRobot.EnumType.CleaningModes.Standard": "normal",
+			"ConsumerProducts.CleaningRobot.EnumType.CleaningModes.Power":    "express",
+			// Серия Spotless.
+			"ConsumerProducts.CleaningRobot.EnumType.CleaningMode.IntelligentMode": "auto",
+			"ConsumerProducts.CleaningRobot.EnumType.CleaningMode.VacuumOnly":      "dry_cleaning",
+			"ConsumerProducts.CleaningRobot.EnumType.CleaningMode.MopOnly":         "wet_cleaning",
+			"ConsumerProducts.CleaningRobot.EnumType.CleaningMode.VacuumAndMop":    "mixed_cleaning",
+			"ConsumerProducts.CleaningRobot.EnumType.CleaningMode.MopAfterVacuum":  "smart",
+		}}, {Instance: "work_speed", Option: "ConsumerProducts.CleaningRobot.Option.SuctionPower", Values: map[string]string{
+			"ConsumerProducts.CleaningRobot.EnumType.SuctionPower.Silent":   "min",
+			"ConsumerProducts.CleaningRobot.EnumType.SuctionPower.Standard": "medium",
+			"ConsumerProducts.CleaningRobot.EnumType.SuctionPower.Max":      "max",
 		}}},
 		Toggles: []Toggle{pause},
 		// Заряд сообщают серии Roxxter и Spotless, от 0 до 100 %.
@@ -294,6 +407,14 @@ var builtin = map[string]*Profile{
 			"ConsumerProducts.CleaningRobot.Status.DustBoxInserted=false":     "long_press",
 		}},
 	},
+}
+
+// Блокировка панели: настройка есть не у всех приборов типа.
+func init() {
+	for _, t := range []string{"Oven", "Dishwasher", "Washer", "WasherDryer", "Dryer", "CoffeeMaker", "Microwave", "Hob", "CookProcessor"} {
+		p := builtin[t]
+		p.Toggles = append(slices.Clip(p.Toggles), Toggle{Instance: "controls_locked", Setting: "BSH.Common.Setting.ChildLock", Optional: true})
+	}
 }
 
 // Авария прибора - long_press. ActionRequired сюда не входит: прибор просто ждёт человека, и при

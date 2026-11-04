@@ -3,6 +3,7 @@ package webos
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -37,6 +38,8 @@ type fakeTV struct {
 	app     string
 	channel string
 	play    string
+	// screenOff - экран погашен: состояние питания Screen Off.
+	screenOff bool
 }
 
 var fakeInputs = []map[string]string{{"id": "HDMI_1", "label": "HDMI 1", "appId": "com.webos.app.hdmi1"},
@@ -75,6 +78,9 @@ func (f *fakeTV) state(uri string) any {
 	add := func(k string, v any) map[string]any { ok[k] = v; return ok }
 	switch uri {
 	case uriPowerState:
+		if f.screenOff {
+			return add("state", "Screen Off")
+		}
 		return add("state", "Active")
 	case uriForeground:
 		return add("appId", f.app)
@@ -182,6 +188,9 @@ func (f *fakeTV) request(ws *websocket.Conn, id, uri string, p map[string]any) {
 	case uriPause:
 		f.play = "paused"
 		f.push(uriMedia)
+	case uriScreenOff, uriScreenOn:
+		f.screenOff = uri == uriScreenOff
+		f.push(uriPowerState)
 	case uriTurnOff:
 		return
 	default:
@@ -432,5 +441,57 @@ func TestCertPlain(t *testing.T) {
 	}
 	if hits.Load() != 0 {
 		t.Fatal("с отпечатком шлюз обратился к порту без шифрования")
+	}
+}
+
+// Экран гаснет и зажигается у включённого телевизора; у выключенного значения экрана нет.
+func TestScreen(t *testing.T) {
+	f := newFakeTV(t)
+	set, stop := run(t, Config{ID: "tv", Host: f.host(), Dir: t.TempDir()})
+	defer stop()
+	waitFor(t, "экран", func() bool { return set.State().Values[tv.Screen] == tv.On })
+	ctx := context.Background()
+	if err := set.Set(ctx, tv.Screen, tv.Off); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "экран погас", func() bool { v := set.State().Values; return v[tv.Screen] == tv.Off && v[tv.Power] == tv.On })
+	if err := set.Set(ctx, tv.Screen, tv.On); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "экран зажёгся", func() bool { return set.State().Values[tv.Screen] == tv.On })
+	if err := set.Set(ctx, tv.Screen, "maybe"); !errors.Is(err, appliance.ErrInvalidValue) {
+		t.Fatalf("неверное значение: %v", err)
+	}
+	if d := set.Describe(); !slices.Contains(d.Reports, tv.Screen) || !d.Options[tv.Screen].Setting {
+		t.Fatalf("описание: %+v", d)
+	}
+	set.onPower([]byte(`{"state":"Suspend"}`))
+	if _, ok := set.State().Values[tv.Screen]; ok {
+		t.Fatalf("выключенный телевизор: %v", set.State().Values)
+	}
+}
+
+// Приложения: режим есть только со списком, команда запускает только приложения из списка.
+func TestApps(t *testing.T) {
+	f := newFakeTV(t)
+	apps := []string{"example.app.one", "example.app.two"}
+	set, stop := run(t, Config{ID: "tv", Host: f.host(), Dir: t.TempDir(), Apps: apps})
+	defer stop()
+	waitFor(t, "подключение", func() bool { return set.Status().Connected && set.State().Values[tv.App] == liveTVApp })
+	if o := set.Describe().Options[tv.App]; !slices.Equal(o.Values, apps) || !o.Setting {
+		t.Fatalf("настройка: %+v", o)
+	}
+	ctx := context.Background()
+	if err := set.Set(ctx, tv.App, "example.app.two"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "приложение", func() bool { return set.State().Values[tv.App] == "example.app.two" })
+	if err := set.Set(ctx, tv.App, "example.other"); !errors.Is(err, appliance.ErrInvalidValue) {
+		t.Fatalf("чужое приложение: %v", err)
+	}
+	none, stopNone := run(t, Config{ID: "tv2", Host: "127.0.0.1:1", Dir: t.TempDir()})
+	defer stopNone()
+	if _, ok := none.Describe().Options[tv.App]; ok {
+		t.Fatal("настройка без списка приложений")
 	}
 }

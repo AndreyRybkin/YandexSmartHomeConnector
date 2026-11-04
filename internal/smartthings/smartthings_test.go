@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -669,7 +670,7 @@ func TestEnergy(t *testing.T) {
 		unit  string
 		value string
 		want  any
-	}{{"Wh", "12000", 12.0}, {"kWh", "1930.362", 1930.362}, {"", "5", 5.0}, {"mWh", "5", nil}, {"kVAh", "5", nil}}
+	}{{"Wh", "12000", 12.0}, {"kWh", "1930.362", 1930.362}, {"", "5", 5.0}, {"mWh", "5", nil}, {"kVAh", "5", nil}, {"ccf", "1", cubicMetersPerCcf}, {"mA", "250", 0.25}}
 	for _, tc := range cases {
 		got, ok := scalar(AttrValue{Value: json.RawMessage(tc.value), Unit: tc.unit}, nil)
 		if ok != (tc.want != nil) || got != tc.want {
@@ -778,6 +779,278 @@ func TestOvenFallbackLimits(t *testing.T) {
 	}
 	_, fridge := profiled(t, c, "fridge-2", "main", `{"main": {"thermostatCoolingSetpoint": {"coolingSetpoint": {"value": 3, "unit": "C"}}}}`)
 	if info := infoJSON(fridge); strings.Contains(info, "devices.capabilities.range") {
+		t.Fatalf("холодильник: %s", info)
+	}
+}
+
+// значения устройства в прибор: объект status - компонент main.
+func mainStatus(attrs string) string { return `{"main":` + attrs + `}` }
+
+// Датчик воздуха IKEA по образцу снимка: второе имя PM2.5, TVOC без пересчёта, заряд словами и вторым именем.
+func TestSensorNames(t *testing.T) {
+	fake := stfake.New()
+	defer fake.Close()
+	fake.AddDevice("air", "Воздух", []map[string]any{stfake.Component("main", "AirQualityDetector", "fineDustSensor", "tvocMeasurement",
+		"samsungce.rechargeableBattery", "batteryLevel", "currentMeasurement", "doorControl", "tamperAlert")}, nil)
+	c := account(t, fake)
+	a, d := profiled(t, c, "air", "main", mainStatus(`{"fineDustSensor":{"fineDustLevel":{"value":7}},"tvocMeasurement":{"tvocLevel":{"value":0.1,"unit":"ppm"}},
+		"samsungce.rechargeableBattery":{"battery":{"value":90,"unit":"%"}},"batteryLevel":{"battery":{"value":"warning"}},
+		"currentMeasurement":{"current":{"value":1500,"unit":"mA"}},"doorControl":{"door":{"value":"closing"}},"tamperAlert":{"tamper":{"value":"clear"}}}`))
+	online(c, a)
+	info, states := infoJSON(d), statesJSON(d)
+	for _, want := range []string{`"instance":"pm2.5_density","unit":"unit.density.mcg_m3"`, `"instance":"tvoc","unit":"unit.density.mcg_m3"`,
+		`"instance":"battery_level","unit":"unit.percent"`, `"instance":"amperage","unit":"unit.ampere"`, `"instance":"open"`} {
+		if !strings.Contains(info, want) {
+			t.Fatalf("нет %s в %s", want, info)
+		}
+	}
+	for _, want := range []string{`"instance":"pm2.5_density","value":7`, `"instance":"tvoc","value":0.1`, `"instance":"battery_level","value":90`,
+		`"instance":"battery_level","value":"low"`, `"instance":"amperage","value":1.5`} {
+		if !strings.Contains(states, want) {
+			t.Fatalf("нет %s в %s", want, states)
+		}
+	}
+	// closing - не положение ворот.
+	if strings.Contains(states, `"instance":"open"`) {
+		t.Fatalf("состояние: %s", states)
+	}
+	// Тампер: значение при загрузке не срабатывает, переход в detected - нажатие.
+	if !strings.Contains(info, `"instance":"button"`) {
+		t.Fatalf("нет кнопки тампера: %s", info)
+	}
+	var mu sync.Mutex
+	var presses []alice.DeviceState
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go d.Run(ctx, func(s []alice.DeviceState) {
+		mu.Lock()
+		defer mu.Unlock()
+		presses = append(presses, s...)
+	})
+	waitFor(t, "подписка", func() bool { c.mu.Lock(); defer c.mu.Unlock(); return c.attached[a] })
+	a.apply("main", "tamperAlert", "tamper", AttrValue{Value: json.RawMessage(`"clear"`)})
+	a.apply("main", "tamperAlert", "tamper", AttrValue{Value: json.RawMessage(`"detected"`)})
+	waitFor(t, "нажатие", func() bool { mu.Lock(); defer mu.Unlock(); return len(presses) == 1 })
+	mu.Lock()
+	defer mu.Unlock()
+	if raw, _ := json.Marshal(presses[0]); !strings.Contains(string(raw), `"double_click"`) {
+		t.Fatalf("нажатие: %s", raw)
+	}
+}
+
+// Отчёт о расходе разворачивается в значения: Wh в кВт·ч, мл в м³, без отрицательной энергии; появление
+// поля пересобирает прибор один раз, повторная загрузка - ни разу.
+func TestConsumptionReport(t *testing.T) {
+	fake := stfake.New()
+	defer fake.Close()
+	fake.AddDevice("wm", "Стиральная", []map[string]any{stfake.Component("main", "Washer", "switch", "washerOperatingState",
+		"powerConsumptionReport", "samsungce.waterConsumptionReport", "custom.disabledCapabilities")}, nil)
+	c := account(t, fake)
+	status := mainStatus(`{"powerConsumptionReport":{"powerConsumption":{"value":{"energy":352800,"power":12,"deltaEnergy":0}}},
+		"samsungce.waterConsumptionReport":{"waterConsumption":{"value":{"cumulativeAmount":1642200}}}}`)
+	a, d := profiled(t, c, "wm", "main", status)
+	online(c, a)
+	if !gotSignal(c) {
+		t.Fatal("новые поля не пересобрали прибор")
+	}
+	loadJSON(t, a, status)
+	if gotSignal(c) {
+		t.Fatal("та же загрузка пересобрала прибор снова")
+	}
+	info, states := infoJSON(d), statesJSON(d)
+	for _, want := range []string{`"instance":"electricity_meter","unit":"unit.kilowatt_hour"`, `"instance":"power","unit":"unit.watt"`,
+		`"instance":"water_meter","unit":"unit.cubic_meter"`} {
+		if !strings.Contains(info, want) {
+			t.Fatalf("нет %s в %s", want, info)
+		}
+	}
+	for _, want := range []string{`"instance":"electricity_meter","value":352.8`, `"instance":"power","value":12`, `"instance":"water_meter","value":1.6422`} {
+		if !strings.Contains(states, want) {
+			t.Fatalf("нет %s в %s", want, states)
+		}
+	}
+	// Отрицательная энергия и событие без поля: значения нет, а список устройств Алисы не меняется.
+	a.apply("main", "powerConsumptionReport", "powerConsumption", AttrValue{Value: json.RawMessage(`{"energy":-5}`)})
+	if states = statesJSON(d); strings.Contains(states, "electricity_meter") || strings.Contains(states, `"instance":"power"`) {
+		t.Fatalf("состояние: %s", states)
+	}
+	if gotSignal(c) || !strings.Contains(infoJSON(d), "electricity_meter") {
+		t.Fatal("значение без поля изменило список устройств")
+	}
+	// Отключённая capability не даёт значений.
+	loadJSON(t, a, mainStatus(`{"custom.disabledCapabilities":{"disabledCapabilities":{"value":["powerConsumptionReport"]}},
+		"powerConsumptionReport":{"powerConsumption":{"value":{"energy":1000}}}}`))
+	if strings.Contains(statesJSON(d), "electricity_meter") || strings.Contains(infoJSON(d), "electricity_meter") {
+		t.Fatalf("отключённая capability: %s", statesJSON(d))
+	}
+	// У прибора без отчёта свойства нет.
+	loadJSON(t, a, mainStatus(`{"switch":{"switch":{"value":"on"}}}`))
+	if strings.Contains(infoJSON(d), "water_meter") {
+		t.Fatalf("свойство без значения: %s", infoJSON(d))
+	}
+}
+
+// Счётчик газа: ccf в м³.
+func TestGasMeter(t *testing.T) {
+	fake := stfake.New()
+	defer fake.Close()
+	fake.AddDevice("gas", "Газ", []map[string]any{stfake.Component("main", "GasMeter", "gasMeter")}, nil)
+	c := account(t, fake)
+	a, d := profiled(t, c, "gas", "main", mainStatus(`{"gasMeter":{"gasMeterVolume":{"value":100,"unit":"ccf"}}}`))
+	online(c, a)
+	if info := infoJSON(d); !strings.Contains(info, `devices.types.smart_meter.gas`) || !strings.Contains(info, `"instance":"gas_meter"`) {
+		t.Fatalf("описание: %s", info)
+	}
+	if v := a.State().Values["gasMeter.gasMeterVolume"]; v != 283.168 {
+		t.Fatalf("объём: %v", v)
+	}
+}
+
+// Штора: запасная настройка открытия, пауза только у устройства со значением pause в списке.
+func TestShade(t *testing.T) {
+	fake := stfake.New()
+	defer fake.Close()
+	fake.AddDevice("full", "Штора", []map[string]any{stfake.Component("main", "Shade", "windowShade", "windowShadeLevel", "switchLevel")},
+		map[string]map[string]map[string]any{"main": {"windowShade": {"windowShade": map[string]any{"value": "partially open"}}}})
+	fake.AddDevice("c2c", "Облачная", []map[string]any{stfake.Component("main", "Shade", "windowShade", "switchLevel")},
+		map[string]map[string]map[string]any{"main": {"windowShade": {"windowShade": map[string]any{"value": "open"}}}})
+	c := account(t, fake)
+	a, d := profiled(t, c, "c2c", "main", mainStatus(`{"windowShade":{"windowShade":{"value":"open"},"supportedWindowShadeCommands":{"value":null}},
+		"switchLevel":{"level":{"value":100,"unit":"%"}}}`))
+	online(c, a)
+	info := infoJSON(d)
+	if !strings.Contains(info, `"instance":"open"`) || strings.Contains(info, `"instance":"pause"`) {
+		t.Fatalf("облачная штора: %s", info)
+	}
+	if states := statesJSON(d); !strings.Contains(states, `"instance":"open","value":100`) {
+		t.Fatalf("открытие: %s", states)
+	}
+	if code := act(t, d, alice.CapRange, "open", 40.0); code != "" {
+		t.Fatalf("открытие: %s", code)
+	}
+	if cmds := fake.Commands(); !strings.Contains(cmds[len(cmds)-1], "setLevel") {
+		t.Fatalf("команды: %v", cmds)
+	}
+
+	a, d = profiled(t, c, "full", "main", mainStatus(`{"windowShade":{"windowShade":{"value":"partially open"},"supportedWindowShadeCommands":{"value":["open","close","pause"]}},
+		"windowShadeLevel":{"shadeLevel":{"value":32,"unit":"%"}},"switchLevel":{"level":{"value":99,"unit":"%"}}}`))
+	online(c, a)
+	if info := infoJSON(d); !strings.Contains(info, `"instance":"pause"`) {
+		t.Fatalf("нет паузы: %s", info)
+	}
+	if states := statesJSON(d); !strings.Contains(states, `"instance":"open","value":32`) || !strings.Contains(states, `"instance":"pause","value":false`) {
+		t.Fatalf("основная настройка: %s", states)
+	}
+	before := len(fake.Commands())
+	if code := act(t, d, alice.CapToggle, "pause", false); code != "" || len(fake.Commands()) != before {
+		t.Fatalf("снятие паузы вне паузы: %q %v", code, fake.Commands()[before:])
+	}
+	if code := act(t, d, alice.CapToggle, "pause", true); code != "" {
+		t.Fatalf("пауза: %s", code)
+	}
+	if cmds := fake.Commands(); len(cmds) != before+1 || !strings.Contains(cmds[before], "pause") {
+		t.Fatalf("команды: %v", cmds[before:])
+	}
+}
+
+// Общая категория: устройство показывает только то, что описывает, а компонент только с командами в Алису не идёт.
+func TestOtherCategory(t *testing.T) {
+	fake := stfake.New()
+	defer fake.Close()
+	fake.AddDevice("btn", "Кнопка", []map[string]any{stfake.Component("main", "Other", "button", "battery")}, nil)
+	fake.AddDevice("sw", "Реле", []map[string]any{stfake.Component("main", "Others", "switch")}, nil)
+	fake.AddDevice("bare", "Пустое", []map[string]any{stfake.Component("main", "Other", "refresh")}, nil)
+	fake.AddDevice("rc", "Пульт", []map[string]any{stfake.Component("main", "RemoteController", "button")}, nil)
+	c := account(t, fake)
+	_, d := profiled(t, c, "btn", "main", mainStatus(`{"button":{"button":{"value":"pushed"}}}`))
+	if info := infoJSON(d); !strings.Contains(info, "devices.types.other") || !strings.Contains(info, `"instance":"button"`) || strings.Contains(info, "on_off") {
+		t.Fatalf("кнопка: %s", info)
+	}
+	_, d = profiled(t, c, "sw", "main", mainStatus(`{"switch":{"switch":{"value":"on"}}}`))
+	if info := infoJSON(d); !strings.Contains(info, "on_off") || strings.Contains(info, `"instance":"button"`) {
+		t.Fatalf("реле: %s", info)
+	}
+	_, d = profiled(t, c, "bare", "main", mainStatus(`{}`))
+	if info := infoJSON(d); info != "" {
+		t.Fatalf("устройство только с командами: %s", info)
+	}
+	_, d = profiled(t, c, "rc", "main", mainStatus(`{"button":{"button":{"value":"held"}}}`))
+	if info := infoJSON(d); !strings.Contains(info, "devices.types.sensor.button") {
+		t.Fatalf("пульт: %s", info)
+	}
+}
+
+// Новые режимы и переключатели - только со значениями устройства; команды идут значением устройства.
+func TestNewModes(t *testing.T) {
+	fake := stfake.New()
+	defer fake.Close()
+	add := func(id, category string, capabilities ...string) {
+		fake.AddDevice(id, id, []map[string]any{stfake.Component("main", category, capabilities...)}, nil)
+	}
+	add("rvc", "RobotCleaner", "robotCleanerMovement", "robotCleanerTurboMode", "samsungce.robotCleanerCleaningType")
+	add("dw", "Dishwasher", "dishwasherOperatingState", "samsungce.dishwasherWashingCourse")
+	add("bar", "SoundBar", "switch", "mediaInputSource")
+	add("hum", "Humidifier", "switch", "humidifierMode")
+	add("th", "Thermostat", "thermostatMode", "thermostatFanMode")
+	add("ac", "AirConditioner", "switch", "custom.spiMode", "samsungce.airConditionerLighting", "filterStatus")
+	add("plug", "SmartPlug", "switch", "switchLevel")
+	add("oven", "Oven", "samsungce.lamp", "samsungce.doorState", "ovenOperatingState")
+	add("range", "Range", "samsungce.lamp")
+	add("fridge", "Refrigerator", "custom.waterFilter")
+	c := account(t, fake)
+	cases := []struct {
+		id, status string
+		info       []string
+		typ, inst  string
+		value      any
+		command    string
+	}{
+		{"rvc", `{"robotCleanerTurboMode":{"robotCleanerTurboMode":{"value":"off"}},"robotCleanerMovement":{"robotCleanerMovement":{"value":"idle"}},
+			"samsungce.robotCleanerCleaningType":{"cleaningType":{"value":"vacuum"},"supportedCleaningTypes":{"value":["vacuum","mop"]}}}`,
+			[]string{`"instance":"work_speed","modes":[{"value":"auto"},{"value":"turbo"},{"value":"normal"}]`, `"instance":"cleanup_mode","modes":[{"value":"wet_cleaning"},{"value":"dry_cleaning"}]`, `"instance":"button"`},
+			alice.CapMode, "cleanup_mode", "wet_cleaning", "setCleaningType"},
+		{"dw", `{"samsungce.dishwasherWashingCourse":{"washingCourse":{"value":"eco"},"supportedCourses":{"value":["eco","delicate","express_0C","machineCare"]}}}`,
+			[]string{`"instance":"dishwashing"`, `"value":"glass"`, `"value":"fast"`}, alice.CapMode, "dishwashing", "glass", "setWashingCourse"},
+		{"bar", `{"switch":{"switch":{"value":"on"}},"mediaInputSource":{"inputSource":{"value":"wifi"},"supportedInputSources":{"value":["wifi","bluetooth"]}}}`,
+			[]string{`"instance":"input_source"`, `"value":"five"`, `"value":"four"`}, alice.CapMode, "input_source", "five", "setInputSource"},
+		{"hum", `{"switch":{"switch":{"value":"on"}},"humidifierMode":{"humidifierMode":{"value":"low"}}}`,
+			[]string{`"instance":"fan_speed"`}, alice.CapMode, "fan_speed", "high", "setHumidifierMode"},
+		{"th", `{"thermostatMode":{"thermostatMode":{"value":"auto"}},"thermostatFanMode":{"thermostatFanMode":{"value":"auto"},"supportedThermostatFanModes":{"value":["auto","on","circulate"]}}}`,
+			[]string{`"instance":"fan_speed"`, `"value":"low"`}, alice.CapMode, "fan_speed", "low", "setThermostatFanMode"},
+		{"ac", `{"switch":{"switch":{"value":"on"}},"custom.spiMode":{"spiMode":{"value":"off"}},"samsungce.airConditionerLighting":{"lighting":{"value":"on"}},"filterStatus":{"filterStatus":{"value":"normal"}}}`,
+			[]string{`"instance":"ionization"`, `"instance":"backlight"`, `"instance":"button"`}, alice.CapToggle, "backlight", false, "off"},
+		{"plug", `{"switch":{"switch":{"value":"on"}},"switchLevel":{"level":{"value":40}}}`,
+			[]string{`"instance":"brightness"`}, alice.CapRange, "brightness", 50.0, "setLevel"},
+		{"oven", `{"samsungce.lamp":{"brightnessLevel":{"value":"off"},"supportedBrightnessLevel":{"value":["off","high"]}},"samsungce.doorState":{"doorState":{"value":"closed"}},"ovenOperatingState":{"ovenJobState":{"value":"ready"}}}`,
+			[]string{`"instance":"backlight"`, `"instance":"open"`, `"instance":"button"`}, alice.CapToggle, "backlight", true, "setBrightnessLevel"},
+		{"range", `{"samsungce.lamp":{"brightnessLevel":{"value":"off"},"supportedBrightnessLevel":{"value":["off","extraHigh"]}}}`,
+			[]string{`"instance":"backlight"`}, alice.CapToggle, "backlight", true, "setBrightnessLevel"},
+	}
+	for _, tc := range cases {
+		a, d := profiled(t, c, tc.id, "main", mainStatus(tc.status))
+		online(c, a)
+		info := infoJSON(d)
+		for _, want := range tc.info {
+			if !strings.Contains(info, want) {
+				t.Fatalf("%s: нет %s в %s", tc.id, want, info)
+			}
+		}
+		if code := act(t, d, tc.typ, tc.inst, tc.value); code != "" {
+			t.Fatalf("%s: %s", tc.id, code)
+		}
+		if cmds := fake.Commands(); !strings.Contains(cmds[len(cmds)-1], tc.command) {
+			t.Fatalf("%s: команды %v", tc.id, cmds)
+		}
+	}
+	// Значения «свет включён» нет в списке устройства: переключателя нет.
+	a, d := profiled(t, c, "range", "main", mainStatus(`{"samsungce.lamp":{"brightnessLevel":{"value":"off"},"supportedBrightnessLevel":{"value":["off","high"]}}}`))
+	online(c, a)
+	if info := infoJSON(d); strings.Contains(info, `"instance":"backlight"`) {
+		t.Fatalf("плита: %s", info)
+	}
+	// Кнопка фильтра есть только у холодильника с этой capability, а питания у него нет.
+	_, d = profiled(t, c, "fridge", "main", mainStatus(`{"custom.waterFilter":{"waterFilterStatus":{"value":"normal"}}}`))
+	if info := infoJSON(d); !strings.Contains(info, `"instance":"button"`) || strings.Contains(info, "on_off") {
 		t.Fatalf("холодильник: %s", info)
 	}
 }

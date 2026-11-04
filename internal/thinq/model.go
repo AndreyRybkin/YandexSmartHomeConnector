@@ -64,6 +64,10 @@ const (
 	lampEnabledKey = "lamp.lampEnabled"
 )
 
+// booleanModes - флаги, которые встроенные профили показывают режимом Алисы: true и false становятся
+// значениями режима. У остальных флагов значений нет: редактор показывает их как флаги.
+var booleanModes = []string{"windDirection.rotateLeftRight", "refrigeration.rapidFreeze", "refrigeration.expressMode"}
+
 // pairedRanges - свойства, которые LG принимает только вместе: команда одного несёт текущее
 // значение другого.
 var pairedRanges = map[string]string{
@@ -248,6 +252,14 @@ func (m *model) finish() {
 		m.rename("temperature.currentTemperature", "temperatureInUnits.currentTemperatureC")
 	case "DEVICE_SYSTEM_BOILER":
 		m.rename("roomTemperatureInUnits.airCurrentTemperatureC", "roomTemperatureInUnits.currentTemperatureC")
+	case "DEVICE_REFRIGERATOR":
+		// Прибор с экспресс-охлаждением вместо быстрой заморозки: профиль знает одно запасное имя.
+		m.rename("refrigeration.expressFridge", "refrigeration.expressMode")
+	}
+	for _, key := range booleanModes {
+		if p := m.props[key]; p != nil && p.Kind == "boolean" && p.Write {
+			p.Values = []string{"true", "false"}
+		}
 	}
 	if r, ok := targetRules[m.DeviceType]; ok {
 		m.addTarget(&r)
@@ -454,6 +466,31 @@ func integerValues(p *prop) []string {
 		out = append(out, strconv.FormatFloat(v, 'f', -1, 64))
 	}
 	return out
+}
+
+// energyProperty - свойство потребления этой модели из профиля энергии: у части колонны - своё, а
+// общее на прибор получает одна камера, та, что без настроек, иначе показание было бы дважды.
+func (m *model) energyProperty(props []string) string {
+	if m.tower != "" {
+		if i := slices.IndexFunc(props, func(p string) bool { return strings.EqualFold(p, energyUsageProp+"_"+m.tower) }); i >= 0 {
+			return props[i]
+		}
+		if m.tower != m.Locations[0] {
+			return ""
+		}
+	} else if len(m.Locations) > 0 {
+		first := m.Locations[0]
+		if slices.Contains(m.Locations, mainLocation) {
+			first = mainLocation
+		}
+		if m.Location != first {
+			return ""
+		}
+	}
+	if slices.Contains(props, energyUsageProp) {
+		return energyUsageProp
+	}
+	return ""
 }
 
 // flatten раскладывает состояние или его часть в значения «ресурс.свойство» для модели.

@@ -7,6 +7,7 @@ import (
 	"math"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -65,7 +66,7 @@ func (a *Appliance) Describe() appliance.Description {
 	d.Options[KeyMode] = appliance.Option{Key: KeyMode, Values: []string{"0", "1", "2", "3", "4", "5", "6"}, Setting: true}
 	d.Options[KeyTemperature] = appliance.Option{Key: KeyTemperature, Min: minTemperature, Max: maxTemperature, Step: 1, Setting: true}
 	d.Options[KeyTea] = appliance.Option{Key: KeyTea, Values: teas, Setting: true}
-	for _, k := range []string{"backlight", "child_lock", "sound"} {
+	for _, k := range []string{"backlight", "child_lock", "sound", KeyKeepWarm} {
 		d.Options[k] = appliance.Option{Key: k, Setting: true}
 	}
 	return d
@@ -74,7 +75,12 @@ func (a *Appliance) Describe() appliance.Description {
 func (a *Appliance) State() appliance.State {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return appliance.State{Online: a.online, Values: maps.Clone(a.values)}
+	values := maps.Clone(a.values)
+	// Удержание тепла считается из режима при чтении: тип чайника может прийти после режима.
+	if mode, ok := values[KeyMode].(string); ok && Kettle(a.devType) {
+		values[KeyKeepWarm] = keepsWarm(mode)
+	}
+	return appliance.State{Online: a.online, Values: values}
 }
 
 // Run подписывает прибор на уведомления. Сообщения приборов принимает брокер.
@@ -122,17 +128,23 @@ func (a *Appliance) message(client, key, value string) {
 		a.devType, save = value, true
 	}
 	if key == KeyErrorCode {
-		// Код 01 - мало воды.
-		a.values[KeyWaterAlarm] = map[bool]string{true: appliance.EventPresent, false: appliance.EventOff}[value == "01"]
+		// Код 1 - мало воды, код 2 - чайник пуст (проверено на настоящем чайнике), 0 - воду долили. Чайник
+		// сообщает код и как 00, и как 2.
+		present := map[bool]string{true: appliance.EventPresent, false: appliance.EventOff}
+		code := strings.TrimLeft(value, "0")
+		a.values[KeyWaterAlarm] = present[code == "1"]
+		a.values[KeyNoWater] = present[code == "2"]
 		save = a.addReport(KeyWaterAlarm) || save
+		save = a.addReport(KeyNoWater) || save
 	}
-	// Чайник выключился: выбранный чай больше не действует.
-	if key == KeyMode && value == modeOff {
+	// Чайник выключился или перешёл на другой режим: выбранный чай больше не действует.
+	if key == KeyMode && !heatsToTarget(value) {
 		delete(a.values, KeyTea)
 	}
 	save = a.addReport(key) || save
 	if Kettle(a.devType) {
 		save = a.addReport(KeyTea) || save
+		save = a.addReport(KeyKeepWarm) || save
 	}
 	f := file{DevType: a.devType, Reports: slices.Clone(a.reports)}
 	notify := a.notify
@@ -237,17 +249,27 @@ func (a *Appliance) Set(_ context.Context, key string, value any) error {
 			return fmt.Errorf("%w: чай %v", appliance.ErrInvalidValue, value)
 		}
 		return a.heat(t, tea)
+	case KeyKeepWarm:
+		return a.setKeepWarm(value)
 	case KeyMode:
 		mode := fmt.Sprint(value)
 		if len(mode) != 1 || mode < "0" || mode > "6" {
 			return fmt.Errorf("%w: режим %v", appliance.ErrInvalidValue, value)
 		}
-		if mode == modeOff {
-			a.mu.Lock()
-			delete(a.values, KeyTea)
-			a.offAt = time.Now()
+		a.mu.Lock()
+		_, hasTarget := a.values[KeyTemperature]
+		if heatsToTarget(mode) && !hasTarget {
+			// Разогреву нужна цель, а её задают температурой или видом чая.
 			a.mu.Unlock()
+			return appliance.ErrWrongMode
 		}
+		if !heatsToTarget(mode) {
+			delete(a.values, KeyTea)
+		}
+		if mode == modeOff {
+			a.offAt = time.Now()
+		}
+		a.mu.Unlock()
 		return a.hub.publish(a.id, KeyMode, mode)
 	}
 	text, ok := formatValue(value)
@@ -257,6 +279,50 @@ func (a *Appliance) Set(_ context.Context, key string, value any) error {
 	return a.hub.publish(a.id, key, text)
 }
 
+// keepsWarm сообщает, что в этом режиме чайник держит тепло.
+func keepsWarm(mode string) bool {
+	_, ok := keepWarmOff[mode]
+	return ok
+}
+
+// setKeepWarm включает или выключает удержание тепла, меняя режим чайника. Выключение только снимает
+// удержание: чайник продолжает работать без него.
+func (a *Appliance) setKeepWarm(value any) error {
+	on, ok := value.(bool)
+	if !ok {
+		return fmt.Errorf("%w: удержание тепла %v", appliance.ErrInvalidValue, value)
+	}
+	a.mu.Lock()
+	kettle := Kettle(a.devType)
+	mode, _ := a.values[KeyMode].(string)
+	a.mu.Unlock()
+	if !kettle {
+		return fmt.Errorf("%w: удержание тепла есть только у чайника", appliance.ErrNotSupported)
+	}
+	if !on {
+		if next, ok := keepWarmOff[mode]; ok {
+			return a.hub.publish(a.id, KeyMode, next)
+		}
+		return nil
+	}
+	if err := a.heatRefused(); err != nil {
+		return err
+	}
+	if keepsWarm(mode) {
+		return nil
+	}
+	next, ok := keepWarmOn[mode]
+	if !ok {
+		return fmt.Errorf("%w: режим %q без удержания тепла", appliance.ErrWrongMode, mode)
+	}
+	return a.hub.publish(a.id, KeyMode, next)
+}
+
+// heatsToTarget - режим греет до заданной температуры: разогрев 3 и разогрев с удержанием 4.
+func heatsToTarget(mode string) bool {
+	return mode == modeHeat || mode == "4"
+}
+
 // heatRefused - причина, по которой чайник греть нельзя: Алиса назовёт её человеку. Выключать можно всегда.
 func (a *Appliance) heatRefused() error {
 	a.mu.Lock()
@@ -264,7 +330,7 @@ func (a *Appliance) heatRefused() error {
 	switch {
 	case a.values[KeyEmptyBase] == true:
 		return appliance.ErrHumanNeeded
-	case a.values[KeyWaterAlarm] == appliance.EventPresent:
+	case a.values[KeyWaterAlarm] == appliance.EventPresent, a.values[KeyNoWater] == appliance.EventPresent:
 		return appliance.ErrNotEnoughWater
 	}
 	return nil

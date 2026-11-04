@@ -157,3 +157,45 @@ func TestTVDevice(t *testing.T) {
 		t.Fatalf("неверный MAC: %d", status)
 	}
 }
+
+// Приложения телевизора LG: поля есть только у webOS, значения проверяет сервер, пустое поле убирает режим.
+func TestTVAppsForm(t *testing.T) {
+	f := newFixture(t, "devices:\n  tv:\n    name: Телевизор\n    source: webos\n    host: 127.0.0.1\n"+
+		"  sam:\n    name: Самсунг\n    source: samsung-tv\n    host: 127.0.0.2\n")
+	f.writeUser(testPassword)
+	f.login()
+	_, body := f.get("/devices/tv")
+	if !strings.Contains(body, `name="app.ten"`) {
+		t.Fatal("нет полей приложений")
+	}
+	if _, body := f.get("/devices/sam"); strings.Contains(body, `name="app.one"`) {
+		t.Fatal("поля приложений у Samsung")
+	}
+	f.get("/devices/tv")
+	form := url.Values{"name": {"Телевизор"}, "host": {"127.0.0.1"}, "section": {"basic"}, "app.one": {"example.app.one"}, "app.three": {" example.app.three "}}
+	if _, _, to := f.post("/devices/tv", form); !strings.HasPrefix(to, "/devices/tv") {
+		t.Fatalf("сохранение: переход %s", to)
+	}
+	if a := f.config().Devices["tv"].Apps; len(a) != 2 || a["one"] != "example.app.one" || a["three"] != "example.app.three" {
+		t.Fatalf("приложения: %v", a)
+	}
+	f.get("/devices/tv")
+	form.Del("version")
+	form.Set("app.one", "example/../app")
+	if status, body, _ := f.post("/devices/tv", form); status != http.StatusBadRequest || !strings.Contains(body, "apps.one") || !strings.Contains(body, `name="app.one" value="example`) {
+		t.Fatalf("неверный идентификатор: %d", status)
+	}
+	if a := f.config().Devices["tv"].Apps; a["one"] != "example.app.one" {
+		t.Fatalf("сохранён неверный идентификатор: %v", a)
+	}
+	f.get("/devices/tv")
+	form.Del("version")
+	form.Del("app.one")
+	form.Del("app.three")
+	if _, _, to := f.post("/devices/tv", form); !strings.HasPrefix(to, "/devices/tv") {
+		t.Fatalf("очистка: переход %s", to)
+	}
+	if a := f.config().Devices["tv"].Apps; a != nil {
+		t.Fatalf("приложения после очистки: %v", a)
+	}
+}

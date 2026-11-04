@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -328,5 +329,183 @@ func TestValues(t *testing.T) {
 	v, ok := d.Values()
 	if !ok || v["on"] != true || v["brightness"] != 100.0 || v["rgb"] != "#FF0000" || v["scene"] != "party" {
 		t.Fatalf("значения: %v", v)
+	}
+}
+
+// infoMessage - сведения ленты: биты lc и ток.
+func infoMessage(lc, pwr, maxpwr int) []byte {
+	data, _ := json.Marshal(map[string]any{"info": map[string]any{"leds": map[string]any{"lc": lc, "pwr": pwr, "maxpwr": maxpwr}}})
+	return data
+}
+
+func colorParams(t *testing.T, d *Device) alice.ColorParams {
+	t.Helper()
+	for _, c := range d.Info()[0].Capabilities {
+		if p, ok := c.Parameters.(alice.ColorParams); ok {
+			return p
+		}
+	}
+	t.Fatal("нет умения цвета")
+	return alice.ColorParams{}
+}
+
+// Лента без CCT и с выключенным ABL описывается как раньше и не просит новый список устройств.
+func TestPlainStripUnchanged(t *testing.T) {
+	calls := 0
+	d := &Device{ID: "strip", Dir: t.TempDir(), Log: discard(), ListChanged: func() { calls++ }}
+	before, _ := json.Marshal(d.Info())
+	d.apply(infoMessage(1, 0, 0))
+	d.apply([]byte(`{"state":{"on":true,"bri":128,"mainseg":0,"seg":[{"id":0,"cct":127,"col":[[0,0,0]]}]}}`))
+	after, _ := json.Marshal(d.Info())
+	if string(before) != string(after) || calls != 0 {
+		t.Fatalf("описание %s, вызовов %d", after, calls)
+	}
+	if st := d.States()[0]; len(st.Properties) != 0 || st.Capabilities[2].State.(alice.StateValue).Instance != "rgb" {
+		t.Fatalf("состояние: %+v", st)
+	}
+	if _, _, code := d.command(&alice.Action{Type: alice.CapColor, State: alice.ActionState{Instance: "temperature_k", Value: 4000.0}}); code != alice.CodeInvalidAction {
+		t.Fatalf("команда: %s", code)
+	}
+	if entries, _ := os.ReadDir(d.Dir); len(entries) != 0 {
+		t.Fatalf("файлы: %v", entries)
+	}
+}
+
+// Температура: пределы только при бите 2, новое описание - один раз, значение 0-255 переводится в
+// кельвины, а заданная команда не округляется.
+func TestTemperature(t *testing.T) {
+	calls := 0
+	dir := t.TempDir()
+	d := &Device{ID: "strip", Dir: dir, Log: discard(), ListChanged: func() { calls++ }}
+	d.apply(infoMessage(7, 0, 0))
+	d.apply(infoMessage(7, 0, 0))
+	if calls != 1 {
+		t.Fatalf("новых списков: %d", calls)
+	}
+	if lim := colorParams(t, d).TemperatureK; lim == nil || lim.Min != 2000 || lim.Max != 9000 {
+		t.Fatalf("пределы: %+v", lim)
+	}
+	// Цвет - не белый: лента показывает rgb.
+	d.apply([]byte(`{"state":{"on":true,"bri":128,"mainseg":0,"seg":[{"id":0,"cct":127,"col":[[255,0,0,0]]}]}}`))
+	if v := state(d); v["rgb"] != 0xFF0000 {
+		t.Fatalf("цвет: %v", v)
+	}
+	// Только белый канал: лента показывает температуру 1900 + 127 * 32.
+	d.apply([]byte(`{"state":{"seg":[{"id":0,"cct":127,"col":[[0,0,0,255]]}]}}`))
+	if v := state(d); v["temperature_k"] != 5964 {
+		t.Fatalf("температура: %v", v)
+	}
+	// Края шкалы ленты не выходят за пределы, объявленные Алисе.
+	d.apply([]byte(`{"state":{"seg":[{"id":0,"cct":0,"col":[[0,0,0,255]]}]}}`))
+	if v := state(d); v["temperature_k"] != 2000 {
+		t.Fatalf("тёплый край: %v", v)
+	}
+	d.apply([]byte(`{"state":{"seg":[{"id":0,"cct":255,"col":[[0,0,0,255]]}]}}`))
+	if v := state(d); v["temperature_k"] != 9000 {
+		t.Fatalf("холодный край: %v", v)
+	}
+	a := &alice.Action{Type: alice.CapColor, State: alice.ActionState{Instance: "temperature_k", Value: 4000.0}}
+	cmd, update, code := d.command(a)
+	if code != "" {
+		t.Fatal(code)
+	}
+	data, _ := json.Marshal(cmd)
+	if string(data) != `{"on":true,"seg":[{"cct":4000,"col":[[0,0,0,255]],"fx":0}]}` {
+		t.Fatalf("команда: %s", data)
+	}
+	update(&d.st)
+	// Лента подтверждает округлённым числом (4000 - 1900) >> 5: Алиса видит заданные 4000 K.
+	if d.apply([]byte(`{"state":{"seg":[{"id":0,"cct":65,"col":[[0,0,0,255]]}]}}`)) {
+		t.Fatal("подтверждение команды - изменение")
+	}
+	if v := state(d); v["temperature_k"] != 4000 {
+		t.Fatalf("после команды: %v", v)
+	}
+	for _, bad := range []any{1999.0, 9001.0, 4000.5, "4000"} {
+		a.State.Value = bad
+		if _, _, code := d.command(a); code != alice.CodeInvalidValue {
+			t.Fatalf("%v: %s", bad, code)
+		}
+	}
+	// После перезапуска описание то же: новый объект ленты читает его из файла и список не просит.
+	again := &Device{ID: "strip", Dir: dir, Log: discard(), ListChanged: func() { calls++ }}
+	if colorParams(t, again).TemperatureK == nil {
+		t.Fatal("возможности не прочитаны из файла")
+	}
+	again.apply(infoMessage(7, 0, 0))
+	if calls != 1 {
+		t.Fatalf("новых списков после перезапуска: %d", calls)
+	}
+	// Лента перестала сообщать CCT - настоящая причина для нового списка.
+	again.apply(infoMessage(1, 0, 0))
+	if calls != 2 || colorParams(t, again).TemperatureK != nil {
+		t.Fatalf("списков %d, пределы %+v", calls, colorParams(t, again).TemperatureK)
+	}
+}
+
+// Лента без белого канала показывает температуру белым цветом.
+func TestTemperatureNoWhiteChannel(t *testing.T) {
+	d := &Device{ID: "strip", Log: discard()}
+	d.apply(infoMessage(5, 0, 0))
+	cmd, update, code := d.command(&alice.Action{Type: alice.CapColor, State: alice.ActionState{Instance: "temperature_k", Value: 3000.0}})
+	if code != "" {
+		t.Fatal(code)
+	}
+	data, _ := json.Marshal(cmd)
+	if !strings.Contains(string(data), `"col":[[255,255,255]]`) {
+		t.Fatalf("команда: %s", data)
+	}
+	update(&d.st)
+	d.apply([]byte(`{"state":{"seg":[{"id":0,"cct":34,"col":[[255,255,255]]}]}}`))
+	if v := state(d); v["temperature_k"] != 3000 {
+		t.Fatalf("состояние: %v", v)
+	}
+}
+
+// Ток: свойство только при включённом ABL, 0 при выключенном не передаётся.
+func TestAmperage(t *testing.T) {
+	calls := 0
+	d := &Device{ID: "strip", Dir: t.TempDir(), Log: discard(), ListChanged: func() { calls++ }}
+	amps := func() any {
+		for _, st := range d.States() {
+			for _, p := range st.Properties {
+				if sv := p.State.(alice.StateValue); sv.Instance == "amperage" {
+					return sv.Value
+				}
+			}
+		}
+		return nil
+	}
+	d.apply([]byte(`{"state":{"on":true,"bri":128}}`))
+	d.apply(infoMessage(1, 0, 0))
+	if len(d.Info()[0].Properties) != 0 || amps() != nil || calls != 0 {
+		t.Fatalf("ABL выключен: %+v, %v, %d", d.Info()[0].Properties, amps(), calls)
+	}
+	if !d.apply(infoMessage(1, 450, 850)) || calls != 1 {
+		t.Fatalf("новых списков: %d", calls)
+	}
+	p := d.Info()[0].Properties
+	if len(p) != 1 || p[0].Type != alice.PropFloat || p[0].Parameters != (alice.FloatParams{Instance: "amperage", Unit: "unit.ampere"}) {
+		t.Fatalf("свойство: %+v", p)
+	}
+	if amps() != 0.45 {
+		t.Fatalf("ток: %v", amps())
+	}
+	v, _ := d.Values()
+	if v["amperage"] != 0.45 {
+		t.Fatalf("значения: %v", v)
+	}
+	// При включённом ABL 0 - настоящий ток; значение вне документации не принимается.
+	d.apply(infoMessage(1, 0, 850))
+	if amps() != 0.0 {
+		t.Fatalf("ток 0: %v", amps())
+	}
+	d.apply(infoMessage(1, -1, 850))
+	if amps() != 0.0 {
+		t.Fatalf("отрицательный ток: %v", amps())
+	}
+	d.apply(infoMessage(1, 0, 0))
+	if len(d.Info()[0].Properties) != 0 || amps() != nil || calls != 2 {
+		t.Fatalf("ABL выключили: %+v, %v, %d", d.Info()[0].Properties, amps(), calls)
 	}
 }

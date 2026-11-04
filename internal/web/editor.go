@@ -205,7 +205,7 @@ func taken(users map[string][]string, key, self string) string {
 	var others []string
 	for _, u := range users[key] {
 		if u != self {
-			others = append(others, "«"+u+"»")
+			others = append(others, u)
 		}
 	}
 	if len(others) == 0 {
@@ -379,6 +379,12 @@ func applyField(t *editTarget, field string, patch *profile.Profile, reset bool)
 	if field == "modes" && !reset {
 		keepModeExtras(patch, profile.Merge(t.base(), t.override()))
 	}
+	if field == "ranges" && !reset {
+		keepRangeFallback(patch, profile.Merge(t.base(), t.override()))
+	}
+	if field == "toggles" && !reset {
+		keepToggleState(patch, profile.Merge(t.base(), t.override()))
+	}
 	if field == "properties" && !reset {
 		keepIfKnown(patch, profile.Merge(t.base(), t.override()))
 	}
@@ -406,6 +412,31 @@ func keepModeExtras(patch, current *profile.Profile) {
 					m.AlsoValues = map[string]string{}
 				}
 				m.AlsoValues[k] = v
+			}
+		}
+	}
+}
+
+// keepRangeFallback переносит из текущего профиля fallback_option: формы для него нет, а без него умение
+// пропало бы у приборов, которые называют настройку иначе.
+func keepRangeFallback(patch, current *profile.Profile) {
+	for i := range patch.Ranges {
+		r := &patch.Ranges[i]
+		for _, old := range current.Ranges {
+			if old.Instance == r.Instance && old.Option == r.Option {
+				r.FallbackOption = old.FallbackOption
+			}
+		}
+	}
+}
+
+// keepToggleState переносит state и state_on из текущего профиля: формы для них нет.
+func keepToggleState(patch, current *profile.Profile) {
+	for i := range patch.Toggles {
+		tg := &patch.Toggles[i]
+		for _, old := range current.Toggles {
+			if old.Instance == tg.Instance && old.Setting == tg.Setting {
+				tg.State, tg.StateOn = old.State, old.StateOn
 			}
 		}
 	}

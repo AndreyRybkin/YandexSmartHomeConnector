@@ -1,5 +1,10 @@
 package profile
 
+import (
+	"maps"
+	"slices"
+)
+
 // AllInOneType - демо-прибор для проверки у Яндекса: все свойства из документации Яндекса и кнопка
 // в одном устройстве. Кнопка и уровни заданы свойствами, без раздела events.
 // Значения свойств равны значениям Алисы; имена - как у прибора в пакете appliance.
@@ -25,26 +30,45 @@ func demoMode(instance, setting string, values ...string) Mode {
 	return Mode{Instance: instance, Option: "Demo.Setting." + setting, Values: m}
 }
 
+// demoPrograms - режим program со всеми значениями из списка Яндекса: те, что проверены раньше, и
+// остальные. Программы - как у прибора в пакете appliance.
+func demoPrograms() map[string]string {
+	m := map[string]string{"Demo.Program.One": "one", "Demo.Program.Two": "two",
+		"Demo.Program.Boil": "boiling", "Demo.Program.Heat": "heat", "Demo.Program.Smart": "smart"}
+	for _, v := range ModeValues {
+		if !slices.Contains(slices.Collect(maps.Values(m)), v) {
+			m["Demo.Program."+v] = v
+		}
+	}
+	return m
+}
+
 func init() {
 	builtin[AllInOneType] = &Profile{
 		YandexType:     "cooking",
 		OnOff:          "program",
 		DefaultProgram: "Demo.Program.One",
 		DefaultOptions: map[string]any{"Demo.Option.Temperature": 60.0},
-		Modes: []Mode{{Instance: "program", Programs: map[string]string{"Demo.Program.One": "one", "Demo.Program.Two": "two"}},
+		Modes: []Mode{{Instance: "program", Programs: demoPrograms()},
 			demoMode("work_speed", "WorkSpeed", "medium", "slow", "fast", "turbo", "max"),
 			demoMode("swing", "Swing", "stationary", "vertical", "horizontal", "auto"),
 			demoMode("heat", "Heat", "normal", "min", "low", "high", "max"),
 			demoMode("cleanup_mode", "Cleanup", "auto", "quiet", "normal", "express", "dry_cleaning", "wet_cleaning", "mixed_cleaning", "smart"),
 			demoMode("fan_speed", "FanSpeed", "auto", "low", "medium", "high", "turbo"),
 			demoMode("input_source", "Input", "one", "two", "three")},
-		Ranges: []Range{{Instance: "temperature", Option: "Demo.Option.Temperature", Unit: celsius}},
+		Ranges: []Range{{Instance: "temperature", Option: "Demo.Option.Temperature", Unit: celsius},
+			{Instance: "brightness", Option: "Demo.Setting.Brightness", Unit: percent},
+			{Instance: "humidity", Option: "Demo.Setting.Humidity", Unit: percent},
+			{Instance: "open", Option: "Demo.Setting.Open", Unit: percent},
+			{Instance: "volume", Option: "Demo.Setting.Volume", Unit: percent},
+			{Instance: "channel", Option: "Demo.Setting.Channel"}},
 		Toggles: []Toggle{pause,
 			{Instance: "controls_locked", Setting: "Demo.Setting.ChildLock"},
 			{Instance: "mute", Setting: "Demo.Setting.Mute"},
 			{Instance: "ionization", Setting: "Demo.Setting.Ionization"},
 			{Instance: "keep_warm", Setting: "Demo.Setting.KeepWarm"},
-			{Instance: "backlight", Setting: "Demo.Setting.Light"}},
+			{Instance: "backlight", Setting: "Demo.Setting.Light"},
+			{Instance: "oscillation", Setting: "Demo.Setting.Oscillation"}},
 		Properties: []Property{
 			demoFloat("temperature", "Temperature", celsius),
 			demoFloat("humidity", "Humidity", percent),

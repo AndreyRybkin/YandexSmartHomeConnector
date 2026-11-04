@@ -24,7 +24,9 @@ const (
 	Input = "TV.Input"
 	// Playback - воспроизведение: playing или paused.
 	Playback = "TV.Playback"
-	// App - приложение на экране, только для чтения.
+	// Screen - экран у включённого телевизора: on или off, только у LG.
+	Screen = "TV.Screen"
+	// App - приложение на экране; запускать приложения умеет только телевизор LG со списком в настройках.
 	App = "TV.App"
 )
 

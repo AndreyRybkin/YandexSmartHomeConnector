@@ -30,8 +30,12 @@ type Appliance struct {
 	have   bool
 	// pushed - уведомления из storedPush: отчёт прибора их не содержит, а полный отчёт заменяет значения.
 	pushed map[string]any
-	notify appliance.Notify
-	runs   int
+	// energyProp - свойство потребления из профиля энергии; пусто - показания нет. energy - последнее
+	// показание: отчёт прибора его не содержит, а полный отчёт заменяет значения.
+	energyProp string
+	energy     *float64
+	notify     appliance.Notify
+	runs       int
 }
 
 // DeviceID - deviceId прибора.
@@ -65,7 +69,7 @@ func (a *Appliance) Describe() appliance.Description {
 		d.Reports = append(d.Reports, key)
 	}
 	for key := range a.values {
-		if _, ok := d.Options[key]; !ok && key != RemainKey {
+		if _, ok := d.Options[key]; !ok && key != RemainKey && key != EnergyKey {
 			d.Reports = append(d.Reports, key)
 		}
 	}
@@ -73,6 +77,9 @@ func (a *Appliance) Describe() appliance.Description {
 		if slices.Contains(storedPush, code) && !slices.Contains(d.Reports, code) {
 			d.Reports = append(d.Reports, code)
 		}
+	}
+	if a.energyProp != "" {
+		d.Reports = append(d.Reports, EnergyKey)
 	}
 	slices.Sort(d.Reports)
 	return d
@@ -133,6 +140,9 @@ func (a *Appliance) apply(raw json.RawMessage, full bool) {
 	}
 	for code, v := range a.pushed {
 		a.values[code] = v
+	}
+	if a.energy != nil {
+		a.values[EnergyKey] = *a.energy
 	}
 	a.have = true
 	a.changedLocked(nil)

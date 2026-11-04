@@ -634,7 +634,7 @@ func TestAllInOne(t *testing.T) {
 		t.Fatalf("устройства %v, ждём одно", ids)
 	}
 	info := d.Info()
-	if len(info) != 1 || len(info[0].Properties) != 30 || len(info[0].Capabilities) != 15 {
+	if len(info) != 1 || len(info[0].Properties) != 30 || len(info[0].Capabilities) != 21 {
 		t.Fatalf("описание: %+v", info)
 	}
 	states := d.States()
@@ -974,37 +974,6 @@ func TestPropertyIfKnown(t *testing.T) {
 	}
 }
 
-// Уровень по значению вида «имя=значение»: датчик кофемашины без тревоги.
-func TestLevelFromValue(t *testing.T) {
-	p, err := profile.Resolve(profile.DeLonghiType, nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	water := func(values map[string]any) string {
-		a := newProps(values)
-		a.desc = appliance.Description{}
-		raw, _ := json.Marshal((&Device{ID: "c", Profile: p, Appliance: a}).States())
-		for _, v := range []string{"empty", "low", "normal"} {
-			if strings.Contains(string(raw), `"instance":"water_level","value":"`+v+`"`) {
-				return v
-			}
-		}
-		return ""
-	}
-	for want, values := range map[string]map[string]any{
-		"normal": {"DeLonghi.Peripheral.WaterTankLow": false, "DeLonghi.Peripheral.TankPresence": true},
-		"low":    {"DeLonghi.Peripheral.WaterTankLow": true, "DeLonghi.Peripheral.TankPresence": true},
-		"empty":  {"DeLonghi.Peripheral.WaterTankLow": false, "DeLonghi.Peripheral.TankPresence": false},
-	} {
-		if got := water(values); got != want {
-			t.Fatalf("%v: %s, нужно %s", values, got, want)
-		}
-	}
-	if got := water(map[string]any{}); got != "normal" {
-		t.Fatalf("без датчиков: %s", got)
-	}
-}
-
 // Вибрация мгновенная: каждое срабатывание уходит отдельным уведомлением, покой не отправляется.
 func TestVibrationMomentary(t *testing.T) {
 	p, err := profile.Resolve(profile.SmartThingsPrefix+"MultiFunctionalSensor", nil, nil)
@@ -1087,5 +1056,95 @@ func TestFailureButtonAndSalt(t *testing.T) {
 	raw, _ := json.Marshal(d.States())
 	if !strings.Contains(string(raw), `"instance":"food_level","value":"empty"`) {
 		t.Fatalf("соль: %s", raw)
+	}
+}
+
+// Блокировка панели и отжим есть, только если прибор их описывает; отжим уходит параметром запуска.
+func TestWasherLockAndSpin(t *testing.T) {
+	p, err := profile.Resolve("Washer", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const lock, spin = "BSH.Common.Setting.ChildLock", "LaundryCare.Washer.Option.SpinSpeed"
+	const rpm = "LaundryCare.Washer.EnumType.SpinSpeed.RPM1400"
+	has := func(a *props) string {
+		raw, _ := json.Marshal((&Device{ID: "w", Profile: p, Appliance: a}).Info())
+		return string(raw)
+	}
+	bare := newProps(map[string]any{appliance.StatusOperationState: appliance.OperationReady})
+	bare.desc = appliance.Description{Programs: []string{"LaundryCare.Washer.Program.Cotton"}, Options: map[string]appliance.Option{}}
+	if info := has(bare); strings.Contains(info, "controls_locked") || strings.Contains(info, "work_speed") {
+		t.Fatalf("без настроек: %s", info)
+	}
+	a := newProps(map[string]any{appliance.StatusOperationState: appliance.OperationReady, lock: false})
+	a.desc = appliance.Description{Programs: []string{"LaundryCare.Washer.Program.Cotton"}, Options: map[string]appliance.Option{
+		lock: {Key: lock, Setting: true}, spin: {Key: spin, Values: []string{rpm, "LaundryCare.Washer.EnumType.SpinSpeed.RPM600"}}}}
+	info := has(a)
+	if !strings.Contains(info, "controls_locked") || !strings.Contains(info, `"instance":"work_speed","modes":[{"value":"turbo"}]`) {
+		t.Fatalf("описание: %s", info)
+	}
+	d := &Device{ID: "w", Profile: p, Appliance: a}
+	if code := d.Act(context.Background(), "w", &alice.Action{Type: alice.CapMode, State: alice.ActionState{Instance: "work_speed", Value: "turbo"}}); code != "" {
+		t.Fatal(code)
+	}
+	if code := d.Act(context.Background(), "w", &alice.Action{Type: alice.CapOnOff, State: alice.ActionState{Instance: "on", Value: true}}); code != "" {
+		t.Fatal(code)
+	}
+	if a.options[spin] != rpm {
+		t.Fatalf("параметры запуска: %v", a.options)
+	}
+}
+
+// AllInOne показывает все значения режима из списка Яндекса: настоящий прибор их получит только после него.
+func TestAllInOneCoversModeValues(t *testing.T) {
+	a, err := appliance.NewDemo(appliance.DemoAllInOne, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := profile.Resolve(profile.AllInOneType, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal((&Device{ID: "all", Profile: p, Appliance: a}).Info())
+	for _, v := range profile.ModeValues {
+		if !strings.Contains(string(raw), `{"value":"`+v+`"}`) {
+			t.Errorf("нет значения %s", v)
+		}
+	}
+}
+
+// Положение переключателя из другого значения: команда PAUSE, а состояние - работа прибора.
+func TestToggleOtherState(t *testing.T) {
+	p := &profile.Profile{YandexType: "other", OnOff: "none", Toggles: []profile.Toggle{{Instance: "pause", Setting: "mode",
+		On: "PAUSE", Off: "RESUME", State: "run", StateOn: "PAUSE"}}}
+	a := newProps(map[string]any{"run": "CLEANING"})
+	a.desc = appliance.Description{Options: map[string]appliance.Option{"mode": {Setting: true}}}
+	d := &Device{ID: "r", Profile: p, Appliance: a}
+	act := func(on bool) string {
+		return d.Act(context.Background(), "r", &alice.Action{Type: alice.CapToggle, State: alice.ActionState{Instance: "pause", Value: on}})
+	}
+	if code := act(false); code != "" || len(a.sets) != 0 {
+		t.Fatalf("снятие паузы при работе: %q %v", code, a.sets)
+	}
+	if code := act(true); code != "" || !slices.Equal(a.sets, []string{"mode=PAUSE"}) {
+		t.Fatalf("пауза: %q %v", code, a.sets)
+	}
+	a.state.Values["run"] = "PAUSE"
+	raw, _ := json.Marshal(d.States())
+	if !strings.Contains(string(raw), `"instance":"pause","value":true`) {
+		t.Fatalf("состояние: %s", raw)
+	}
+	if code := act(false); code != "" || a.sets[len(a.sets)-1] != "mode=RESUME" {
+		t.Fatalf("снятие паузы: %q %v", code, a.sets)
+	}
+}
+
+// Источник уровня - событие или значение вида «имя=значение».
+func TestLevelActive(t *testing.T) {
+	values := map[string]any{"a": appliance.EventPresent, "b": true, "c": "low"}
+	for key, want := range map[string]bool{"a": true, "b=true": true, "b=false": false, "c=low": true, "x=1": false, "x": false} {
+		if levelActive(key, values) != want {
+			t.Errorf("%s: нужно %v", key, want)
+		}
 	}
 }
