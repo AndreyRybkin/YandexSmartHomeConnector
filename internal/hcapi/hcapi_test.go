@@ -594,3 +594,50 @@ func TestEventsLoginChanged(t *testing.T) {
 	}
 	wait(ended)
 }
+
+// Настройка: имя с точками в пути, пределы, список значений и доступ.
+func TestSetting(t *testing.T) {
+	const key = "Refrigeration.Common.Setting.Door.Alarm"
+	a := oven()
+	a.Settings[key] = 4.0
+	a.Settings["BSH.Common.Setting.PowerState"] = "BSH.Common.EnumType.PowerState.On"
+	a.Settings["Bad.Setting.Body"] = 1
+	a.SettingInfo = map[string]map[string]any{
+		key: {"unit": "°C", "constraints": map[string]any{"min": 2, "max": 8, "stepsize": 0.5, "access": "readWrite"}},
+		"BSH.Common.Setting.PowerState": {"constraints": map[string]any{
+			"allowedvalues": []string{"BSH.Common.EnumType.PowerState.On", "BSH.Common.EnumType.PowerState.Off"}, "access": "read"}},
+		"Bad.Setting.Body": {"constraints": map[string]any{"min": "не число"}},
+	}
+	cloud := hcfake.New(t, a)
+	c := newClient(t, cloud)
+	login(t, c, cloud)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	got, err := c.Setting(ctx, a.HaID, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lim := got.Constraints
+	if got.Key != key || got.Unit != "°C" || *lim.Min != 2 || *lim.Max != 8 || *lim.StepSize != 0.5 || lim.Access != "readWrite" {
+		t.Fatalf("настройка: %+v", got)
+	}
+	if n := cloud.Count(http.MethodGet, "/api/homeappliances/"+a.HaID+"/settings/"+key); n != 1 {
+		t.Fatalf("запросов: %d", n)
+	}
+	got, err = c.Setting(ctx, a.HaID, "BSH.Common.Setting.PowerState")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Constraints.AllowedValues) != 2 || got.Constraints.Access != "read" || got.Constraints.Min != nil {
+		t.Fatalf("питание: %+v", got)
+	}
+
+	var ae *APIError
+	if _, err := c.Setting(ctx, a.HaID, "Нет.Setting.Такой"); !errors.As(err, &ae) || ae.Status != http.StatusNotFound {
+		t.Fatalf("нет настройки: %v", err)
+	}
+	if _, err := c.Setting(ctx, a.HaID, "Bad.Setting.Body"); !errors.Is(err, ErrBadResponse) {
+		t.Fatalf("плохой ответ: %v", err)
+	}
+}

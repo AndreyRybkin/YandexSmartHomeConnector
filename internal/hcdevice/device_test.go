@@ -790,3 +790,164 @@ func TestOvenRegularPreheat(t *testing.T) {
 		t.Fatalf("кнопка: %q %v", v, ok)
 	}
 }
+
+// Питание, которого прибор не сообщает, или только для чтения: on_off нет ни в описании, ни в состоянии.
+func TestNoOnOffWithoutPower(t *testing.T) {
+	p := &profile.Profile{YandexType: "other", OnOff: "power", Power: &profile.Power{Setting: "p", On: "1", Off: "0"},
+		Properties: []profile.Property{{Type: "float", Instance: "humidity", Status: "h", Unit: "unit.percent"}}}
+	hasOnOff := func(a *props) (bool, bool) {
+		d := &Device{ID: "x", Profile: p, Appliance: a}
+		info := d.Info()
+		if len(info) != 1 {
+			t.Fatalf("устройств: %d", len(info))
+		}
+		inInfo := slices.ContainsFunc(info[0].Capabilities, func(c alice.Capability) bool { return c.Type == alice.CapOnOff })
+		inState := slices.ContainsFunc(d.States()[0].Capabilities, func(c alice.CapState) bool { return c.Type == alice.CapOnOff })
+		return inInfo, inState
+	}
+	a := newProps(map[string]any{"h": 40.0})
+	a.desc = appliance.Description{Reports: []string{"h"}}
+	if i, s := hasOnOff(a); i || s {
+		t.Fatalf("прибор не сообщает питание: %v %v", i, s)
+	}
+	a.desc = appliance.Description{Reports: []string{"h", "p"}, Options: map[string]appliance.Option{"p": {ReadOnly: true}}}
+	if i, s := hasOnOff(a); i || s {
+		t.Fatalf("питание только для чтения: %v %v", i, s)
+	}
+	a.desc = appliance.Description{Reports: []string{"h", "p"}}
+	if i, s := hasOnOff(a); !i || !s {
+		t.Fatalf("питание есть: %v %v", i, s)
+	}
+}
+
+// Устройство без умений и свойств не уходит Яндексу.
+func TestEmptyDeviceNotListed(t *testing.T) {
+	p := &profile.Profile{YandexType: "other", OnOff: "none",
+		Properties: []profile.Property{{Type: "float", Instance: "humidity", Status: "h", Unit: "unit.percent"}}}
+	a := newProps(map[string]any{})
+	a.desc = appliance.Description{Reports: []string{"t"}}
+	if info := (&Device{ID: "x", Profile: p, Appliance: a}).Info(); len(info) != 0 {
+		t.Fatalf("устройство: %+v", info)
+	}
+}
+
+// Прибор перечисляет все события: кнопка объявляет только то, что он может вызвать.
+func TestButtonReachable(t *testing.T) {
+	p := &profile.Profile{YandexType: "other", OnOff: "none", Events: &profile.Events{Button: map[string]string{
+		"DONE": "click", "PRE_*": "double_click", "state=END": "long_press"}}}
+	values := func(desc appliance.Description) []string {
+		return buttonValues(p.Events, &desc)
+	}
+	if got := values(appliance.Description{}); len(got) != 3 {
+		t.Fatalf("список неизвестен: %v", got)
+	}
+	if got := values(appliance.Description{EventsKnown: true, Events: []string{"PRE_HEAT"}, Reports: []string{"other"}}); !slices.Equal(got, []string{"double_click"}) {
+		t.Fatalf("известный список: %v", got)
+	}
+	if got := values(appliance.Description{EventsKnown: true, Reports: []string{"state"}}); !slices.Equal(got, []string{"long_press"}) {
+		t.Fatalf("переход значения: %v", got)
+	}
+}
+
+// Значение режима вне объявленного списка не уходит; снятие паузы настройкой - только с паузы; команда по
+// свойству только для чтения у прибора без программ получает отказ.
+func TestModeValuePauseReadOnly(t *testing.T) {
+	p := &profile.Profile{YandexType: "other", OnOff: "none",
+		Modes:   []profile.Mode{{Instance: "fan_speed", Option: "fan", Values: map[string]string{"LOW": "low", "AUTO": "auto"}}, {Instance: "swing", Option: "ro", Values: map[string]string{"A": "auto"}}},
+		Toggles: []profile.Toggle{{Instance: "pause", Setting: "job", On: "PAUSE", Off: "RUN"}}}
+	a := newProps(map[string]any{"fan": "AUTO", "job": "RUN"})
+	a.desc = appliance.Description{Options: map[string]appliance.Option{
+		"fan": {Values: []string{"LOW"}, Setting: true},
+		"ro":  {Values: []string{"A"}},
+		"job": {Values: []string{"PAUSE", "RUN"}, Setting: true},
+	}}
+	d := &Device{ID: "x", Profile: p, Appliance: a}
+	for _, c := range d.States()[0].Capabilities {
+		if sv, ok := c.State.(alice.StateValue); ok && sv.Instance == "fan_speed" {
+			t.Fatalf("режим вне списка: %v", sv.Value)
+		}
+	}
+	act := func(capability, instance string, value any) string {
+		return d.Act(context.Background(), "x", &alice.Action{Type: capability, State: alice.ActionState{Instance: instance, Value: value}})
+	}
+	for _, job := range []string{"RUN", "STOP"} {
+		a.state.Values["job"] = job
+		if code := act(alice.CapToggle, "pause", false); code != "" {
+			t.Fatalf("снятие паузы при %s: %q", job, code)
+		}
+	}
+	if code := act(alice.CapMode, "swing", "auto"); code != alice.CodeInvalidAction {
+		t.Fatalf("только для чтения: %q", code)
+	}
+	if len(a.sets) != 0 {
+		t.Fatalf("команды: %v", a.sets)
+	}
+}
+
+// fixedOptions - демо-прибор с заданными значениями настроек.
+type fixedOptions struct {
+	*appliance.Demo
+	options map[string][]string
+	values  map[string]any
+	set     []string
+}
+
+func (f *fixedOptions) Describe() appliance.Description {
+	desc := appliance.Description{Options: map[string]appliance.Option{}}
+	for k, v := range f.options {
+		desc.Options[k] = appliance.Option{Key: k, Setting: true, Values: v}
+		desc.Reports = append(desc.Reports, k)
+	}
+	return desc
+}
+
+func (f *fixedOptions) State() appliance.State {
+	return appliance.State{Online: true, Values: f.values}
+}
+
+func (f *fixedOptions) Set(_ context.Context, key string, value any) error {
+	f.set = append(f.set, fmt.Sprint(key, "=", value))
+	return nil
+}
+
+// Режим с запасной настройкой и другими значениями: список, состояние и команда берут то, что есть у
+// этого прибора, и режим Алисы виден один раз.
+func TestModeExtras(t *testing.T) {
+	demo, err := appliance.NewDemo("Oven", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := profile.Mode{Instance: "thermostat", Option: "main.mode", FallbackOption: "other.mode",
+		Values: map[string]string{"auto": "auto", "wind": "fan_only"}, AlsoValues: map[string]string{"aIComfort": "auto", "fan": "fan_only"}}
+	f := &fixedOptions{Demo: demo, options: map[string][]string{"other.mode": {"auto", "aIComfort", "fan"}}, values: map[string]any{"other.mode": "fan"}}
+	d := &Device{ID: "ac", Name: "ac", Appliance: f, Profile: &profile.Profile{YandexType: "other", OnOff: "none", Modes: []profile.Mode{m}}}
+
+	raw, _ := json.Marshal(d.Info()[0].Capabilities)
+	if !strings.Contains(string(raw), `"modes":[{"value":"auto"},{"value":"fan_only"}]`) {
+		t.Fatalf("режимы: %s", raw)
+	}
+	raw, _ = json.Marshal(d.States())
+	if !strings.Contains(string(raw), `"instance":"thermostat","value":"fan_only"`) {
+		t.Fatalf("состояние: %s", raw)
+	}
+	act := func(value string) {
+		t.Helper()
+		if c := d.Act(context.Background(), "ac", &alice.Action{Type: alice.CapMode, State: alice.ActionState{Instance: "thermostat", Value: value}}); c != "" {
+			t.Fatalf("%s: %s", value, c)
+		}
+	}
+	act("fan_only")
+	act("auto")
+	if !slices.Equal(f.set, []string{"other.mode=fan", "other.mode=auto"}) {
+		t.Fatalf("команды: %v", f.set)
+	}
+
+	// Основная настройка со значениями важнее запасной.
+	f.options["main.mode"] = []string{"wind"}
+	f.values["main.mode"] = "wind"
+	f.set = nil
+	act("fan_only")
+	if !slices.Equal(f.set, []string{"main.mode=wind"}) {
+		t.Fatalf("основная настройка: %v", f.set)
+	}
+}

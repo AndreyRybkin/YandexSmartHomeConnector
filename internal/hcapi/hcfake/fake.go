@@ -33,9 +33,11 @@ type Appliance struct {
 	Connected               bool
 	Status                  map[string]any
 	Settings                map[string]any
-	Selected, Active        string
-	Programs                []Program
-	Commands                []string
+	// SettingInfo - что облако добавляет к настройке в GET /settings/{key}: unit, type, constraints.
+	SettingInfo      map[string]map[string]any
+	Selected, Active string
+	Programs         []Program
+	Commands         []string
 }
 
 // Cloud - поддельное облако.
@@ -55,6 +57,10 @@ type Cloud struct {
 	Requests []string
 	// Fail - ответить этим кодом на следующий запрос к API.
 	Fail int
+	// failSettings - чем отвечать на GET /settings/{key}, пока не снято.
+	failSettings map[string]int
+	// holdSettings - GET /settings/{key} ждёт закрытия канала.
+	holdSettings chan struct{}
 }
 
 // New запускает облако с приборами.
@@ -72,6 +78,7 @@ func New(t *testing.T, appliances ...*Appliance) *Cloud {
 	mux.HandleFunc("GET /api/homeappliances/events", c.auth(c.events))
 	mux.HandleFunc("GET /api/homeappliances/{haId}/status", c.auth(c.values("status")))
 	mux.HandleFunc("GET /api/homeappliances/{haId}/settings", c.auth(c.values("settings")))
+	mux.HandleFunc("GET /api/homeappliances/{haId}/settings/{key}", c.auth(c.setting))
 	mux.HandleFunc("GET /api/homeappliances/{haId}/programs/selected", c.auth(c.program(false)))
 	mux.HandleFunc("GET /api/homeappliances/{haId}/programs/active", c.auth(c.program(true)))
 	mux.HandleFunc("GET /api/homeappliances/{haId}/programs/available", c.auth(c.available))
@@ -86,6 +93,25 @@ func New(t *testing.T, appliances ...*Appliance) *Cloud {
 	c.Server = httptest.NewServer(mux)
 	t.Cleanup(c.Close)
 	return c
+}
+
+// FailSetting - отвечать кодом status на GET настройки key; 0 - снова отвечать как обычно.
+func (c *Cloud) FailSetting(key string, status int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.failSettings == nil {
+		c.failSettings = map[string]int{}
+	}
+	c.failSettings[key] = status
+}
+
+// HoldSettings задерживает ответы на GET настройки, пока тест не вызовет возвращённую функцию.
+func (c *Cloud) HoldSettings() (release func()) {
+	ch := make(chan struct{})
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.holdSettings = ch
+	return func() { close(ch) }
 }
 
 // Approve - владелец вошёл в аккаунт: следующий опрос получит токены.
@@ -281,6 +307,33 @@ func (c *Cloud) values(kind string) func(w http.ResponseWriter, r *http.Request,
 		}
 		c.mu.Unlock()
 		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{kind: list}})
+	}
+}
+
+// setting - настройка с описанием из SettingInfo. Настройки нет у прибора - 404.
+func (c *Cloud) setting(w http.ResponseWriter, r *http.Request, a *Appliance) {
+	key := r.PathValue("key")
+	c.mu.Lock()
+	hold, fail := c.holdSettings, c.failSettings[key]
+	value, ok := a.Settings[key]
+	data := map[string]any{"key": key, "value": value}
+	for k, v := range a.SettingInfo[key] {
+		data[k] = v
+	}
+	c.mu.Unlock()
+	if hold != nil {
+		<-hold
+	}
+	switch {
+	case fail != 0:
+		if fail == http.StatusTooManyRequests {
+			w.Header().Set("Retry-After", "52")
+		}
+		apiError(w, fail, "SDK.Error.Fake")
+	case !ok:
+		apiError(w, http.StatusNotFound, "SDK.Error.UnsupportedSetting")
+	default:
+		writeJSON(w, http.StatusOK, map[string]any{"data": data})
 	}
 }
 

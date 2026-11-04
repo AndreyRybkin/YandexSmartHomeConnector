@@ -11,6 +11,10 @@ import "strings"
 // SmartThingsPrefix - приставка типа устройства SmartThings.
 const SmartThingsPrefix = "SmartThings."
 
+// stThermostatSetpoint - уставка термостата по его режиму: при cool - уставка охлаждения, при
+// остальных - нагрева. Значение считает сам прибор SmartThings, у устройства такого атрибута нет.
+const stThermostatSetpoint = "hcgateway.thermostatSetpoint"
+
 // SmartThingsType сообщает, что тип - тип устройства SmartThings.
 func SmartThingsType(t string) bool {
 	return strings.HasPrefix(t, SmartThingsPrefix)
@@ -66,7 +70,8 @@ func stMedia(yandexType string) *Profile {
 }
 
 // stLaundry - стиральная, сушильная или посудомоечная машина: запуск и остановка через
-// состояние машины, пауза и окончание работы - переход job в конечное значение.
+// состояние машины, пауза и окончание работы - кнопка: job перешёл в конечное значение.
+// Кнопка - свойством: так машина без этого значения её не получит.
 func stLaundry(yandexType, capability, job, end string) *Profile {
 	state := capability + ".machineState"
 	return &Profile{
@@ -74,8 +79,8 @@ func stLaundry(yandexType, capability, job, end string) *Profile {
 		OnOff:      "power",
 		Power: &Power{Setting: state, On: "run", Off: "stop", State: state, Idle: []string{"stop"},
 			Allowed: "remoteControlStatus.remoteControlEnabled"},
-		Toggles: []Toggle{{Instance: "pause", Setting: state, On: "pause", Off: "run"}},
-		Events:  &Events{Button: map[string]string{capability + "." + job + "=" + end: "click"}},
+		Toggles:    []Toggle{{Instance: "pause", Setting: state, On: "pause", Off: "run"}},
+		Properties: []Property{stEvent("button", capability+"."+job, map[string]string{end: "click"})},
 	}
 }
 
@@ -138,7 +143,7 @@ var stBuiltin = map[string]*Profile{
 	"Button": {
 		YandexType: "sensor.button",
 		Properties: []Property{stEvent("button", "button.button", map[string]string{"pushed": "click", "double": "double_click",
-			"held": "long_press"}), lgFloat("battery_level", "battery.battery", percent)},
+			"pushed_2x": "double_click", "held": "long_press", "down_hold": "long_press"}), lgFloat("battery_level", "battery.battery", percent)},
 	},
 
 	"Thermostat": {
@@ -149,7 +154,7 @@ var stBuiltin = map[string]*Profile{
 		Modes: []Mode{{Instance: "thermostat", Option: "thermostatMode.thermostatMode", Values: map[string]string{
 			"auto": "auto", "cool": "cool", "heat": "heat", "eco": "eco",
 		}}},
-		Ranges:     []Range{{Instance: "temperature", Option: "thermostatHeatingSetpoint.heatingSetpoint", Unit: celsius}},
+		Ranges:     []Range{{Instance: "temperature", Option: stThermostatSetpoint, Unit: celsius}},
 		Properties: stSensors,
 	},
 	"AirConditioner": {
@@ -158,20 +163,24 @@ var stBuiltin = map[string]*Profile{
 		Power:      stPower(),
 		Modes: []Mode{{Instance: "thermostat", Option: "airConditionerMode.airConditionerMode", Values: map[string]string{
 			"auto": "auto", "cool": "cool", "dry": "dry", "wind": "fan_only", "heat": "heat",
-		}}, {Instance: "fan_speed", Option: "airConditionerFanMode.fanMode", Values: map[string]string{
-			"auto": "auto", "low": "low", "medium": "medium", "high": "high", "turbo": "turbo",
-		}}},
+		}, AlsoValues: map[string]string{"fan": "fan_only", "fanOnly": "fan_only", "aIComfort": "auto"}},
+			{Instance: "fan_speed", Option: "airConditionerFanMode.fanMode", Values: map[string]string{
+				"auto": "auto", "low": "low", "medium": "medium", "high": "high", "turbo": "turbo",
+			}},
+			{Instance: "swing", Option: "fanOscillationMode.fanOscillationMode", Values: map[string]string{
+				"fixed": "stationary", "vertical": "vertical", "horizontal": "horizontal", "all": "auto",
+			}}},
 		Ranges:     []Range{{Instance: "temperature", Option: "thermostatCoolingSetpoint.coolingSetpoint", Unit: celsius}},
-		Toggles:    []Toggle{{Instance: "oscillation", Setting: "fanOscillationMode.fanOscillationMode", On: "all", Off: "fixed"}},
 		Properties: stSensors,
 	},
 	"AirPurifier": {
 		YandexType: "purifier",
 		OnOff:      "power",
 		Power:      stPower(),
-		Modes: []Mode{{Instance: "fan_speed", Option: "airPurifierFanMode.airPurifierFanMode", Values: map[string]string{
-			"auto": "auto", "low": "low", "medium": "medium", "high": "high", "sleep": "quiet",
-		}}},
+		Modes: []Mode{{Instance: "fan_speed", Option: "airPurifierFanMode.airPurifierFanMode",
+			FallbackOption: "airConditionerFanMode.fanMode", Values: map[string]string{
+				"auto": "auto", "low": "low", "medium": "medium", "high": "high", "sleep": "quiet",
+			}}},
 		Properties: stSensors,
 	},
 	"Humidifier":          {YandexType: "humidifier", OnOff: "power", Power: stPower(), Properties: stSensors},

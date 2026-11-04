@@ -1,6 +1,7 @@
 package profile
 
 import (
+	"maps"
 	"math"
 	"reflect"
 	"slices"
@@ -393,6 +394,196 @@ func TestAllInOneCoversYandexLists(t *testing.T) {
 			if !slices.Contains(events[instance], v) {
 				t.Errorf("нет event %s значения %s", instance, v)
 			}
+		}
+	}
+}
+
+// Стирально-сушильная машина: только свои программы, программа по умолчанию среди них.
+func TestWasherDryerPrograms(t *testing.T) {
+	p := BuiltinProfile("WasherDryer")
+	if p == nil || !strings.HasPrefix(p.DefaultProgram, "LaundryCare.WasherDryer.Program.") {
+		t.Fatalf("профиль: %+v", p)
+	}
+	mode := p.ProgramMode()
+	if mode == nil || mode.Programs[p.DefaultProgram] == "" {
+		t.Fatal("программа по умолчанию не в режимах")
+	}
+	want := map[string]string{"Cotton": "normal", "Cotton.Eco4060": "eco", "EasyCare": "one", "Mix": "two",
+		"WashAndDry.60": "three", "WashAndDry.90": "four"}
+	if len(mode.Programs) != len(want) {
+		t.Fatalf("программы: %v", mode.Programs)
+	}
+	for k, v := range want {
+		if got := mode.Programs["LaundryCare.WasherDryer.Program."+k]; got != v {
+			t.Errorf("%s: %q", k, got)
+		}
+	}
+	if BuiltinProfile("Washer").DefaultProgram != "LaundryCare.Washer.Program.Cotton" {
+		t.Fatal("профиль стиральной машины изменился")
+	}
+}
+
+// Дверь: заблокированная закрыта, приоткрытая открыта.
+func TestDoorValues(t *testing.T) {
+	const prefix = "BSH.Common.EnumType.DoorState."
+	want := map[string]string{"Open": "opened", "Ajar": "opened", "Closed": "closed", "Locked": "closed"}
+	for _, typ := range []string{"Oven", "Dishwasher", "Washer", "WasherDryer", "Dryer", "Microwave", "WarmingDrawer"} {
+		i := slices.IndexFunc(BuiltinProfile(typ).Properties, func(pr Property) bool { return pr.Instance == "open" })
+		if i < 0 {
+			t.Fatalf("%s: нет двери", typ)
+		}
+		for k, v := range want {
+			if got := BuiltinProfile(typ).Properties[i].Values[prefix+k]; got != v {
+				t.Errorf("%s %s: %q", typ, k, got)
+			}
+		}
+	}
+}
+
+// Дверь холодильных приборов понимает оба варианта имён значений.
+func TestFridgeDoorValues(t *testing.T) {
+	want := map[string]string{
+		"Refrigeration.Common.EnumType.Door.States.Open":   "opened",
+		"Refrigeration.Common.EnumType.Door.States.Closed": "closed",
+		"BSH.Common.EnumType.DoorState.Open":               "opened",
+		"BSH.Common.EnumType.DoorState.Closed":             "closed",
+	}
+	for _, typ := range []string{"Refrigerator", "FridgeFreezer", "Freezer", "WineCooler"} {
+		pr := BuiltinProfile(typ).Properties[0]
+		if !maps.Equal(pr.Values, want) {
+			t.Errorf("%s: %v", typ, pr.Values)
+		}
+	}
+}
+
+// Cooktop - тот же профиль, что Hob.
+func TestCooktop(t *testing.T) {
+	a, err := Resolve("Cooktop", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := Resolve("Hob", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.YandexType != b.YandexType || a.OnOff != b.OnOff || a.OnOff != "power" {
+		t.Fatalf("Cooktop: %+v, Hob: %+v", a, b)
+	}
+}
+
+// Подсветка вытяжки необязательна: без настройки в описании переключателя нет.
+func TestHoodLightOptional(t *testing.T) {
+	tg := BuiltinProfile("Hood").Toggles[0]
+	if tg.Instance != "backlight" || !tg.Optional {
+		t.Fatalf("подсветка: %+v", tg)
+	}
+}
+
+// Запасная настройка и другие значения режима: проверка, чтение строгим YAML и запись обратно.
+func TestModeExtras(t *testing.T) {
+	const src = `instance: thermostat
+option: a.mode
+fallback_option: b.mode
+values:
+    wind: fan_only
+also_values:
+    fan: fan_only
+`
+	var m Mode
+	dec := yaml.NewDecoder(strings.NewReader(src))
+	dec.KnownFields(true)
+	if err := dec.Decode(&m); err != nil {
+		t.Fatal(err)
+	}
+	if m.FallbackOption != "b.mode" || m.AlsoValues["fan"] != "fan_only" {
+		t.Fatalf("прочитано: %+v", m)
+	}
+	out, err := yaml.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "fallback_option: b.mode") || !strings.Contains(string(out), "also_values:") {
+		t.Fatalf("записано: %s", out)
+	}
+	plain, _ := yaml.Marshal(Mode{Instance: "thermostat", Option: "a.mode", Values: map[string]string{"x": "auto"}})
+	if strings.Contains(string(plain), "fallback_option") || strings.Contains(string(plain), "also_values") {
+		t.Fatalf("у обычного режима лишние поля: %s", plain)
+	}
+
+	// Значение из Values важнее, а значение отсюда - только если оно есть у прибора.
+	if got := m.ValueFor("fan_only", []string{"fan"}); got != "fan" {
+		t.Fatalf("у прибора только fan: %q", got)
+	}
+	if got := m.ValueFor("fan_only", []string{"fan", "wind"}); got != "wind" {
+		t.Fatalf("у прибора оба: %q", got)
+	}
+	if got := m.ValueFor("fan_only", nil); got != "wind" {
+		t.Fatalf("прибор значений не сообщает: %q", got)
+	}
+	if got := m.ValueFor("auto", []string{"fan"}); got != "" {
+		t.Fatalf("режима нет в профиле: %q", got)
+	}
+	// Без AlsoValues выбор не зависит от значений прибора.
+	plainMode := Mode{Option: "a", Values: map[string]string{"x": "auto"}}
+	if got := plainMode.ValueFor("auto", []string{"y"}); got != "x" {
+		t.Fatalf("обычный режим: %q", got)
+	}
+
+	for name, bad := range map[string]Mode{
+		"запасная равна основной":    {Instance: "thermostat", Option: "a", FallbackOption: "a", Values: map[string]string{"x": "auto"}},
+		"запасная у программ":        {Instance: "program", Programs: map[string]string{"P": "auto"}, FallbackOption: "a"},
+		"другие значения у программ": {Instance: "program", Programs: map[string]string{"P": "auto"}, AlsoValues: map[string]string{"y": "auto"}},
+		"значение в обоих списках":   {Instance: "thermostat", Option: "a", Values: map[string]string{"x": "auto"}, AlsoValues: map[string]string{"x": "cool"}},
+		"чужой режим":                {Instance: "thermostat", Option: "a", Values: map[string]string{"x": "auto"}, AlsoValues: map[string]string{"y": "nope"}},
+		"два значения в values":      {Instance: "thermostat", Option: "a", Values: map[string]string{"x": "auto", "y": "auto"}},
+	} {
+		p := Profile{YandexType: "other", OnOff: "none", Modes: []Mode{bad}}
+		if err := p.Validate(); err == nil {
+			t.Fatalf("%s: профиль принят", name)
+		}
+	}
+}
+
+// Кнопка окончания работы машины - свойством, а не разделом events: иначе её получит и машина
+// без этого значения. У пульта оба значения удержания и двойного нажатия понятны.
+func TestSmartThingsProfiles(t *testing.T) {
+	for typ, status := range map[string]string{"Washer": "washerOperatingState.washerJobState", "Dryer": "dryerOperatingState.dryerJobState",
+		"Dishwasher": "dishwasherOperatingState.dishwasherJobState"} {
+		p := builtin[SmartThingsPrefix+typ]
+		if p.Events != nil || len(p.Properties) != 1 || p.Properties[0].Instance != "button" || p.Properties[0].Status != status {
+			t.Fatalf("%s: %+v", typ, p)
+		}
+	}
+	values := builtin[SmartThingsPrefix+"Button"].Properties[0].Values
+	if values["pushed_2x"] != "double_click" || values["down_hold"] != "long_press" {
+		t.Fatalf("кнопка: %v", values)
+	}
+	ac := builtin[SmartThingsPrefix+"AirConditioner"]
+	if len(ac.Toggles) != 0 || !slices.ContainsFunc(ac.Modes, func(m Mode) bool { return m.Instance == "swing" }) {
+		t.Fatalf("кондиционер: %+v", ac)
+	}
+	for typ := range builtin {
+		if SmartThingsType(typ) {
+			if _, err := Resolve(typ, nil, nil); err != nil {
+				t.Fatalf("%s: %v", typ, err)
+			}
+		}
+	}
+}
+
+// Свои рецепты без напитка по умолчанию: «включи» варит один из них, а не встроенный рецепт.
+func TestDeLonghiLayerDefaultDrink(t *testing.T) {
+	for _, c := range []struct {
+		recipes map[string]int
+		drink   string
+		want    string
+	}{
+		{nil, "", DeLonghiRecipePrefix + "6"},
+		{map[string]int{"latte": 9, "espresso": 1}, "", DeLonghiRecipePrefix + "1"},
+		{map[string]int{"latte": 9, "espresso": 1}, "latte", DeLonghiRecipePrefix + "9"},
+	} {
+		if got := DeLonghiLayer(c.recipes, c.drink).DefaultProgram; got != c.want {
+			t.Fatalf("%v %q: %s", c.recipes, c.drink, got)
 		}
 	}
 }

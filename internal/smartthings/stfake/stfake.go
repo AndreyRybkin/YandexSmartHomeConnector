@@ -37,6 +37,8 @@ type Cloud struct {
 	streams  []chan string
 	subs     int
 	deleted  int
+	// extra - устройства, которые добавил тест.
+	extra []map[string]any
 	// Calls - запросы по пути.
 	calls map[string]int
 }
@@ -59,8 +61,9 @@ func New() *Cloud {
 			"colorTemperature": {"colorTemperature": 3000},
 		}},
 		Fridge: {
-			"main":    {"contactSensor": {"contact": "closed"}, "temperatureMeasurement": {"temperature": 4}},
-			"freezer": {"temperatureMeasurement": {"temperature": -18}, "thermostatCoolingSetpoint": {"coolingSetpoint": -18}},
+			"main": {"contactSensor": {"contact": "closed"}, "temperatureMeasurement": {"temperature": 4}},
+			"freezer": {"temperatureMeasurement": {"temperature": -18}, "thermostatCoolingSetpoint": {"coolingSetpoint": -18,
+				"coolingSetpointRange": map[string]float64{"minimum": -25, "maximum": -15, "step": 1}}},
 		},
 	}}
 	mux := http.NewServeMux()
@@ -124,9 +127,33 @@ func (c *Cloud) Goodbye() {
 	c.push("event: CONTROL_EVENT\ndata: goodbye\n\n")
 }
 
+// AddDevice добавляет устройство с компонентами. Состояние - компонент -> capability -> атрибут ->
+// значение. Компонент задаёт Component.
+func (c *Cloud) AddDevice(id, label string, components []map[string]any, state map[string]map[string]map[string]any) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.extra = append(c.extra, map[string]any{"deviceId": id, "name": label, "label": label, "manufacturerName": "Samsung Electronics",
+		"components": components})
+	c.state[id] = state
+}
+
+// Component - компонент устройства для AddDevice с категорией производителя; пусто - без категории.
+func Component(id, category string, capabilities ...string) map[string]any {
+	return component(id, category, capabilities...)
+}
+
 // Set меняет значение на устройстве и сообщает его в поток событий.
 func (c *Cloud) Set(device, component, capability, attribute string, value any) {
 	c.mu.Lock()
+	if c.state[device] == nil {
+		c.state[device] = map[string]map[string]map[string]any{}
+	}
+	if c.state[device][component] == nil {
+		c.state[device][component] = map[string]map[string]any{}
+	}
+	if c.state[device][component][capability] == nil {
+		c.state[device][component][capability] = map[string]any{}
+	}
 	c.state[device][component][capability][attribute] = value
 	c.mu.Unlock()
 	c.event(device, component, capability, attribute, value)
@@ -213,7 +240,7 @@ func component(id, category string, capabilities ...string) map[string]any {
 }
 
 func (c *Cloud) devices(w http.ResponseWriter, r *http.Request) {
-	json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{
+	items := []map[string]any{
 		{"deviceId": TV, "name": "Samsung TV", "label": "Телевизор", "manufacturerName": "Samsung Electronics",
 			"components": []map[string]any{component("main", "Television", "switch", "audioVolume", "audioMute", "tvChannel",
 				"samsungvd.mediaInputSource", "mediaPlayback")}},
@@ -221,8 +248,12 @@ func (c *Cloud) devices(w http.ResponseWriter, r *http.Request) {
 			"components": []map[string]any{component("main", "Light", "switch", "switchLevel", "colorControl", "colorTemperature")}},
 		{"deviceId": Fridge, "name": "Fridge", "label": "Холодильник", "manufacturerName": "Samsung Electronics",
 			"components": []map[string]any{component("main", "Refrigerator", "contactSensor", "temperatureMeasurement"),
-				component("freezer", "", "temperatureMeasurement", "thermostatCoolingSetpoint")}},
-	}, "_links": map[string]any{}})
+				component("freezer", "Other", "temperatureMeasurement", "thermostatCoolingSetpoint")}},
+	}
+	c.mu.Lock()
+	items = append(items, c.extra...)
+	c.mu.Unlock()
+	json.NewEncoder(w).Encode(map[string]any{"items": items, "_links": map[string]any{}})
 }
 
 func str(enum ...string) map[string]any {
@@ -288,8 +319,41 @@ var defs = map[string]map[string]any{
 		"commands": map[string]any{"setColorTemperature": cmd(arg("temperature", num("integer", 1, 30000)))}},
 	"contactSensor":          {"attributes": map[string]any{"contact": attr(str("closed", "open"), "")}, "commands": map[string]any{}},
 	"temperatureMeasurement": {"attributes": map[string]any{"temperature": attr(num("number", -460, 10000), "")}, "commands": map[string]any{}},
-	"thermostatCoolingSetpoint": {"attributes": map[string]any{"coolingSetpoint": attr(num("number", -460, 10000), "setCoolingSetpoint")},
+	"thermostatCoolingSetpoint": {"attributes": map[string]any{"coolingSetpoint": attr(num("number", -460, 10000), "setCoolingSetpoint"),
+		"coolingSetpointRange": attr(map[string]any{"type": "object"}, "")},
 		"commands": map[string]any{"setCoolingSetpoint": cmd(arg("setpoint", num("number", -460, 10000)))}},
+	"thermostatHeatingSetpoint": {"attributes": map[string]any{"heatingSetpoint": attr(num("number", -460, 10000), "setHeatingSetpoint"),
+		"heatingSetpointRange": attr(map[string]any{"type": "object"}, "")},
+		"commands": map[string]any{"setHeatingSetpoint": cmd(arg("setpoint", num("number", -460, 10000)))}},
+	"thermostatMode": {"attributes": map[string]any{"thermostatMode": attr(str("auto", "cool", "eco", "heat", "off", "auxheatonly"), "setThermostatMode"),
+		"supportedThermostatModes": attr(map[string]any{"type": "array"}, "")},
+		"commands": map[string]any{"setThermostatMode": cmd(arg("mode", str()))}},
+	"airConditionerMode": {"attributes": map[string]any{"airConditionerMode": attr(str(), "setAirConditionerMode"),
+		"supportedAcModes": attr(map[string]any{"type": "array"}, "")},
+		"commands": map[string]any{"setAirConditionerMode": cmd(arg("mode", str()))}},
+	"airConditionerFanMode": {"attributes": map[string]any{"fanMode": attr(str(), "setFanMode"),
+		"supportedAcFanModes": attr(map[string]any{"type": "array"}, "")},
+		"commands": map[string]any{"setFanMode": cmd(arg("fanMode", str()))}},
+	"fanOscillationMode": {"attributes": map[string]any{"fanOscillationMode": attr(str("fixed", "vertical", "horizontal", "all"), "setFanOscillationMode"),
+		"supportedFanOscillationModes": attr(map[string]any{"type": "array"}, "")},
+		"commands": map[string]any{"setFanOscillationMode": cmd(arg("fanOscillationMode", str()))}},
+	"ovenSetpoint": {"attributes": map[string]any{"ovenSetpoint": attr(num("number", -460, 10000), "setOvenSetpoint"),
+		"ovenSetpointRange": attr(map[string]any{"type": "object"}, "")},
+		"commands": map[string]any{"setOvenSetpoint": cmd(arg("setpoint", num("number", -460, 10000)))}},
+	"washerOperatingState": {"attributes": map[string]any{"machineState": attr(str("pause", "run", "stop"), "setMachineState"),
+		"supportedMachineStates": attr(map[string]any{"type": "array"}, ""), "washerJobState": attr(str("finish", "none", "wash"), "")},
+		"commands": map[string]any{"setMachineState": cmd(arg("state", str("pause", "run", "stop")))}},
+	"energyMeter": {"attributes": map[string]any{"energy": attr(num("number", 0, 1e9), "")}, "commands": map[string]any{}},
+	"button": {"attributes": map[string]any{"button": attr(str(), ""), "numberOfButtons": attr(num("integer", 0, 100), ""),
+		"supportedButtonValues": attr(map[string]any{"type": "array"}, "")}, "commands": map[string]any{}},
+	"dustSensor": {"attributes": map[string]any{"dustLevel": attr(num("number", 0, 1000), ""), "fineDustLevel": attr(num("number", 0, 1000), "")},
+		"commands": map[string]any{}},
+	"custom.thermostatSetpointControl": {"attributes": map[string]any{"minimumSetpoint": attr(num("number", -460, 10000), ""),
+		"maximumSetpoint": attr(num("number", -460, 10000), "")}, "commands": map[string]any{}},
+	"custom.disabledCapabilities": {"attributes": map[string]any{"disabledCapabilities": attr(map[string]any{"type": "array"}, "")},
+		"commands": map[string]any{}},
+	"custom.disabledComponents": {"attributes": map[string]any{"disabledComponents": attr(map[string]any{"type": "array"}, "")},
+		"commands": map[string]any{}},
 }
 
 func (c *Cloud) capability(w http.ResponseWriter, r *http.Request) {

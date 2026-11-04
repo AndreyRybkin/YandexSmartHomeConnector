@@ -421,7 +421,7 @@ func (g *Gateway) build(cfg *config.Config, id string, dc config.Device, prev *b
 	}
 	forType := cfg.Profiles[haType]
 	// Тип, который шлюз сам не знает, ждёт своего профиля: иначе один новый прибор сломал бы все настройки.
-	if dc.Source == config.SourcePolaris && profile.BuiltinProfile(haType) == nil && forType == nil && dc.Profile == nil {
+	if profile.BuiltinProfile(haType) == nil && forType == nil && dc.Profile == nil {
 		return nil, errWaiting
 	}
 	if prev != nil && a == prev.appliance && sameDevice(prev.conf, dc) && reflect.DeepEqual(prev.typeProfile, forType) {

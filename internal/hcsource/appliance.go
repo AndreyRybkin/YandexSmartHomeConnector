@@ -27,6 +27,9 @@ const (
 	describeTimeout = 10 * time.Minute
 	// maxDescription - предел файла описания.
 	maxDescription = 1 << 20
+	// maxRefused - сколько отказов подряд стерпеть за одну загрузку пределов настроек. Шлюз встаёт
+	// на паузу после 5 ошибок подряд, а эта пауза задержала бы и команды Алисы.
+	maxRefused = 2
 )
 
 // Имена Home Connect, которые сообщает только облако.
@@ -61,6 +64,11 @@ type option struct {
 	Step   float64  `json:"step,omitempty"`
 	Values []string `json:"values,omitempty"`
 	Unit   string   `json:"unit,omitempty"`
+	// Access - у настройки: read значит, что менять её нельзя.
+	Access string `json:"access,omitempty"`
+	// Loaded - пределы настройки уже запрашивали. В старых файлах настройки лежат без пределов и
+	// без этого признака, поэтому шлюз запросит их один раз.
+	Loaded bool `json:"loaded,omitempty"`
 }
 
 // Appliance - прибор из облака.
@@ -79,7 +87,8 @@ type Appliance struct {
 	runs int
 	// stoppedAt - когда шлюз остановил программу: новая программа подождёт Ready.
 	stoppedAt time.Time
-	loading   bool
+	// loading и describing - загрузка состояния и описания уже идёт.
+	loading, describing bool
 }
 
 func newAppliance(c *Cloud, haID, path string) *Appliance {
@@ -115,7 +124,8 @@ func (a *Appliance) Describe() appliance.Description {
 	d := appliance.Description{Type: a.desc.Type, Programs: slices.Clone(a.desc.Programs),
 		Commands: slices.Clone(a.desc.Commands), Options: map[string]appliance.Option{}}
 	for k, o := range a.desc.Options {
-		d.Options[k] = appliance.Option{Key: k, Min: o.Min, Max: o.Max, Step: o.Step, Values: slices.Clone(o.Values)}
+		d.Options[k] = appliance.Option{Key: k, Min: o.Min, Max: o.Max, Step: o.Step, Values: slices.Clone(o.Values),
+			ReadOnly: strings.EqualFold(o.Access, "read")}
 	}
 	return d
 }
@@ -196,10 +206,17 @@ func (a *Appliance) setOnline(on bool) {
 
 // load загружает состояние прибора, а затем, если нужно, его описание.
 func (a *Appliance) load(ctx context.Context) {
+	if a.refresh(ctx) {
+		a.describe(ctx)
+	}
+}
+
+// refresh загружает состояние прибора. false - не загружено или уже загружается.
+func (a *Appliance) refresh(ctx context.Context) bool {
 	a.mu.Lock()
 	if a.loading {
 		a.mu.Unlock()
-		return
+		return false
 	}
 	a.loading = true
 	a.mu.Unlock()
@@ -210,9 +227,9 @@ func (a *Appliance) load(ctx context.Context) {
 	}()
 	if err := a.loadState(ctx); err != nil {
 		a.cloud.log.Warn("состояние прибора Home Connect не загружено", "ha_id", a.haID, "err", err)
-		return
+		return false
 	}
-	a.describe(ctx)
+	return true
 }
 
 func (a *Appliance) loadState(ctx context.Context) error {
@@ -262,11 +279,30 @@ func (a *Appliance) loadState(ctx context.Context) error {
 	return nil
 }
 
-// describe дозагружает команды и описания новых программ. Каждая программа - отдельный
-// запрос, поэтому между ними пауза programPause.
+// describe дозагружает описание прибора, если эта загрузка ещё не идёт: сначала команды и
+// программы, затем пределы настроек. Что уже загружено, сохраняется и при обрыве следующего шага.
 func (a *Appliance) describe(ctx context.Context) {
+	a.mu.Lock()
+	if a.describing {
+		a.mu.Unlock()
+		return
+	}
+	a.describing = true
+	a.mu.Unlock()
+	defer func() {
+		a.mu.Lock()
+		a.describing = false
+		a.mu.Unlock()
+	}()
 	ctx, cancel := context.WithTimeout(ctx, describeTimeout)
 	defer cancel()
+	a.describePrograms(ctx)
+	a.describeSettings(ctx)
+}
+
+// describePrograms дозагружает команды и описания новых программ. Каждая программа - отдельный
+// запрос, поэтому между ними пауза programPause.
+func (a *Appliance) describePrograms(ctx context.Context) {
 	api := a.cloud.API
 	changed := false
 	a.mu.Lock()
@@ -347,6 +383,95 @@ func (a *Appliance) describe(ctx context.Context) {
 		a.mu.Unlock()
 		a.cloud.changed()
 	}
+}
+
+// describeSettings запрашивает пределы и допустимые значения настроек, которых ещё нет в файле.
+// Каждая настройка - отдельный запрос, поэтому между ними пауза programPause. Сбой или лимит
+// облака прекращают загрузку до следующего подключения прибора: повторять сразу незачем, а
+// прежнее описание остаётся как было.
+func (a *Appliance) describeSettings(ctx context.Context) {
+	a.mu.Lock()
+	var keys []string
+	for k, o := range a.desc.Options {
+		if strings.Contains(k, ".Setting.") && !o.Loaded {
+			keys = append(keys, k)
+		}
+	}
+	a.mu.Unlock()
+	slices.Sort(keys)
+	changed := false
+	refused := 0
+loop:
+	for _, key := range keys {
+		if sleep(ctx, programPause) != nil {
+			break
+		}
+		info, err := a.cloud.API.Setting(ctx, a.haID, key)
+		switch {
+		case err == nil:
+			refused = 0
+		case errors.Is(err, hcapi.ErrBadResponse):
+			// Ответ не изменится от повтора: настройка остаётся без пределов.
+			a.cloud.log.Warn("пределы настройки Home Connect не разобраны", "ha_id", a.haID, "setting", key, "err", err)
+			info = hcapi.OptionInfo{}
+		case settingRefused(err):
+			// Облако не описывает настройку: она остаётся без пределов.
+			a.cloud.log.Info("облако не отдало пределы настройки", "ha_id", a.haID, "setting", key, "err", err)
+			refused++
+		default:
+			a.cloud.log.Warn("пределы настроек Home Connect не загружены", "ha_id", a.haID, "setting", key, "err", err)
+			break loop
+		}
+		a.mu.Lock()
+		a.desc.Options[key] = withSetting(a.desc.Options[key], info)
+		a.mu.Unlock()
+		changed = true
+		if refused >= maxRefused {
+			a.cloud.log.Warn("пределы настроек Home Connect: отказы подряд, продолжу при следующем подключении", "ha_id", a.haID)
+			break
+		}
+	}
+	if changed {
+		a.mu.Lock()
+		a.saveLocked()
+		a.mu.Unlock()
+		a.cloud.changed()
+	}
+}
+
+// settingRefused - облако ответило, что не описывает эту настройку. Прибор не на связи (409), 429 и
+// 5xx сюда не относятся: тогда пределы запрашиваются снова.
+func settingRefused(err error) bool {
+	var ae *hcapi.APIError
+	if !errors.As(err, &ae) {
+		return false
+	}
+	return ae.Status == 400 || ae.Status == 403 || ae.Status == 404
+}
+
+// withSetting отмечает, что пределы настройки запрашивали, и дополняет её ответом облака.
+func withSetting(o option, info hcapi.OptionInfo) option {
+	c := info.Constraints
+	o.Loaded = true
+	if c.Min != nil {
+		o.Min = *c.Min
+	}
+	if c.Max != nil {
+		o.Max = *c.Max
+	}
+	if c.StepSize != nil {
+		o.Step = *c.StepSize
+	}
+	if len(c.AllowedValues) > 0 {
+		o.Values = c.AllowedValues
+	}
+	if info.Unit != "" {
+		o.Unit = info.Unit
+	}
+	if c.Access != "" {
+		o.Access = c.Access
+	}
+	return o
 }
 
 func (a *Appliance) saveLocked() {

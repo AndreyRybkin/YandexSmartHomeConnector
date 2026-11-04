@@ -99,7 +99,11 @@ func (a *Appliance) message(client, key, value string) {
 	}
 	a.online, a.client = true, client
 	previous, known := a.values[KeyMode]
-	a.values[key] = parseValue(key, value)
+	if a.devType == "" || Kettle(a.devType) || key == KeyMode {
+		a.values[key] = parseValue(key, value)
+	} else {
+		a.values[key] = parseOther(key, value)
+	}
 	// Температура 0 в простое значит, что цель не задана: Алисе такую цель передавать нельзя.
 	if f, ok := a.values[key].(float64); ok && key == KeyTemperature && f < minTemperature {
 		delete(a.values, key)

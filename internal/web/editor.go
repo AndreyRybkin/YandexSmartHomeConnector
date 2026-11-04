@@ -376,10 +376,36 @@ func sameField(a, b *profile.Profile, field string) bool {
 // applyField - новое переопределение после правки поля field: значение из формы
 // или, при reset, унаследованное. Значение, равное унаследованному, не сохраняется.
 func applyField(t *editTarget, field string, patch *profile.Profile, reset bool) *profile.Profile {
+	if field == "modes" && !reset {
+		keepModeExtras(patch, profile.Merge(t.base(), t.override()))
+	}
 	if reset || sameField(patch, t.base(), field) {
 		patch = nil
 	}
 	return setField(t.override(), field, patch)
+}
+
+// keepModeExtras переносит из текущего профиля fallback_option и also_values: формы для них нет, а без
+// них режим пропал бы у приборов, которые называют значения иначе.
+func keepModeExtras(patch, current *profile.Profile) {
+	for i := range patch.Modes {
+		m := &patch.Modes[i]
+		for _, old := range current.Modes {
+			if old.Instance != m.Instance || old.Option != m.Option || m.Option == "" {
+				continue
+			}
+			m.FallbackOption = old.FallbackOption
+			for k, v := range old.AlsoValues {
+				if _, taken := m.Values[k]; taken {
+					continue
+				}
+				if m.AlsoValues == nil {
+					m.AlsoValues = map[string]string{}
+				}
+				m.AlsoValues[k] = v
+			}
+		}
+	}
 }
 
 // fk - имя поля формы из частей: fk("m", 0, "k", 3) = "m.0.k.3".

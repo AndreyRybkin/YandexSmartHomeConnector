@@ -50,11 +50,23 @@ func (a *Appliance) Describe() appliance.Description {
 	if m == nil {
 		return appliance.Description{Options: map[string]appliance.Option{}}
 	}
-	d := appliance.Description{Type: m.DeviceType, Options: map[string]appliance.Option{}, Events: slices.Clone(m.Push)}
+	// Профиль перечисляет все свойства и уведомления прибора. В Reports входят и свойства только
+	// для записи: питание стиральной машины такое, а по Reports устройство Алисы решает, есть ли
+	// у него on_off. Значение, которого нет в профиле, но которое прибор прислал, - тоже: его мог
+	// сопоставить владелец.
+	d := appliance.Description{Type: m.DeviceType, Options: map[string]appliance.Option{}, Events: slices.Clone(m.Push),
+		EventsKnown: true, Reports: []string{RemainKey}}
 	for key, p := range m.props {
 		d.Options[key] = appliance.Option{Key: key, Min: p.Min, Max: p.Max, Step: p.Step,
-			Values: slices.Clone(p.Values), Setting: p.Write}
+			Values: slices.Clone(p.Values), ReadOnly: !p.Write, Setting: p.Write}
+		d.Reports = append(d.Reports, key)
 	}
+	for key := range a.values {
+		if _, ok := d.Options[key]; !ok && key != RemainKey {
+			d.Reports = append(d.Reports, key)
+		}
+	}
+	slices.Sort(d.Reports)
 	return d
 }
 
@@ -103,6 +115,7 @@ func (a *Appliance) apply(raw json.RawMessage, full bool) {
 	}
 	a.model.flatten(raw, a.values)
 	remain(a.values)
+	a.model.derive(a.values)
 	a.have = true
 	a.changedLocked(nil)
 }
@@ -161,18 +174,21 @@ func (a *Appliance) Command(context.Context, string) error {
 func (a *Appliance) Set(ctx context.Context, key string, value any) error {
 	a.mu.Lock()
 	m := a.model
+	state := maps.Clone(a.values)
 	a.mu.Unlock()
 	if m == nil {
 		return fmt.Errorf("%w: профиль прибора LG не загружен", appliance.ErrUnreachable)
 	}
-	v, err := m.value(key, value)
+	body, err := m.command(key, value, state)
 	switch {
 	case errors.Is(err, errReadOnly):
 		return fmt.Errorf("%w: %s: %w", appliance.ErrNotSupported, key, err)
+	case errors.Is(err, errWrongState):
+		return fmt.Errorf("%w: %s: %w", appliance.ErrWrongMode, key, err)
 	case err != nil:
 		return fmt.Errorf("%w: %s = %v: %w", appliance.ErrInvalidValue, key, value, err)
 	}
-	return mapErr(a.cloud.API.Control(ctx, a.deviceID, m.payload(key, v)))
+	return mapErr(a.cloud.API.Control(ctx, a.deviceID, body))
 }
 
 // mapErr переводит ошибку облака в ошибку прибора: из неё hcdevice получает код Яндекса.

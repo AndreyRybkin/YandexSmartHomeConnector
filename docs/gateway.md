@@ -457,7 +457,8 @@ MQTT, опубликуйте порт только для домашней се�
      хранит его заглавными без двоеточий.
    - В `recipes` напитки - `espresso`, `double_espresso`, `americano`,
      `cappuccino` и `latte`. Номера - от 1 до 255, один номер - у
-     одного напитка. `default_drink` - напиток из `recipes`.
+     одного напитка. `default_drink` - напиток из `recipes`. Если он не задан,
+     а в своих `recipes` нет `americano`, «включи» варит первый по алфавиту.
 7. `skill_id` и `callback_token` задаются вместе или не задаются оба.
    Так же задаются `yandex.client_id` и `yandex.client_secret`,
    `homeconnect.client_id` и `homeconnect.client_secret`, `thinq.pat`
@@ -1509,7 +1510,7 @@ docker compose exec -T hcgateway /hcgateway -config /config/config.yaml web-user
 | `power` | питание через свойство прибора: `setting`, его значения `on` и `off`; необязательные `state` со списком `idle` и флаг разрешения `allowed`. Без `power` питание - `BSH.Common.Setting.PowerState` |
 | `default_program` | программа для «включи», если не выбрана другая; при `on_off: power` - программа для «включи» уже включённого прибора |
 | `default_options` | параметры программы при запуске; `200` и `200.0` - одно и то же число |
-| `modes` | список: `instance` и либо `programs` (программа -> режим Алисы), либо `option` и `values` (значение -> режим Алисы) |
+| `modes` | список: `instance` и либо `programs` (программа -> режим Алисы), либо `option` и `values` (значение -> режим Алисы). С `option` необязательны запасная настройка `fallback_option` и другие значения прибора `also_values` (значение -> режим Алисы) |
 | `ranges` | список: `instance`, `option`, `unit`, необязательные `min`, `max`, `precision` |
 | `toggles` | список: `instance` и `setting` - флаг или свойство со значениями `on` и `off`. Без `setting` бывает только `pause`: пауза и продолжение программы командами; `optional: true` - только если прибор описывает настройку и разрешает её менять |
 | `color` | цвет: `setting` - команда цвета с `hue` и `saturation` - значениями оттенка и насыщенности, `hue_max` - верх шкалы оттенка прибора, по умолчанию 360; `temperature` - цветовая температура в кельвинах с пределами `min_k` и `max_k`. Задаётся HSV, температура или оба; пустой `color` - умения нет |
@@ -1525,7 +1526,11 @@ docker compose exec -T hcgateway /hcgateway -config /config/config.yaml web-user
 Проверки профиля:
 
 1. `instance` и значения режимов - только из списков Яндекса. Один
-   режим Алисы не назначается двум значениям.
+   режим Алисы не назначается двум значениям `values`. Значение из
+   `also_values` не повторяет значение из `values`, а `fallback_option`
+   отличается от `option`. Прибор получает значение из `values`, а если
+   такого у него нет - то значение из `also_values`, которое у него есть.
+   `fallback_option` действует, если у прибора нет значений `option`.
 2. Выбор программы - не больше чем в одном `modes`.
 3. `on_off: program` требует `default_program` или режим с `programs`.
 4. У устройства есть хотя бы одно умение или свойство. Раздел `events` с
@@ -1631,7 +1636,8 @@ unexpected type at 38: number».
 |---|---|---|---|
 | `Oven` | `cooking` | программа (`program`), температура 30-275 °C, пауза, подсветка камеры; свойства: дверца, температура в камере | `click` - программа закончилась, `double_click` - разогрелась; `water_level` - вода |
 | `Dishwasher` | `dishwasher` | программа (`dishwashing`), пауза; свойство: дверца | `click`; `food_level` - соль; `water_level` - ополаскиватель |
-| `Washer`, `WasherDryer` | `washing_machine` | программа, пауза; свойство: дверца | `click` |
+| `Washer` | `washing_machine` | программа, пауза; свойство: дверца | `click` |
+| `WasherDryer` | `washing_machine` | программа `LaundryCare.WasherDryer.Program.*`: `Cotton` - `normal`, `Cotton.Eco4060` - `eco`, `EasyCare` - `one`, `Mix` - `two`, `WashAndDry.60` - `three`, `WashAndDry.90` - `four`; пауза; свойство: дверца | `click` |
 | `Dryer` | `washing_machine` | программа, пауза; свойство: дверца | `click` |
 | `CoffeeMaker` | `cooking.coffee_maker` | питание, напиток (`coffee_mode`) | `food_level` - зёрна; `water_level` - вода |
 | `Hood` | `ventilation` | вытяжка, скорость (`fan_speed`), подсветка | - |
@@ -1641,11 +1647,12 @@ unexpected type at 38: number».
 | `AirConditioner` | `thermostat.ac` | питание; режим `thermostat` из программ `Auto`, `Cool`, `Dry`, `Fan`, `Heat`; температура `SetpointTemperature` | - |
 | `Microwave` | `cooking` | программа: мощность от `90Watt` до `1000Watt` - режимы от `one` до `seven`, `Max` - `max`; пауза; свойство: дверца | `click` |
 | `WarmingDrawer` | `cooking` | подогрев (`program`), режим `heat`: `Low`, `Medium`, `High`; свойство: дверца | `click` |
-| `Hob` | `cooking` | питание | - |
+| `Hob`, `Cooktop` | `cooking` | питание | - |
 | `CookProcessor` | `cooking.multicooker` | питание | - |
 
 Программа духовки по умолчанию - `HotAir` на 180 °C, посудомойки -
-`Auto2`, шкафа для подогрева - `WarmingDrawer`.
+`Auto2`, шкафа для подогрева - `WarmingDrawer`, стиральной и
+стирально-сушильной машины - `Cotton`.
 
 1. У микроволновки программы по умолчанию нет: «включи» без программы,
    выбранной на приборе, получает `NOT_SUPPORTED_IN_CURRENT_MODE`.
@@ -1684,31 +1691,63 @@ unexpected type at 38: number».
 8. «Включи» запускает программу посудомойки и при
    `BSH.Common.Setting.PowerState`, равном `Off`: сначала включать питание
    не нужно.
+9. Дверца приборов с `BSH.Common.Status.DoorState`: значения `Open` и `Ajar`
+   дают `opened`, `Closed` и `Locked` - `closed`. Проверка перед запуском
+   считает открытой только `Open`. На настоящих приборах `Ajar` и `Locked`
+   не проверены.
+10. Дверь холодильника, морозильника и винного шкафа: шлюз понимает значения
+    `Refrigeration.Common.EnumType.Door.States.Open` и `.Closed` и значения
+    `BSH.Common.EnumType.DoorState.Open` и `.Closed`. Документация считает
+    основными первые. На настоящих приборах не проверено.
+11. Подсветка вытяжки - настройка `Cooking.Common.Setting.Lighting`.
+    Переключатель `backlight` есть, только если прибор описывает эту настройку
+    и разрешает её менять. На настоящей вытяжке не проверено.
+12. Варочную панель документация Home Connect называет `Cooktop`, а её области
+    доступа - `Hob`. Какой тип сообщит настоящая панель, не проверено, поэтому
+    профиль есть у обоих.
+13. Профиль `WasherDryer` составлен по документации Home Connect, на настоящей
+    машине не проверен.
 
 ### 6.3. Встроенные профили LG
 
 Встроенные профили составлены по библиотеке LG и интеграции
 Home Assistant. На настоящем приборе проверен только профиль стиральной
-машины.
+машины. Профили остальных типов проверены только на поддельном облаке в
+тестах, с раскладкой из открытых профилей LG (раздел 10).
 
 1. Уведомления встроенные профили передают кнопкой прибора: код
-   с окончанием `_IS_COMPLETE` - `click`, `PREHEATING_IS_COMPLETE` -
-   `double_click`, остальные коды - `long_press`.
-2. У стиральных и сушильных машин и стайлера окончание работы - переход
-   `runState.currentState` в `END`, `click`. Кнопкой `long_press` идут
-   только ошибки `ERROR_DURING_WASHING`, `DRYING_FAILED` и
-   `ERROR_HAS_OCCURRED`: уведомление об окончании второго `click` не
-   даёт.
+   с окончанием `_COMPLETE` или `_COMPLETED` - `click`,
+   `PREHEATING_IS_COMPLETE` - `double_click`, остальные коды -
+   `long_press`.
+2. У стиральных и сушильных машин окончание работы - переход
+   `runState.currentState` в `END`, у стайлера - в `COMPLETE` и
+   `RUNNING_END`: это `click`. Кнопкой `long_press` идут только ошибки
+   `ERROR_*` и `DRYING_FAILED`: уведомление об окончании второго `click`
+   не даёт.
 3. Прибор с `power.state` включён, пока значение состояния не из списка
-   `idle`. У стиральных машин, посудомойки и духовки это `POWER_OFF`,
-   `INITIAL`, `END`, `ERROR`, `SLEEP` и `STANDBY`: пауза и отложенный
-   старт - тоже работа. Стиральная машина сообщает `RINSING`, `DETECTING`,
-   `INITIAL`, `RINSE_HOLD`, `RESERVED`, `REFRESHING`, `SPINNING`,
-   `POWER_OFF`, `PAUSE`, `DRYING`, `SLEEP`, `COOL_DOWN`, `END`, `RUNNING` и
-   `ERROR`. `STANDBY` среди них нет.
-4. Тип LG без встроенного профиля добавляется только со своим профилем,
+   `idle`. У стиральных машин и посудомойки это `POWER_OFF`, `INITIAL`,
+   `END`, `ERROR`, `SLEEP` и `STANDBY`: пауза и отложенный старт - тоже
+   работа. Духовка добавляет к ним `DONE` и `CLEANING_IS_DONE`, стайлер -
+   `COMPLETE` и `RUNNING_END`. Стиральная машина сообщает `RINSING`,
+   `DETECTING`, `INITIAL`, `RINSE_HOLD`, `RESERVED`, `REFRESHING`,
+   `SPINNING`, `POWER_OFF`, `PAUSE`, `DRYING`, `SLEEP`, `COOL_DOWN`, `END`,
+   `RUNNING` и `ERROR`. `STANDBY` среди них нет.
+4. Робот-пылесос не работает в `CHARGING`, `HOMING`, `SLEEP`, `STANDBY`,
+   `INITIALIZING`, `DIAGNOSIS`, `ERROR`, `MACROSECTOR`,
+   `MONITORING_DETECTING`, `MONITORING_MOVING`, `MONITORING_POSITIONING`,
+   `RESERVATION` и `SETDATE`.
+5. Команда температуры духовки только записывает настройку и не шлёт
+   `START`: голос не запускает нагрев сам. Запускает его отдельное
+   «включи».
+6. Режимы очистителя с вентилятором сопоставлены приблизительно:
+   `SPACE_CLEAN` - `normal`, `SPOT_CLEAN` - `express`, `DIRECT_CLEAN` -
+   `turbo`, `NATURE_CLEAN` - `auto`. [уточнить: подходят ли эти значения
+   владельцу, по смыслу они приблизительные]
+7. Заряд, датчики и переключатели встроенного профиля появляются в Алисе,
+   только если они есть в профиле прибора (раздел 7.5.2, п. 2).
+8. Тип LG без встроенного профиля добавляется только со своим профилем,
    в котором задан `yandex_type`.
-5. ThinQ Connect знает 30 типов приборов, и встроенных профилей нет у
+9. ThinQ Connect знает 30 типов приборов, и встроенных профилей нет у
    четырёх из них: у них нет управления, которое понимает Алиса.
    Телевизоров в ThinQ Connect нет: телевизор LG - источник `webos`
    (раздел 7.8).
@@ -1718,19 +1757,21 @@ Home Assistant. На настоящем приборе проверен толь
 | `DEVICE_WASHER`, `DEVICE_DRYER`, `DEVICE_STYLER`, `DEVICE_WASHTOWER`, `DEVICE_WASHTOWER_WASHER`, `DEVICE_WASHTOWER_DRYER`, `DEVICE_WASHCOMBO_MAIN`, `DEVICE_WASHCOMBO_MINI` | `washing_machine` | запуск и остановка: `START` и `STOP` в `operation.<прибор>OperationMode`, включён по `runState.currentState` | - |
 | `DEVICE_DISH_WASHER` | `dishwasher` | запуск и остановка: `operation.dishWasherOperationMode` | дверца `open` по `doorStatus.doorState`; `water_level` `low`, пока `dishWashingStatus.rinseRefill` = `true` |
 | `DEVICE_AIR_CONDITIONER` | `thermostat.ac` | питание `operation.airConOperationMode`; режим `thermostat` по `airConJobMode.currentJobMode`; `fan_speed` по `airFlow.windStrength`; температура `temperatureInUnits.targetTemperatureC`; `oscillation` по `windDirection.rotateUpDown` | температура `temperatureInUnits.currentTemperatureC`; влажность, PM1, PM2.5 и PM10 из `airQualitySensor` |
-| `DEVICE_AIR_PURIFIER`, `DEVICE_AIR_PURIFIER_FAN` | `purifier` | питание; режим работы `program`; скорость `fan_speed` | влажность, PM1, PM2.5, PM10; у очистителя с вентилятором - ещё температура |
-| `DEVICE_HUMIDIFIER` | `humidifier` | питание; влажность `humidity.targetHumidity`; скорость `fan_speed`; ночник `backlight` по `moodLamp.moodLampState` | влажность, температура |
-| `DEVICE_DEHUMIDIFIER` | `humidifier` | питание; влажность `humidity.targetHumidity`; скорость `fan_speed` | влажность `humidity.currentHumidity` |
-| `DEVICE_VENTILATOR` | `ventilation` | питание; режим работы `program`; скорость `fan_speed` | CO2, PM1, PM2.5, PM10, температура |
-| `DEVICE_CEILING_FAN` | `ventilation.fan` | питание; скорость `fan_speed` | - |
-| `DEVICE_HOOD` | `ventilation` | скорость `fan_speed` по `ventilation.fanSpeed`; подсветка `backlight` по `lamp.lampBrightness` | - |
-| `DEVICE_MICROWAVE_OVEN` | `cooking` | скорость вытяжки `fan_speed`; подсветка `backlight` | - |
-| `DEVICE_OVEN` | `cooking`, по камере | запуск и остановка; температура | - |
-| `DEVICE_REFRIGERATOR`, `DEVICE_KIMCHI_REFRIGERATOR`, `DEVICE_WINE_CELLAR` | `cooking`, по камере | температура камеры; у винного шкафа - ещё подсветка `backlight` | дверца `open` по `doorStatus.doorState` |
-| `DEVICE_WATER_HEATER` | `thermostat` | питание; температура воды; режим `heat` | температура воды |
-| `DEVICE_SYSTEM_BOILER` | `thermostat` | питание; режим `thermostat`; температура в комнате | температура в комнате |
-| `DEVICE_ROBOT_CLEANER` | `vacuum_cleaner` | запуск уборки `START` и возврат на базу `HOMING` в `operation.cleanOperationMode` | заряд `battery_level` по `battery.batteryPercent` |
-| `DEVICE_STICK_CLEANER` | `vacuum_cleaner` | - | заряд `battery_level` |
+| `DEVICE_AIR_PURIFIER`, `DEVICE_AIR_PURIFIER_FAN` | `purifier` | питание; режим работы `program`: у очистителя `AUTO`, `CLEAN`, `SLEEP`, у очистителя с вентилятором - значения из п. 6; скорость `fan_speed` | влажность, PM1, PM2.5, PM10; у очистителя с вентилятором - ещё температура |
+| `DEVICE_HUMIDIFIER` | `humidifier` | питание; влажность `humidity.targetHumidity`; скорость `fan_speed`; ночник `backlight` по `moodLamp.moodLampState`, значения `ON` и `OFF` | влажность, температура |
+| `DEVICE_DEHUMIDIFIER` | `humidifier` | питание; влажность `humidity.targetHumidity`; скорость `fan_speed` по `airFlow.windStrength` или `airFlow.windStrengthLevel` | влажность `humidity.currentHumidity` |
+| `DEVICE_VENTILATOR` | `ventilation` | питание `operation.ventOperationMode`; режим работы `program` по `ventJobMode.currentJobMode`: `VENT_AUTO` - `auto`, `VENT_NATURE` - `normal`, `VENT_HEAT_EXCHANGE` - `heat`; скорость `fan_speed` | PM1, PM2.5, PM10, температура. CO2 нет: прибор сообщает уровень словом, а не число ppm |
+| `DEVICE_CEILING_FAN` | `ventilation.fan` | питание `operation.ceilingfanOperationMode`; скорость `fan_speed`: `LOW`, `MID`, `HIGH`, `TURBO` | - |
+| `DEVICE_HOOD` | `ventilation` | скорость `fan_speed` по `ventilation.fanSpeed`, от 1 до 5; подсветка `backlight` по `lamp.lampEnabled` | - |
+| `DEVICE_MICROWAVE_OVEN` | `cooking` | у модели с вытяжкой - скорость `fan_speed` и подсветка `backlight`, как у вытяжки | - |
+| `DEVICE_OVEN` | `cooking`, по камере | запуск и остановка; температура `temperature.targetTemperatureC` | - |
+| `DEVICE_REFRIGERATOR` | `cooking`, по камере | температура камеры `temperatureInUnits.targetTemperatureC` | дверца `open` по `doorStatus.doorState` |
+| `DEVICE_KIMCHI_REFRIGERATOR` | `cooking`, по камере | - | заданная температура `temperature` по `temperature.targetTemperature`; у камеры с текстовым режимом значения нет |
+| `DEVICE_WINE_CELLAR` | `cooking`, по камере | температура камеры; яркость `brightness` в процентах по `operation.lightStatus` | - |
+| `DEVICE_WATER_HEATER` | `thermostat` | питание, если прибор разрешает его менять; температура воды; режим `heat` | температура воды |
+| `DEVICE_SYSTEM_BOILER` | `thermostat` | питание; режим `thermostat`; температура `roomTemperatureInUnits.targetTemperatureC` | температура `roomTemperatureInUnits.currentTemperatureC` |
+| `DEVICE_ROBOT_CLEANER` | `vacuum_cleaner` | запуск уборки `START` и возврат на базу `HOMING` в `operation.cleanOperationMode` | заряд `battery_level` по `battery.percent` |
+| `DEVICE_STICK_CLEANER` | `vacuum_cleaner` | - | заряд `battery_level` по `battery.percent` |
 | `DEVICE_COOKTOP`, `DEVICE_WATER_PURIFIER`, `DEVICE_HOME_BREW`, `DEVICE_PLANT_CULTIVATOR` | встроенного профиля нет: у них нет управления, которое понимает Алиса | - | - |
 
 ### 6.4. Встроенный профиль кофемашины De'Longhi
@@ -1792,6 +1833,8 @@ ECAM630.75.
 взяты из справочника SmartThings и интеграции Home Assistant; на
 устройствах профили не проверены. Свойства и переключатели, которых
 устройство не сообщает, в Алису не попадают (раздел 5.3, п. 5).
+Редактор профилей не показывает `fallback_option` и `also_values`, а при
+сохранении режима с той же настройкой оставляет их как есть.
 
 | Категории | Устройство Алисы | Умения |
 |---|---|---|
@@ -1801,17 +1844,17 @@ ECAM630.75.
 | `TempSensor`, `TempHumiditySensor`, `HumiditySensor`, `EnvironmentSensor`, `AirQualityDetector`, `WeatherStation` | `sensor.climate` | свойства датчиков |
 | `LightSensor`, `MultiFunctionalSensor`, `GenericSensor` | `sensor.illumination`, `sensor` | свойства датчиков |
 | `PowerMeasurementSensor`, `CurbPowerMeter` | `smart_meter.electricity` | свойства датчиков |
-| `Button` | `sensor.button` | событие `button`: `pushed` - `click`, `double` - `double_click`, `held` - `long_press`; заряд |
-| `Thermostat` | `thermostat` | питание и режим `thermostatMode.thermostatMode`; температура `thermostatHeatingSetpoint.heatingSetpoint`; свойства датчиков |
-| `AirConditioner` | `thermostat.ac` | питание; режим `airConditionerMode.airConditionerMode`, `wind` - `fan_only`; скорость `airConditionerFanMode.fanMode`; температура `thermostatCoolingSetpoint.coolingSetpoint`; вращение `fanOscillationMode.fanOscillationMode`; свойства датчиков |
-| `AirPurifier` | `purifier` | питание; скорость `airPurifierFanMode.airPurifierFanMode`; свойства датчиков |
+| `Button` | `sensor.button` | событие `button`: `pushed` - `click`, `double` и `pushed_2x` - `double_click`, `held` и `down_hold` - `long_press`; заряд |
+| `Thermostat` | `thermostat` | питание и режим `thermostatMode.thermostatMode`; температура - уставка по режиму `hcgateway.thermostatSetpoint` (раздел 7.7.3); свойства датчиков |
+| `AirConditioner` | `thermostat.ac` | питание; режим `airConditionerMode.airConditionerMode`, `wind`, `fan` и `fanOnly` - `fan_only`, `auto` и `aIComfort` - `auto`; скорость `airConditionerFanMode.fanMode`; температура `thermostatCoolingSetpoint.coolingSetpoint`; направление воздуха `swing` по `fanOscillationMode.fanOscillationMode`: `fixed` - `stationary`, `vertical`, `horizontal`, `all` - `auto`; свойства датчиков |
+| `AirPurifier` | `purifier` | питание; скорость `airPurifierFanMode.airPurifierFanMode`, а без неё `airConditionerFanMode.fanMode`; свойства датчиков |
 | `Humidifier`, `Dehumidifier`, `AirpurifyHumidifier` | `humidifier` | питание; свойства датчиков |
 | `Fan` | `ventilation.fan` | питание; скорость `fanSpeed.fanSpeed`: 1-4 - от `low` до `turbo` |
 | `Blind`, `Shade`, `WindowOpener` | `openable.curtain` | «включи» - `open`, «выключи» - `close` в `windowShade.windowShade`, включено, пока не `closed`; открытие `windowShadeLevel.shadeLevel` |
 | `WaterValve` | `openable.valve` | `open` и `close` в `valve.valve` |
 | `Television` | `media_device.tv` | питание; громкость `audioVolume.volume`; канал `tvChannel.tvChannel`, 1-999; звук `audioMute.mute`; пауза `mediaPlayback.playbackStatus`; источник `samsungvd.mediaInputSource.inputSource`: `HDMI1`-`HDMI4` - от `one` до `four`, `dtv` - `five` |
 | `Speaker`, `NetworkAudio`, `SoundBar`, `MusicSystem`, `HomeTheater`, `Receiver`, `SetTop` | `media_device`, `media_device.receiver`, `media_device.tv_box` | питание, громкость, звук, пауза |
-| `Washer`, `Dryer`, `Dishwasher` | `washing_machine`, `dishwasher` | запуск `run` и остановка `stop` в `<прибор>OperatingState.machineState`, разрешение `remoteControlStatus.remoteControlEnabled`; пауза `pause`; окончание - переход job в `finish`, у сушильной - в `finished`, `click` |
+| `Washer`, `Dryer`, `Dishwasher` | `washing_machine`, `dishwasher` | запуск `run` и остановка `stop` в `<прибор>OperatingState.machineState`, разрешение `remoteControlStatus.remoteControlEnabled`; пауза `pause`; окончание - свойство `button` по `<прибор>JobState`: `finish`, у сушильной - `finished`, - `click` |
 | `Refrigerator`, `KimchiRefrigerator`, `CubeRefrigerator`, `WineCellar` | `cooking` | температура `thermostatCoolingSetpoint.coolingSetpoint`; дверца `contactSensor.contact`, температура в камере |
 | `Oven`, `Range`, `Microwave` | `cooking` | температура `ovenSetpoint.ovenSetpoint`; температура в камере |
 | `RobotCleaner` | `vacuum_cleaner` | уборка `cleaning` и возврат на базу `homing` в `robotCleanerMovement.robotCleanerMovement`; пауза; заряд |
@@ -1832,11 +1875,19 @@ ECAM630.75.
 | `float` `pm1_density`, `pm2.5_density`, `pm10_density` | `veryFineDustSensor.veryFineDustLevel`, `dustSensor.fineDustLevel`, `dustSensor.dustLevel` |
 | `float` `power`, `electricity_meter`, `voltage` | `powerMeter.power`, `energyMeter.energy`, `voltageMeasurement.voltage` |
 
+Энергию `energyMeter.energy` шлюз передаёт в кВт·ч (раздел 7.7.3, п. 5).
+
 Замков, гаражных ворот и сирен во встроенных профилях нет: открыть дверь
 голосом можно, только задав свой профиль. Устройство другой категории
 добавляется со своим профилем, в котором задан `yandex_type`.
 
 ## 7. Источники приборов
+
+Прибор типа без встроенного и своего профиля в Алису не попадает и ждёт
+профиля: остальные приборы работают, страница прибора пишет причину.
+Прибор, который не сообщает ничего из профиля, Яндексу тоже не отдаётся.
+У питания по настройке `on_off` объявляется, только если прибор эту настройку
+сообщает и разрешает менять.
 
 Источник - откуда шлюз берёт прибор, его задаёт `devices.<id>.source`
 (раздел 3). Приборы всех источников, кроме ленты WLED, Алиса видит по
@@ -1981,6 +2032,27 @@ Siemens через облако Home Connect, без ключей локальн
    настройках аккаунта включают «Sync to China»: портал копирует
    приложения в китайское облако. Логином аккаунта там может быть номер
    телефона.
+10. Общий список настроек облака не содержит пределов и допустимых значений.
+    Шлюз запрашивает каждую настройку отдельно:
+    `GET /api/homeappliances/{haId}/settings/{key}`. Без этих данных у
+    холодильника нет умения «температура», а «выключи» всегда отправляет
+    `Standby`. Правила загрузки:
+    - Запросы идут после программ прибора, с паузой 2 с между ними. Вся
+      загрузка описания прибора ограничена 10 минутами.
+    - Описания шлюз загружает после состояний всех приборов на связи, поэтому
+      они не задерживают появление приборов на связи.
+    - `min`, `max`, `stepsize`, `allowedvalues`, `access` и единицу шлюз хранит
+      в `description.json`, а запрошенную настройку отмечает полем `loaded`.
+      Настройку без `loaded` шлюз запрашивает один раз, в том числе из файла
+      без этого поля.
+    - `access` со значением `read` значит, что настройку менять нельзя.
+    - Ответы 400, 403, 404 и тело, которое не разобрать, означают, что пределов
+      у настройки не будет: шлюз ставит ей `loaded`. После 2 таких ответов 400,
+      403 или 404 подряд он прерывает загрузку до следующего подключения:
+      5 ошибок подряд поставили бы все запросы, включая команды, на паузу.
+    - Ответы 429 и 409, 5xx, сбой сети и пауза шлюза прерывают загрузку. Что
+      загружено раньше, остаётся в файле, а прочие настройки шлюз запросит при
+      следующем подключении потока или событии `CONNECTED`.
 
 | Предел облака | Что делает шлюз |
 |---|---|
@@ -2002,8 +2074,8 @@ Siemens через облако Home Connect, без ключей локальн
    прибора шлюз берёт из списка приборов аккаунта.
 2. Пока облако не сообщило тип прибора, прибора нет в Алисе, а
    страница прибора пишет, что он ждёт данных облака. Когда облако
-   сообщает тип, программы или команды, шлюз пересобирает приборы и
-   отправляет Яндексу `callback/discovery`.
+   сообщает тип, программы, команды или пределы настроек, шлюз
+   пересобирает приборы и отправляет Яндексу `callback/discovery`.
 3. Идентификатор прибора в Алисе не зависит от `ha_id`. Если прибор
    заменили новым, на странице прибора выбирают новый `ha_id`, и
    сценарии Алисы продолжают работать.
@@ -2367,40 +2439,71 @@ API приборов и в API аккаунта у одного прибора `
 1. Что умеет прибор, шлюз узнаёт из его профиля в ThinQ Connect. В
    профиле - свойства по ресурсам, можно ли их читать и записывать,
    допустимые значения и пределы, коды уведомлений и камеры прибора.
-2. Профиль вместе с типом прибора шлюз хранит в
+2. По профилю устройство Алисы не обещает лишнего. Свойство, которого нет
+   в профиле и которое прибор не присылал, в Алису не попадает. Свойство
+   только для чтения не даёт `on_off` и переключателя встроенного профиля.
+   Свойство только для записи считается известным: так устроено питание
+   стиральной машины, `operation.washerOperationMode`. Кнопка объявляет
+   только те нажатия, которые вызывают уведомления из профиля и переходы
+   известных значений: у прибора без уведомлений и переходов кнопки нет.
+3. Профиль вместе с типом прибора шлюз хранит в
    `data_dir/thinq/<deviceId>.json`, не больше 1 МБ. Если профиля нет
    на диске, шлюз загружает его сам, а тип берёт из списка аккаунта.
    Профиль, который не загрузился, шлюз пробует загрузить снова через
    5 минут. При запуске шлюза (раздел 2.6) и по «Обновить список» он
    загружает заново профили всех приборов аккаунта. Ответ, который не
-   разбирается, профиль на диске не заменяет.
-3. Пока профиля нет, прибора нет в Алисе, а страница прибора пишет, что
+   разбирается, профиль на диске не заменяет. Если профиль одного прибора
+   не загрузился, шлюз пишет это в журнал, а обновление считается
+   успешным. Ошибку обновление возвращает, только если не загрузился ни
+   один профиль.
+4. Пока профиля нет, прибора нет в Алисе, а страница прибора пишет, что
    он ждёт профиля. Когда профиль загружен, шлюз собирает прибор и
    отправляет Яндексу `callback/discovery`.
-4. Прибор LG выглядит для шлюза как прибор Home Connect. Имя функции -
+5. Прибор LG выглядит для шлюза как прибор Home Connect. Имя функции -
    путь `ресурс.свойство`, например `airConJobMode.currentJobMode`.
    Значение - как в ThinQ Connect, заглавными, например `COOL`.
    Значения и коды уведомлений шлюз сравнивает без учёта регистра, а в
    команде отправляет значение так, как его записал профиль. Свойство,
    которое можно записать, - настройка: Алиса меняет её сразу.
-5. Состояние - последние значения из `GET devices/{id}/state` и
+6. Состояние - последние значения из `GET devices/{id}/state` и
    сообщений MQTT (раздел 7.5.3).
-6. Температуру шлюз задаёт и показывает в градусах Цельсия: свойства с
-   окончанием `C`, например `temperatureInUnits.targetTemperatureC`.
-7. Оставшееся время работы ThinQ присылает часами и минутами отдельно:
-   `timer.remainHour` и `timer.remainMinute`. Шлюз складывает их в
-   `timer.remainSeconds` - секунды, - если прибор прислал хотя бы одно
-   из двух. По нему интерфейс показывает оставшееся время (раздел
-   4.6.1). Алисе его передать нельзя: свойство `remaining_time` Яндекс
-   отвергает (раздел 6.1).
+7. Температуру шлюз задаёт и показывает в градусах Цельсия. Из ресурса по
+   единицам он читает только запись `unit` = `C` и добавляет к имени
+   окончание `C`, например `temperatureInUnits.targetTemperatureC`. В
+   ThinQ такого окончания нет, это имя шлюза. Запись `F` шлюз
+   пропускает: иначе 77 °F затёрло бы 25 °C. Ресурс-объект с `unit` = `F`
+   шлюз тоже пропускает, в том числе следующие сообщения без `unit`.
+8. Одно и то же свойство приборы называют по-разному, а встроенный
+   профиль знает одно имя. В состоянии и в командах шлюз переводит имена:
 
-Профиль раскладывает свойства тремя способами, как в библиотеке LG:
+   | Прибор | В ThinQ | В шлюзе |
+   |---|---|---|
+   | все, если нет `airFlow.windStrength` | `airFlow.windStrengthLevel` | `airFlow.windStrength` |
+   | сушильная часть колонны | `operation.dryerOperationMode` | `operation.washerOperationMode` |
+   | кондиционер без `temperatureInUnits` | `temperature.targetTemperature`, `temperature.currentTemperature` | `temperatureInUnits.targetTemperatureC`, `temperatureInUnits.currentTemperatureC` |
+   | котёл без `currentTemperature` | `airCurrentTemperature` в `roomTemperatureInUnits` | `roomTemperatureInUnits.currentTemperatureC` |
+
+9. Записываемый `range` с шагом 1 и не больше чем 10 целыми значениями
+   шлюз описывает ещё и списком значений. Так число можно сопоставить
+   режиму Алисы, например скорость вытяжки `ventilation.fanSpeed`.
+10. `lamp.lampEnabled` - свойство шлюза, которого нет в ThinQ: `true`,
+    пока `lamp.lampBrightness` не 0. Переключателю Алисы нужны два
+    значения, а яркостей у вытяжки больше.
+11. Оставшееся время работы ThinQ присылает часами и минутами отдельно:
+    `timer.remainHour` и `timer.remainMinute`. Шлюз складывает их в
+    `timer.remainSeconds` - секунды, - если прибор прислал хотя бы одно
+    из двух. По нему интерфейс показывает оставшееся время (раздел
+    4.6.1). Алисе его передать нельзя: свойство `remaining_time` Яндекс
+    отвергает (раздел 6.1).
+
+Профиль раскладывает свойства четырьмя способами, как в библиотеке LG:
 
 | Раскладка | Пример | Как шлюз её читает |
 |---|---|---|
 | прибор из частей | стиральная машина | `property` - список частей, у каждой `location.locationName` |
 | камеры внутри ресурсов | холодильник | ресурс - список записей с `locationName`; запись `MAIN`, например дверь, есть у каждой камеры |
-| температура по единицам | кондиционер | ресурс - список записей с `unit`, имена свойств оканчиваются на `C` или `F` |
+| температура по единицам | кондиционер, водонагреватель, котёл, духовка | ресурс - список записей с `unit`, в каждой те же имена свойств; в состоянии духовки - объект со значением и `unit` |
+| колонна - стиральная и сушильная машины в одном корпусе | `DEVICE_WASHTOWER` | части `washer` и `dryer` лежат верхними ключами профиля и состояния, внутри - обычный профиль |
 
 Камеры:
 
@@ -2413,7 +2516,8 @@ API приборов и в API аккаунта у одного прибора `
    со своей ссылкой «Добавить».
 3. Прибор без `location` получает свойства без камеры и свойства камеры
    по умолчанию. У прибора из частей это часть `MAIN`, а без неё -
-   первая часть. У прибора с камерами - первая камера профиля.
+   первая часть. У колонны - `washer`. У прибора с камерами - первая
+   камера профиля.
 4. Если профиль уже загружен, прибор с камерой, которой в профиле нет,
    интерфейс не сохраняет, а шлюз с ним не запускается. Если профиль
    загрузится позже, такой прибор остаётся ждать профиля, а шлюз пишет
@@ -2441,26 +2545,59 @@ API приборов и в API аккаунта у одного прибора `
    минуту, сбрасывает паузу. Пока MQTT не подключён, приборы LG не на
    связи. Новые PAT или страна подключают MQTT заново сразу.
 6. Сообщение `DEVICE_STATUS` меняет состояние прибора и всех его камер.
-   `DEVICE_PUSH` - уведомление: шлюз пишет его код в журнал, а прибор
-   сообщает его событием (раздел 6). Камеры в уведомлении нет, поэтому
-   его получают все камеры прибора.
+   Часть прибора шлюз выбирает по `location`, и в списке, и в объекте:
+   отчёт чужой части её состояние не меняет. Отчёт колонны лежит под
+   ключом части. `DEVICE_PUSH` - уведомление: шлюз пишет его код в журнал,
+   а прибор сообщает его событием (раздел 6). Камеры в уведомлении нет,
+   поэтому его получают все камеры прибора.
 
 #### 7.5.4. Команды
 
 1. Команда записывает свойство: `POST devices/{id}/control` с
    `{ресурс: {свойство: значение}}`. Камеру шлюз указывает так же, как
    библиотека LG: у прибора из частей - `location` рядом с ресурсом, у
-   прибора с камерами - `locationName` внутри ресурса. Свойство из
+   прибора с камерами - `locationName` внутри ресурса, у колонны - всё
+   тело под ключом части: `{"dryer":{"operation":{...}}}`. Свойство из
    температуры по единицам он пишет без окончания и с `unit` = `C`,
    например `{"temperatureInUnits":{"targetTemperature":22,"unit":"C"}}`.
 2. Перед командой шлюз проверяет по профилю LG, что свойство можно
    записать, а значение есть в списке или в пределах с шагом. Иначе
    команда не уходит: чужое значение получает `INVALID_VALUE`, свойство
    только для чтения или не из профиля - `INVALID_ACTION`.
-3. Программ, команд и паузы у прибора LG нет: ThinQ Connect меняет
+3. У кондиционера и котла заданная температура в `temperatureInUnits`
+   только для чтения, а запись идёт в свойство режима. Шлюз выбирает его
+   по текущему режиму прибора и проверяет значение по его пределам.
+   Устройство Алисы получает пределы, общие для всех режимов.
+
+   | Прибор | Режим | Запись |
+   |---|---|---|
+   | кондиционер | `COOL`, `HEAT`, `AUTO` | `coolTargetTemperature`, `heatTargetTemperature`, `autoTargetTemperature` в `temperatureInUnits` |
+   | кондиционер | остальные | `temperature.targetTemperature` с `unit` = `C`, если он записывается |
+   | котёл, `operation.roomTempMode` = `AIR` или нет значения | `HEAT`, `COOL` | `airHeatTargetTemperature`, `airCoolTargetTemperature` в `roomTemperatureInUnits` |
+   | котёл, `operation.roomTempMode` = `WATER` | `HEAT`, `COOL` | `waterHeatTargetTemperature`, `waterCoolTargetTemperature` в `roomTemperatureInUnits` |
+
+   Если само показанное свойство записывается, а у режима нет своей
+   записи, команда идёт в него. Если записи нет совсем, команда не уходит,
+   а Алиса получает `NOT_SUPPORTED_IN_CURRENT_MODE`.
+4. У вытяжки и микроволновки `ventilation.fanSpeed` и
+   `lamp.lampBrightness` LG принимает только вместе. Команда одного несёт
+   текущее значение другого, например
+   `{"lamp":{"lampBrightness":2},"ventilation":{"fanSpeed":3}}`. Если
+   второго значения в состоянии нет, команда не уходит:
+   `NOT_SUPPORTED_IN_CURRENT_MODE`.
+   Включение подсветки по `lamp.lampEnabled` оставляет текущую яркость,
+   а при яркости 0 ставит 1. Выключение ставит 0.
+5. Температура духовки уходит без `START`, с `location` камеры:
+
+   ```json
+   {"location":{"locationName":"<камера>"},
+    "temperature":{"targetTemperature":180,"unit":"C"}}
+   ```
+
+6. Программ, команд и паузы у прибора LG нет: ThinQ Connect меняет
    только свойства. Программу стиральной машины выбирают на самой
    машине.
-4. Если у профиля задан `power.allowed`, а прибор сообщил `false`,
+7. Если у профиля задан `power.allowed`, а прибор сообщил `false`,
    «включи» получает `REMOTE_CONTROL_DISABLED` без запроса к облаку. У
    встроенных профилей стиральных машин, посудомойки и духовки это
    `remoteControlEnable.remoteControlEnabled`.
@@ -2728,6 +2865,10 @@ SSE - только в платном плане, поэтому без план�
    хранит в `smartthings/devices.json` и загружает заново при запуске шлюза
    (раздел 2.6), по «Обновить список», после входа и раз в 5 минут, пока в
    нём нет устройства из настроек.
+6. Устройство с несколькими компонентами и `custom.disabledComponents` на
+   `main` при каждой загрузке списка получает ещё запрос состояния: из него
+   шлюз узнаёт отключённые компоненты (раздел 7.7.3, п. 10). При сбое
+   запроса остаётся прежний список отключённых.
 
 #### 7.7.3. Устройство и компоненты
 
@@ -2735,8 +2876,11 @@ SSE - только в платном плане, поэтому без план�
    `main`. Компонент не `main`, например морозильная камера, получает и
    те capability `main`, которых у него нет, например дверь.
 2. Тип прибора - `SmartThings.` и категория компонента от
-   производителя, иначе его первая категория, а у компонента без
-   категорий - категория `main`. Встроенные профили - раздел 6.6.
+   производителя, иначе его первая категория. Компонент без категорий или
+   с общей категорией `Other` или `Others` получает категорию `main`: так
+   Samsung помечает камеры холодильника. Свой профиль типа
+   `SmartThings.Other` к такому компоненту не применяется. Встроенные
+   профили - раздел 6.6.
 3. Пока устройства нет в списке или не загружено описание хотя бы одной
    его capability, прибора нет в Алисе, а страница прибора пишет, что он
    ждёт описания. Когда описание загружено, шлюз собирает прибор и
@@ -2748,14 +2892,16 @@ SSE - только в платном плане, поэтому без план�
 5. Значение - как в SmartThings: строка, число или флаг. Атрибут со
    значениями `true` и `false` шлюз хранит флагом, а целое число
    строкой, например канал `5`, - числом. Температуру в °F шлюз
-   переводит в °C с точностью 0,1. Списки и объекты в состояние не
-   попадают.
+   переводит в °C с точностью 0,1, а энергию в `Wh` делит на 1000. Значения
+   в `mWh` и `kVAh` шлюз не передаёт: смысл `mWh` не ясен (раздел 10).
+   Списки и объекты в состояние не попадают.
 6. Значения атрибута - его перечисление из описания. Если у capability
    есть список `supported*` из состояния устройства, значения - этот
    список: так в Алисе только те входы телевизора, которые у него есть.
    Целый атрибут с пределами не больше чем на 10 значений получает
    список этих значений: так скорость вентилятора 1-4 становится
-   режимами.
+   режимами. У `fanOscillationMode` значения - только из списка устройства:
+   без него направления воздуха в Алисе нет.
 7. Записать атрибут - команда его значения из `enumCommands`, например
    `on` у `switch`, затем команда записи из `setter`, например
    `setVolume`. Если нет ни той, ни другой, шлюз ищет команду с именем
@@ -2768,6 +2914,49 @@ SSE - только в платном плане, поэтому без план�
 9. Шаг громкости и канала без текущего значения - команды `volumeUp`,
    `volumeDown`, `channelUp` и `channelDown`, не больше 10: каждая -
    запрос из квоты.
+10. Шлюз читает `custom.disabledCapabilities` каждого компонента и
+    `custom.disabledComponents` из `main`. Отключённая capability не
+    попадает в описание, значения и команды: команда получает
+    `INVALID_ACTION`. Иначе кондиционер показал бы датчики пыли без
+    значений, а уставка отключённой камеры запомнилась бы, хотя камера её
+    не держит. Отключённый компонент не предлагается на «Подключениях», а
+    добавленный ждёт описания и пропадает из Алисы.
+11. Исключения взяты из Home Assistant, на устройствах не проверены:
+    `washerOperatingState` и `dryerOperatingState` с непустым
+    `supportedMachineStates`, `samsungce.airConditionerLighting` со
+    значением `lighting`, `samsungce.airConditionerBeep` со значением `beep`
+    работают, хотя отключены. Без них стиральная машина потеряла бы
+    питание. Компонент `lamp` остаётся всегда, а `burner-6` в списке
+    отключённых значит компонент `burner-06`.
+12. Пределы уставки `thermostatCoolingSetpoint.coolingSetpoint`,
+    `thermostatHeatingSetpoint.heatingSetpoint` и
+    `ovenSetpoint.ovenSetpoint` - только данные устройства: схема
+    capability с пределами вроде -460..10000 не считается. Источник -
+    `coolingSetpointRange`, `heatingSetpointRange` или `ovenSetpointRange`
+    с `minimum`, `maximum` и `step`. У охлаждения затем - `minimumSetpoint`
+    и `maximumSetpoint` из `custom.thermostatSetpointControl`. Значение
+    -1000 значит, что предел не известен. Пределы в °F шлюз переводит в °C,
+    а шаг в °F делает целым числом °C, не меньше 1. Без данных устройства у
+    категории `AirConditioner` пределы - 16-30 °C, у `Thermostat` - 5-35 °C,
+    у `ovenSetpoint.ovenSetpoint` - 30-300 °C с шагом 5. Команду вне настоящего
+    диапазона отклонит само устройство. У остальных без данных устройства
+    умения температуры нет, если пределов не задаёт свой профиль.
+13. `hcgateway.thermostatSetpoint` есть у категории `Thermostat` и считается
+    шлюзом: при режиме `cool` это уставка охлаждения, при остальных -
+    нагрева, а без одной из них - вторая. Пределы в Алисе охватывают обе
+    уставки, чтобы смена режима не меняла список устройств. Значение вне
+    пределов текущей уставки получает `INVALID_VALUE` без запроса.
+14. `heat` от «включи» термостата уходит, только если он есть в
+    `supportedThermostatModes` или списка нет. Иначе шлюз выбирает из списка
+    `auto`, `cool`, `eco`, затем первый режим кроме `off`. Термостат только с
+    `off` получает `INVALID_ACTION`.
+15. Уставка `ovenSetpoint` приходит без единицы: шлюз берёт единицу
+    `temperatureMeasurement.temperature` того же компонента. Значения -17, 0
+    и 1 значат «уставки нет» и не передаются.
+16. Когда загрузка состояния или событие меняют списки `supported*`,
+    пределы уставки или отключённые capability и компоненты, шлюз собирает
+    приборы заново и отправляет Яндексу `callback/discovery`. Те же значения
+    этого не вызывают: каждая сборка - уведомление Яндексу.
 
 #### 7.7.4. Поток событий
 
@@ -2782,7 +2971,12 @@ SSE - только в платном плане, поэтому без план�
    прибора: события за время обрыва SmartThings не досылает.
 4. `DEVICE_EVENT` меняет атрибут компонента. Значение `button.button`
    кнопки дополнительно даёт событие прибора: Яндекс получает каждое
-   нажатие, даже с тем же значением. `DEVICE_HEALTH_EVENT` меняет связь:
+   нажатие, даже с тем же значением. Событие со `stateChange` `false`
+   нажатием не считается: так драйвер сообщает начальное значение.
+   `button.button` не попадает в состояние прибора, поэтому загрузка
+   состояния после обрыва нажатие не повторит. Для потока SSE поле
+   `stateChange` не описано и на устройствах не проверено.
+   `DEVICE_HEALTH_EVENT` меняет связь:
    формат этого события документация не описывает, и
    шлюз берёт из него `deviceId` и `state` или `status`.
 5. На `goodbye` шлюз сразу создаёт новую подписку. Прежнюю подписку
@@ -2992,7 +3186,8 @@ Samsung через облако - устройство SmartThings катего�
 Приборы Polaris IQ Home подключаются к встроенному брокеру MQTT (раздел 2.5)
 сами: адрес, порт, логин и пароль вписывают в пункте «Настройки MQTT»
 приложения Polaris. Встроенный профиль есть только у чайников, другие типы
-ждут своего профиля.
+ждут своего профиля. Свой профиль передаёт Алисе только их показания: команд
+у них нет. Числом у них считается всё, кроме строк с ведущим нулём вроде `00`.
 
 1. Прибор публикует `polaris/<id>/state/<имя>` и слушает
    `polaris/<id>/control/<имя>`, где `<id>` - его MAC без разделителей. У старых
@@ -3059,7 +3254,7 @@ Samsung через облако - устройство SmartThings катего�
 | `yandex-tokens.json` | хэши access token со сроком и refresh token |
 | `web-user.json` | имя пользователя интерфейса и хэш пароля argon2id |
 | `homeconnect-tokens.json` | access token, refresh token и срок access token облака Home Connect; у токена приложения Home Connect ещё его `client_id`, адрес облака и регион |
-| `homeconnect/<haId>/description.json` | тип прибора облака, программы с параметрами и команды |
+| `homeconnect/<haId>/description.json` | тип прибора облака, программы с параметрами, команды и настройки с пределами и допустимыми значениями |
 | `appliances/<haId>/appliance.json` | haId, марка, тип, режим связи (`tls` или `aes`), ключ, для `aes` - вектор инициализации |
 | `appliances/<haId>/description.json` | функции прибора в JSON, для просмотра: номер, имя, вид, атрибуты, значения и имя перечисления |
 | `appliances/<haId>/FeatureMapping.xml`, `DeviceDescription.xml` | описание прибора как есть; по нему работает источник `homeconnect-local` |
@@ -3067,7 +3262,7 @@ Samsung через облако - устройство SmartThings катего�
 | `thinq/<deviceId>.json` | тип прибора LG и его профиль ThinQ как есть |
 | `delonghi/session.json` | сессия Gigya аккаунта De'Longhi: пул, `apiKey`, токен и секрет; до 64 КБ |
 | `smartthings-tokens.json` | access token, refresh token, срок access token и установленное приложение SmartThings |
-| `smartthings/devices.json` | список устройств аккаунта SmartThings как есть, до 4 МБ |
+| `smartthings/devices.json` | список устройств аккаунта SmartThings как есть и отключённые компоненты, до 4 МБ |
 | `smartthings/capabilities/<id>-<версия>.json` | описание capability, до 256 КБ |
 | `smartthings/usage.json` | месяц и число запросов к SmartThings за него |
 | `webos/<id>.json` | ключ телевизора LG, отпечаток сертификата, MAC, модель и входы; до 64 КБ |
@@ -3308,3 +3503,37 @@ scrape_configs:
     [уточнить: на каких типах устройств, кроме `cooking`, это проверено; что
     Яндекс показывает в сценарии на устройстве `<имя> триггер` после его
     пропажи из списка; заденет ли отказ в списке устройств остальные приборы]
+15. Загрузка пределов настроек Home Connect (раздел 7.2.2, п. 10), двери
+    холодильных приборов и профиль `WasherDryer` проверены только на поддельном
+    облаке. [уточнить: какие ответы и значения `access` облако даёт на настоящих
+    приборах; принимает ли холодильник запись температуры без единицы]
+16. Встроенные профили LG, кроме стиральной машины, на приборах не проверены:
+    раскладка взята из библиотеки LG и фикстур Home Assistant. [уточнить:
+    принимает ли облако температуру духовки без `START`; принимает ли
+    холодильник и винный шкаф команду с лишним `unit`; пишет ли кондиционер
+    температуру через `temperatureInUnits` надёжнее, чем через ресурс
+    `temperature`; есть ли пределы записи в профиле котла: без них умения
+    температуры не будет; какое имя питания у посудомойки]
+17. [уточнить: верно ли, что `FROZEN_PREVENT_INITIAL` стиральной машины
+    LG - простой с защитой от замерзания. Сейчас шлюз считает его работой:
+    машина показана включённой, а «включи» не запускает стирку и молчит]
+18. Робот-пылесос LG из `SLEEP` получает `START`, а Home Assistant сначала
+    шлёт `WAKE_UP`. Значения пробуждения в поле `power` профиля нет.
+    [уточнить: отвергает ли спящий робот `START`; если да, нужно такое поле]
+19. Колонна LG проверена только на поддельном профиле по библиотеке LG.
+    [уточнить: как у настоящей колонны выглядят её отчёты, профиль без
+    части и коды уведомлений: шлюз отдаёт уведомление обеим частям]
+20. Уведомление прибора LG с кодом не из его профиля шлюз передаёт как
+    нажатие кнопки, хотя устройство такого нажатия могло не объявить.
+    [уточнить: бывают ли такие коды и отвергает ли их Яндекс]
+21. Исправления профилей SmartThings сверены со снимками устройств и кодом
+    Home Assistant, а на настоящих устройствах не проверены: категории,
+    отключённые capability и компоненты, пределы, уставка термостата и
+    духовки, `stateChange`, значения кнопки, направление воздуха.
+    [уточнить: `mWh` в схеме `energyMeter` - это милли или мега; шлюз такие
+    значения не передаёт]
+22. [уточнить: даёт ли пульт со значениями `held` и `down_hold` на одно
+    удержание оба значения: тогда шлюз отправит `long_press` дважды]
+23. Запасные пределы термостата и духовки задал владелец, в документации
+    SmartThings их нет, на устройствах они не проверены. [уточнить: сообщают ли
+    духовки `ovenSetpointRange`: в известных снимках он пуст]

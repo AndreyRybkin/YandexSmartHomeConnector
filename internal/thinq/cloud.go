@@ -157,7 +157,9 @@ func (c *Cloud) Account() []DeviceInfo {
 	return slices.Clone(c.account)
 }
 
-// RefreshAccount загружает список приборов аккаунта и заново - профили всех его приборов.
+// RefreshAccount загружает список приборов аккаунта и заново - профили всех его приборов. Прибор,
+// профиль которого не загрузился, не портит ответ остальным: шлюз пишет его в журнал, а ошибку
+// возвращает, только если не загрузился ни один профиль.
 func (c *Cloud) RefreshAccount(ctx context.Context) error {
 	list, err := c.API.Devices(ctx)
 	if err != nil {
@@ -167,10 +169,21 @@ func (c *Cloud) RefreshAccount(ctx context.Context) error {
 	c.account = list
 	c.mu.Unlock()
 	var first error
+	loaded := 0
 	for _, d := range list {
-		if err := c.loadProfile(ctx, d.ID, d.Type); err != nil && first == nil {
+		err := c.loadProfile(ctx, d.ID, d.Type)
+		switch {
+		case err == nil:
+			loaded++
+		case first == nil:
 			first = err
 		}
+		if err != nil {
+			c.log.Warn("ThinQ: профиль прибора не загружен", "device_id", d.ID, "type", d.Type, "err", err)
+		}
+	}
+	if loaded > 0 {
+		return nil
 	}
 	return first
 }

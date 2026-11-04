@@ -368,7 +368,7 @@ func (d *Device) Info() []alice.DeviceInfo {
 		ID: d.ID, Name: d.Name, Room: d.Room, Type: alice.TypePrefix + p.YandexType,
 		DeviceInfo: alice.Manufacturer{Manufacturer: d.manufacturer(), Model: desc.Type},
 	}
-	if p.OnOff != "none" {
+	if hasOnOff(p, &desc) {
 		dev.Capabilities = append(dev.Capabilities, alice.Capability{Type: alice.CapOnOff, Retrievable: true, Reportable: true})
 	}
 	for _, m := range p.Modes {
@@ -405,7 +405,7 @@ func (d *Device) Info() []alice.DeviceInfo {
 		dev.Properties = append(dev.Properties, propertyInfo(&pr))
 	}
 	if p.HasEvents() {
-		if values := buttonValues(p.Events); len(values) > 0 && !ownEvent(p, &desc, alice.InstanceButton) {
+		if values := buttonValues(p.Events, &desc); len(values) > 0 && !ownEvent(p, &desc, alice.InstanceButton) {
 			dev.Properties = append(dev.Properties, alice.Capability{Type: alice.PropEvent, Reportable: true,
 				Parameters: alice.EventParams{Instance: alice.InstanceButton, Events: alice.Items(values)}})
 		}
@@ -418,7 +418,23 @@ func (d *Device) Info() []alice.DeviceInfo {
 				Parameters: alice.EventParams{Instance: l.instance, Events: alice.Items(values)}})
 		}
 	}
+	// Устройство без умений и свойств Яндекс не примет, а управлять в нём нечем.
+	if len(dev.Capabilities) == 0 && len(dev.Properties) == 0 {
+		return nil
+	}
 	return []alice.DeviceInfo{dev}
+}
+
+// hasOnOff сообщает, есть ли у устройства on_off: у питания по настройке прибор должен её знать и
+// разрешать менять. Иначе «включи» ответило бы успехом или ошибкой, ничего не сделав.
+func hasOnOff(p *profile.Profile, desc *appliance.Description) bool {
+	if p.OnOff == "none" {
+		return false
+	}
+	if p.Power == nil {
+		return true
+	}
+	return desc.Knows(p.Power.Setting) && !desc.Options[p.Power.Setting].ReadOnly
 }
 
 // ownEvent сообщает, что в properties есть свойство event с этим instance и прибор его сообщает. Оно
@@ -481,15 +497,30 @@ func knownKeys(always, ifKnown []string, desc *appliance.Description) []string {
 	return out
 }
 
-func buttonValues(e *profile.Events) []string {
+// buttonValues - значения кнопки. Если прибор перечисляет все свои события, остаются только те, что
+// он может вызвать: событием из списка или переходом значения, которое сообщает.
+func buttonValues(e *profile.Events, desc *appliance.Description) []string {
 	var out []string
-	for _, v := range e.Button {
-		if !slices.Contains(out, v) {
+	for k, v := range e.Button {
+		if !slices.Contains(out, v) && buttonReachable(e, desc, k, v) {
 			out = append(out, v)
 		}
 	}
 	slices.Sort(out)
 	return out
+}
+
+func buttonReachable(e *profile.Events, desc *appliance.Description, key, value string) bool {
+	if !desc.EventsKnown {
+		return true
+	}
+	if state, _, ok := strings.Cut(key, "="); ok {
+		return desc.Knows(state)
+	}
+	return slices.ContainsFunc(desc.Events, func(event string) bool {
+		v, ok := e.Match(event)
+		return ok && v == value
+	})
 }
 
 func propertyInfo(pr *profile.Property) alice.Capability {
@@ -508,7 +539,7 @@ func propertyInfo(pr *profile.Property) alice.Capability {
 func (d *Device) modeValues(m *profile.Mode, desc *appliance.Description) []string {
 	src := m.Programs
 	if src == nil {
-		src = m.Values
+		src = m.DeviceValues()
 	}
 	var out []string
 	for _, key := range slices.Sorted(maps.Keys(src)) {
@@ -516,14 +547,32 @@ func (d *Device) modeValues(m *profile.Mode, desc *appliance.Description) []stri
 			continue
 		}
 		if m.Programs == nil {
-			opt, ok := desc.Options[m.Option]
+			opt, ok := desc.Options[modeOption(m, desc)]
 			if !ok || !slices.Contains(opt.Values, key) {
 				continue
 			}
 		}
-		out = append(out, src[key])
+		// Два значения прибора могут значить один режим Алисы, а Яндекс ждёт его один раз.
+		if !slices.Contains(out, src[key]) {
+			out = append(out, src[key])
+		}
 	}
 	return out
+}
+
+// modeOption - настройка режима у этого прибора: основная, а если у прибора нет её или её значений -
+// запасная.
+func modeOption(m *profile.Mode, desc *appliance.Description) string {
+	if m.FallbackOption == "" {
+		return m.Option
+	}
+	if opt, ok := desc.Options[m.Option]; ok && len(opt.Values) > 0 {
+		return m.Option
+	}
+	if _, ok := desc.Options[m.FallbackOption]; ok {
+		return m.FallbackOption
+	}
+	return m.Option
 }
 
 // rangeLimits берёт пределы из профиля, а недостающие - из описания прибора.
@@ -565,18 +614,18 @@ func (d *Device) mainState(st *appliance.State) alice.DeviceState {
 	pending := maps.Clone(d.pending)
 	d.mu.Unlock()
 
-	switch p.OnOff {
-	case "program":
+	switch {
+	case !hasOnOff(p, &desc):
+	case p.OnOff == "program":
 		add(alice.CapOnOff, "on", st.Running())
-	case "power":
-		if p.Power != nil {
-			add(alice.CapOnOff, "on", powered(p.Power, st))
-		} else {
-			add(alice.CapOnOff, "on", st.Values[appliance.SettingPowerState] == appliance.PowerOn)
-		}
+	case p.OnOff == "power" && p.Power != nil:
+		add(alice.CapOnOff, "on", powered(p.Power, st))
+	case p.OnOff == "power":
+		add(alice.CapOnOff, "on", st.Values[appliance.SettingPowerState] == appliance.PowerOn)
 	}
 	for _, m := range p.Modes {
-		if len(d.modeValues(&m, &desc)) == 0 {
+		values := d.modeValues(&m, &desc)
+		if len(values) == 0 {
 			continue
 		}
 		var key string
@@ -585,16 +634,18 @@ func (d *Device) mainState(st *appliance.State) alice.DeviceState {
 			if key == "" {
 				key = st.SelectedProgram
 			}
-			if v, ok := m.Programs[key]; ok {
+			if v, ok := m.Programs[key]; ok && slices.Contains(values, v) {
 				add(alice.CapMode, m.Instance, v)
 			}
 			continue
 		}
-		key = valueString(st.Values[m.Option])
-		if pv, ok := pending[m.Option].(string); ok && !st.Running() {
+		option := modeOption(&m, &desc)
+		key = valueString(st.Values[option])
+		if pv, ok := pending[option].(string); ok && !st.Running() {
 			key = pv
 		}
-		if v, ok := m.Values[key]; ok {
+		// Значение вне объявленного списка Яндекс не примет: например AUTO у скорости только для чтения.
+		if v, ok := m.DeviceValues()[key]; ok && slices.Contains(values, v) {
 			add(alice.CapMode, m.Instance, v)
 		}
 	}
@@ -817,11 +868,12 @@ func (d *Device) Act(ctx context.Context, id string, a *alice.Action) string {
 			}
 			return code(d.Appliance.Select(ctx, program))
 		}
-		value := keyFor(m.Values, v)
+		option := modeOption(m, &desc)
+		value := m.ValueFor(v, desc.Options[option].Values)
 		if value == "" {
 			return alice.CodeInvalidValue
 		}
-		return d.setOption(ctx, &st, m.Option, value)
+		return d.setOption(ctx, &st, option, value)
 	case alice.CapRange:
 		r := findRange(p.Ranges, a.State.Instance)
 		if r == nil {
@@ -856,6 +908,11 @@ func (d *Device) Act(ctx context.Context, id string, a *alice.Action) string {
 			return alice.CodeInvalidAction
 		}
 		if t.Instance != "pause" || t.Setting != "" {
+			// Снятие паузы запускает прибор: если он не на паузе, команда запустила бы его зря. Значение
+			// прибора вроде stop - тоже не пауза.
+			if raw, known := st.Values[t.Setting]; t.Instance == "pause" && !on && known && t.On != "" && valueString(raw) != t.On {
+				return ""
+			}
 			return code(d.Appliance.Set(ctx, t.Setting, toggleValue(t, on)))
 		}
 		if !st.Running() {
@@ -914,7 +971,8 @@ func (d *Device) setOption(ctx context.Context, st *appliance.State, key string,
 	if isSetting(&desc, key) || st.Running() {
 		return code(d.Appliance.Set(ctx, key, value))
 	}
-	if _, ok := desc.Options[key]; !ok {
+	// Без программ нет и следующего запуска: параметр просто пропал бы, а Алиса сказала бы «готово».
+	if _, ok := desc.Options[key]; !ok || len(desc.Programs) == 0 {
 		return alice.CodeInvalidAction
 	}
 	d.mu.Lock()

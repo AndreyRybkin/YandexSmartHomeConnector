@@ -11,8 +11,22 @@ import (
 const celsius = "unit.temperature.celsius"
 
 var (
+	// Заблокированная дверь закрыта, приоткрытая - открыта.
 	doorOpen = Property{Type: "event", Instance: "open", Status: "BSH.Common.Status.DoorState",
-		Values: map[string]string{"BSH.Common.EnumType.DoorState.Open": "opened", "BSH.Common.EnumType.DoorState.Closed": "closed"}}
+		Values: map[string]string{
+			"BSH.Common.EnumType.DoorState.Open":   "opened",
+			"BSH.Common.EnumType.DoorState.Ajar":   "opened",
+			"BSH.Common.EnumType.DoorState.Closed": "closed",
+			"BSH.Common.EnumType.DoorState.Locked": "closed",
+		}}
+	// Дверь холодильных приборов: документация считает основными значения Refrigeration, но
+	// разбирать велит и прежние значения BSH.
+	fridgeDoorValues = map[string]string{
+		"Refrigeration.Common.EnumType.Door.States.Open":   "opened",
+		"Refrigeration.Common.EnumType.Door.States.Closed": "closed",
+		"BSH.Common.EnumType.DoorState.Open":               "opened",
+		"BSH.Common.EnumType.DoorState.Closed":             "closed",
+	}
 	pause    = Toggle{Instance: "pause"}
 	finished = map[string]string{"BSH.Common.Event.ProgramFinished": "click"}
 )
@@ -38,13 +52,32 @@ var washer = &Profile{
 	Events:     &Events{Button: finished},
 }
 
+// У стирально-сушильной машины в документации свои имена программ. Добавить их к профилю
+// стиральной машины нельзя: один режим Алисы не отдаётся двум программам.
+var washerDryer = &Profile{
+	YandexType:     "washing_machine",
+	OnOff:          "program",
+	DefaultProgram: "LaundryCare.WasherDryer.Program.Cotton",
+	Modes: []Mode{{Instance: "program", Programs: programs("LaundryCare.WasherDryer.Program.", map[string]string{
+		"Cotton": "normal", "Cotton.Eco4060": "eco", "EasyCare": "one", "Mix": "two",
+		"WashAndDry.60": "three", "WashAndDry.90": "four",
+	})}},
+	Toggles:    []Toggle{pause},
+	Properties: []Property{doorOpen},
+	Events:     &Events{Button: finished},
+}
+
+// Варочную панель и кухонный процессор облако только показывает: программ для запуска в
+// API нет, а включит ли их облако по питанию, не проверено.
+var hob = &Profile{YandexType: "cooking", OnOff: "power"}
+
 var fridge = func(setting, door string) *Profile {
 	return &Profile{
 		YandexType: "cooking",
 		OnOff:      "none",
 		Ranges:     []Range{{Instance: "temperature", Option: setting, Unit: celsius}},
 		Properties: []Property{{Type: "event", Instance: "open", Status: door,
-			Values: doorOpen.Values}},
+			Values: fridgeDoorValues}},
 	}
 }
 
@@ -94,7 +127,7 @@ var builtin = map[string]*Profile{
 		},
 	},
 	"Washer":      washer,
-	"WasherDryer": washer,
+	"WasherDryer": washerDryer,
 	"Dryer": {
 		YandexType:     "washing_machine",
 		OnOff:          "program",
@@ -131,7 +164,7 @@ var builtin = map[string]*Profile{
 			"Cooking.Hood.EnumType.Stage.FanStage04": "four",
 			"Cooking.Hood.EnumType.Stage.FanStage05": "five",
 		}}},
-		Toggles: []Toggle{{Instance: "backlight", Setting: "Cooking.Common.Setting.Lighting"}},
+		Toggles: []Toggle{{Instance: "backlight", Setting: "Cooking.Common.Setting.Lighting", Optional: true}},
 	},
 	"Refrigerator":  fridge("Refrigeration.FridgeFreezer.Setting.SetpointTemperatureRefrigerator", "Refrigeration.Common.Status.Door.Refrigerator"),
 	"FridgeFreezer": fridge("Refrigeration.FridgeFreezer.Setting.SetpointTemperatureRefrigerator", "Refrigeration.Common.Status.Door.Refrigerator"),
@@ -171,9 +204,9 @@ var builtin = map[string]*Profile{
 		Properties: []Property{doorOpen},
 		Events:     &Events{Button: finished},
 	},
-	// Варочную панель и кухонный процессор облако только показывает: программ для запуска в
-	// API нет, а включит ли их облако по питанию, не проверено.
-	"Hob":           {YandexType: "cooking", OnOff: "power"},
+	// Документация Home Connect называет варочную панель Cooktop, области доступа - Hob.
+	"Cooktop":       hob,
+	"Hob":           hob,
 	"CookProcessor": {YandexType: "cooking.multicooker", OnOff: "power"},
 	"CleaningRobot": {
 		YandexType:     "vacuum_cleaner",

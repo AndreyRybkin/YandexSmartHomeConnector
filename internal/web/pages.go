@@ -687,10 +687,12 @@ type deviceView struct {
 	// TV - связь с телевизором в домашней сети; nil - прибор не телевизор.
 	TV *tvView
 	// Waiting - прибор облака ждёт своего типа от облака.
-	Waiting    bool
-	BasicError string
-	Strip      *stripView
-	State      *stateView
+	Waiting bool
+	// NoCapabilities - прибор собран, но Алисе отдавать нечего: профиль не совпал с его значениями.
+	NoCapabilities bool
+	BasicError     string
+	Strip          *stripView
+	State          *stateView
 	// Unmapped - значения прибора, которые Алиса не видит; Mappings - сводка сопоставлений;
 	// Preview - устройство Алисы по профилю из формы, ещё не сохранённому.
 	Unmapped []unmappedRow
@@ -794,7 +796,9 @@ func (s *Server) renderDevice(w http.ResponseWriter, sess *session, status int, 
 		active := hcdevice.ActiveProfile(hc.Profile, &desc)
 		v.Unmapped = unmapped(&st, active, &desc)
 		v.Mappings = mapRows(active, &st, hc)
-		v.Preview = previewOf(d.previewInfo, hc.Info(), d.preview)
+		info := hc.Info()
+		v.NoCapabilities = len(info) == 0
+		v.Preview = previewOf(d.previewInfo, info, d.preview)
 		t := &editTarget{action: "/devices/" + id + "/profile", builtin: builtin, probe: "/devices/" + id + "/probe",
 			forType: cfg.Profiles[haType], forDevice: dc.Profile, device: true, lg: propsSource(dc.Source),
 			desc: desc, values: slices.Collect(maps.Keys(st.Values)), now: profile.WithStatusNames(st.Values), program: st.ActiveProgram}

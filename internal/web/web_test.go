@@ -1135,3 +1135,19 @@ func TestUnmapped(t *testing.T) {
 		t.Fatalf("несопоставленные %v", got)
 	}
 }
+
+// Сохранение режимов из редактора не теряет поля, которых в форме нет.
+func TestEditorKeepsModeExtras(t *testing.T) {
+	builtin := &profile.Profile{Modes: []profile.Mode{{Instance: "fan_speed", Option: "a", FallbackOption: "b",
+		Values: map[string]string{"low": "low"}, AlsoValues: map[string]string{"quiet": "low", "max": "turbo"}}}}
+	te := &editTarget{builtin: builtin}
+	patch := &profile.Profile{Modes: []profile.Mode{{Instance: "fan_speed", Option: "a", Values: map[string]string{"low": "low", "max": "high"}}}}
+	next := applyField(te, "modes", patch, false)
+	m := next.Modes[0]
+	if m.FallbackOption != "b" || m.AlsoValues["quiet"] != "low" {
+		t.Fatalf("режим: %+v", m)
+	}
+	if _, ok := m.AlsoValues["max"]; ok {
+		t.Fatalf("значение из values осталось в also_values: %+v", m.AlsoValues)
+	}
+}

@@ -24,6 +24,9 @@ type Device struct {
 	Manufacturer string      `json:"manufacturerName"`
 	LocationID   string      `json:"locationId"`
 	Components   []Component `json:"components"`
+	// DisabledComponents - компоненты, которых на этом устройстве на самом деле нет: их шлюз
+	// узнаёт из состояния custom.disabledComponents и хранит вместе со списком.
+	DisabledComponents []string `json:"disabledComponents,omitempty"`
 }
 
 // Component - компонент устройства: capability и категории.
@@ -62,20 +65,31 @@ func (d *Device) Component(id string) *Component {
 	return nil
 }
 
-// Category - категория компонента: производителя, иначе первая; у компонента без категории -
-// категория main.
+// Category - категория компонента: производителя, иначе первая. У компонента без категории или
+// с общей Other и Others - категория main: так производитель помечает камеры холодильника.
 func (d *Device) Category(component string) string {
+	general := ""
 	for _, id := range []string{component, mainComponent} {
 		c := d.Component(id)
 		if c == nil || len(c.Categories) == 0 {
 			continue
 		}
+		name := c.Categories[0].Name
 		for _, cat := range c.Categories {
 			if cat.Type == "manufacturer" {
-				return cat.Name
+				name = cat.Name
+				break
 			}
 		}
-		return c.Categories[0].Name
+		if name != "Other" && name != "Others" {
+			return name
+		}
+		if general == "" {
+			general = name
+		}
+	}
+	if general != "" {
+		return general
 	}
 	return "Others"
 }
@@ -85,16 +99,49 @@ func (d *Device) Type(component string) string {
 	return TypePrefix + d.Category(component)
 }
 
-// Components - компоненты, которые можно добавить отдельным прибором: main и те, у которых
-// есть свои capability, кроме служебных.
+// Parts - компоненты, которые можно добавить отдельным прибором: main и те, у которых есть свои
+// capability, кроме отключённых.
 func (d *Device) Parts() []string {
 	var out []string
 	for _, c := range d.Components {
-		if c.ID == mainComponent || len(c.Capabilities) > 0 {
+		if c.ID == mainComponent || (len(c.Capabilities) > 0 && !d.componentOff(c.ID)) {
 			out = append(out, c.ID)
 		}
 	}
 	return out
+}
+
+// componentOff сообщает, что компонент отключён. Компонент lamp остаётся даже отключённым: так
+// поступает Home Assistant.
+func (d *Device) componentOff(id string) bool {
+	if id == mainComponent || id == "lamp" {
+		return false
+	}
+	return slices.ContainsFunc(d.DisabledComponents, func(off string) bool {
+		return burnerNumber(off) == burnerNumber(id)
+	})
+}
+
+// burnerNumber - имя компонента без нуля в номере конфорки: компонент называется burner-06, а в
+// списке отключённых - burner-6.
+func burnerNumber(id string) string {
+	if n, ok := strings.CutPrefix(id, "burner-"); ok {
+		return "burner-" + strings.TrimLeft(n, "0")
+	}
+	return id
+}
+
+// hasDisabledList сообщает, может ли у устройства быть список отключённых компонентов.
+func (d *Device) hasDisabledList() bool {
+	c := d.Component(mainComponent)
+	return c != nil && len(d.Components) > 1 && slices.ContainsFunc(c.Capabilities, func(cr CapRef) bool {
+		return cr.ID == capDisabledComponents
+	})
+}
+
+// disabledComponents - отключённые компоненты из состояния устройства.
+func disabledComponents(st Status) []string {
+	return listValues(st[mainComponent][capDisabledComponents]["disabledComponents"])
 }
 
 // capabilities - capability прибора: своего компонента, а у компонента не main - ещё
@@ -196,6 +243,8 @@ type Status map[string]map[string]map[string]AttrValue
 type AttrValue struct {
 	Value json.RawMessage `json:"value"`
 	Unit  string          `json:"unit"`
+	// StateChange - из потока событий: false, если значение не новое. Состояние его не содержит.
+	StateChange *bool `json:"-"`
 }
 
 // Key - имя функции прибора: capability и атрибут или команда.
@@ -213,9 +262,15 @@ func SplitKey(key string) (capability, name string, ok bool) {
 	return key[:i], key[i+1:], true
 }
 
+// toCelsius - температура в °F в градусах Цельсия с точностью 0,1.
+func toCelsius(f float64) float64 {
+	return math.Round((f-32)*5/9*10) / 10
+}
+
 // scalar - значение атрибута для прибора: строка как есть, число - float64, флаг - bool.
 // Списки и объекты в состояние не попадают. Температура в °F - в °C: шлюз работает в
-// градусах Цельсия.
+// градусах Цельсия. Энергия в Wh - в кВт·ч, как ждёт Алиса, а значения в mWh и kVAh шлюз не
+// передаёт: их нельзя перевести в кВт·ч без догадки.
 func scalar(v AttrValue, s *Schema) (any, bool) {
 	var x any
 	if len(v.Value) == 0 || json.Unmarshal(v.Value, &x) != nil {
@@ -228,8 +283,13 @@ func scalar(v AttrValue, s *Schema) (any, bool) {
 		}
 		return t, true
 	case float64:
-		if v.Unit == "F" {
-			return math.Round((t-32)*5/9*10) / 10, true
+		switch v.Unit {
+		case "F":
+			return toCelsius(t), true
+		case "Wh":
+			return t / 1000, true
+		case "mWh", "kVAh":
+			return nil, false
 		}
 		return t, true
 	case bool:
@@ -238,8 +298,52 @@ func scalar(v AttrValue, s *Schema) (any, bool) {
 	return nil, false
 }
 
+// setpointRange - пределы уставки из атрибута вроде coolingSetpointRange в °C. unit - единица, если у
+// самого атрибута её нет. Шаг в °F становится целым числом °C: команда всё равно округляется до °F.
+func setpointRange(v AttrValue, unit string) (limit, bool) {
+	var r struct {
+		Minimum *float64 `json:"minimum"`
+		Maximum *float64 `json:"maximum"`
+		Step    *float64 `json:"step"`
+	}
+	if len(v.Value) == 0 || json.Unmarshal(v.Value, &r) != nil || r.Minimum == nil || r.Maximum == nil {
+		return limit{}, false
+	}
+	if v.Unit != "" {
+		unit = v.Unit
+	}
+	l := limit{Min: *r.Minimum, Max: *r.Maximum}
+	if r.Step != nil {
+		l.Step = *r.Step
+	}
+	if !l.known() {
+		return limit{}, false
+	}
+	if unit == "F" {
+		l.Min, l.Max, l.Step = toCelsius(l.Min), toCelsius(l.Max), max(1, math.Round(l.Step*5/9))
+	}
+	return l, true
+}
+
+// limit - пределы и шаг уставки в °C.
+type limit struct {
+	Min, Max, Step float64
+}
+
+// known сообщает, что пределы настоящие: устройство пишет -1000, если предела не знает.
+func (l limit) known() bool {
+	return l.Min > unknownBound && l.Max > unknownBound && l.Min < l.Max
+}
+
+// unknownBound - температура ниже этой не бывает: так устройство сообщает, что предела не знает, и
+// в °C, и после перевода из °F.
+const unknownBound = -273.0
+
 // listValues - значения из атрибута-списка supported*: строки или объекты с id.
 func listValues(v AttrValue) []string {
+	if len(v.Value) == 0 {
+		return nil
+	}
 	var strs []string
 	if json.Unmarshal(v.Value, &strs) == nil {
 		return strs

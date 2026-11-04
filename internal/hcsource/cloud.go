@@ -189,7 +189,8 @@ func (c *Cloud) setConnected(up bool) {
 }
 
 // onConnected - поток открыт: загрузить список приборов и состояние каждого прибора на связи.
-// События, которые пришли, пока потока не было, потеряны.
+// События, которые пришли, пока потока не было, потеряны. Описания загружаются после всех
+// состояний: их запросы идут с паузами, а прибор до загрузки состояния не на связи.
 func (c *Cloud) onConnected(ctx context.Context) {
 	c.setConnected(true)
 	c.log.Info("поток событий Home Connect подключён")
@@ -204,10 +205,14 @@ func (c *Cloud) onConnected(ctx context.Context) {
 			list = append(list, a)
 		}
 		c.mu.Unlock()
+		loaded := make([]*Appliance, 0, len(list))
 		for _, a := range list {
-			if a.reachable() {
-				a.load(ctx)
+			if a.reachable() && a.refresh(ctx) {
+				loaded = append(loaded, a)
 			}
+		}
+		for _, a := range loaded {
+			a.describe(ctx)
 		}
 	}()
 }

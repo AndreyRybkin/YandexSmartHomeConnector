@@ -1,6 +1,10 @@
 package profile
 
-import "strconv"
+import (
+	"maps"
+	"slices"
+	"strconv"
+)
 
 // Встроенный профиль кофемашины De'Longhi на платформе My Coffee Lounge. Имена - как у
 // прибора из пакета delonghi; номера рецептов проверены на PrimaDonna Aromatic ECAM630.75.
@@ -74,8 +78,11 @@ func DeLonghiLayer(recipes map[string]int, drink string) *Profile {
 	for name, n := range recipes {
 		p.Modes[0].Programs[DeLonghiRecipePrefix+strconv.Itoa(n)] = name
 	}
-	if n, ok := recipes[drink]; ok {
-		p.DefaultProgram = DeLonghiRecipePrefix + strconv.Itoa(n)
+	n, ok := recipes[drink]
+	if !ok {
+		// Своих рецептов без этого напитка: иначе «включи» запустил бы встроенный рецепт, которого владелец не задавал.
+		n = recipes[slices.Min(slices.Collect(maps.Keys(recipes)))]
 	}
+	p.DefaultProgram = DeLonghiRecipePrefix + strconv.Itoa(n)
 	return p
 }

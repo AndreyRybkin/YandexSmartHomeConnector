@@ -86,15 +86,17 @@ const (
 	acProfile = `{"property":{` +
 		`"airConJobMode":{"currentJobMode":{"type":"enum","mode":["r","w"],"value":{"r":["COOL","HEAT","AIR_DRY","FAN","AUTO"],"w":["COOL","HEAT","AIR_DRY","FAN","AUTO"]}}},` +
 		`"operation":{"airConOperationMode":{"type":"enum","mode":["r","w"],"value":{"r":["POWER_ON","POWER_OFF"],"w":["POWER_ON","POWER_OFF"]}}},` +
-		`"temperatureInUnits":[{"unit":"C","currentTemperatureC":{"type":"number","mode":["r"]},` +
-		`"targetTemperatureC":{"type":"range","mode":["r","w"],"value":{"w":{"min":18,"max":30,"step":0.5}}}},` +
-		`{"unit":"F","targetTemperatureF":{"type":"range","mode":["r","w"],"value":{"w":{"min":64,"max":86,"step":1}}}}],` +
+		`"temperatureInUnits":[{"unit":"C","currentTemperature":{"type":"number","mode":["r"]},` +
+		`"targetTemperature":{"type":"number","mode":["r"]},` +
+		`"coolTargetTemperature":{"type":"range","mode":["w"],"value":{"w":{"min":18,"max":30,"step":0.5}}}},` +
+		`{"unit":"F","currentTemperature":{"type":"number","mode":["r"]},"targetTemperature":{"type":"number","mode":["r"]},` +
+		`"coolTargetTemperature":{"type":"range","mode":["w"],"value":{"w":{"min":64,"max":86,"step":2}}}}],` +
 		`"airFlow":{"windStrength":{"type":"enum","mode":["r","w"],"value":{"w":["low","mid","high"]}}},` +
 		`"windDirection":{"rotateUpDown":{"type":"boolean","mode":["r","w"],"value":{"w":[true,false]}}},` +
 		`"airQualitySensor":{"humidity":{"type":"number","mode":["r"]}}},` +
 		`"notification":{"push":["WATER_IS_FULL"]}}`
 	acState = `{"airConJobMode":{"currentJobMode":"COOL"},"operation":{"airConOperationMode":"POWER_ON"},` +
-		`"temperatureInUnits":[{"unit":"C","currentTemperatureC":24,"targetTemperatureC":22},{"unit":"F","targetTemperatureF":72}],` +
+		`"temperatureInUnits":[{"unit":"C","currentTemperature":24,"targetTemperature":22},{"unit":"F","currentTemperature":75,"targetTemperature":72}],` +
 		`"airFlow":{"windStrength":"MID"},"windDirection":{"rotateUpDown":false},"airQualitySensor":{"humidity":41}}`
 	fridgeProfile = `{"property":{` +
 		`"temperatureInUnits":[` +
@@ -132,8 +134,9 @@ type fakeAPI struct {
 	eventSubs []string
 	profiles  int
 	headers   http.Header
-	// badProfile - отвечать профилем, который не разбирается.
+	// badProfile - отвечать профилем, который не разбирается; badID - только для этого прибора.
 	badProfile bool
+	badID      string
 }
 
 func newAPI(t *testing.T, ca *testCA) *fakeAPI {
@@ -167,7 +170,7 @@ func newAPI(t *testing.T, ca *testCA) *fakeAPI {
 		if d, found := device(w, r); found {
 			f.mu.Lock()
 			f.profiles++
-			bad := f.badProfile
+			bad := f.badProfile || f.badID == r.PathValue("id")
 			f.mu.Unlock()
 			if bad {
 				raw(w, `{"property":"сломан"}`)
@@ -450,7 +453,7 @@ func TestModel(t *testing.T) {
 	values = map[string]any{}
 	ac.flatten(json.RawMessage(acState), values)
 	if values["temperatureInUnits.currentTemperatureC"] != 24.0 || values["airFlow.windStrength"] != "MID" ||
-		values["windDirection.rotateUpDown"] != false || values["temperatureInUnits.targetTemperatureF"] != 72.0 {
+		values["windDirection.rotateUpDown"] != false || values["temperatureInUnits.targetTemperatureC"] != 22.0 {
 		t.Fatalf("состояние кондиционера: %v", values)
 	}
 

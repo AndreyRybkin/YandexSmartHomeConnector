@@ -51,6 +51,8 @@ var (
 	ErrLoginChanged = errors.New("вход в Home Connect сменился")
 	// ErrPaused - пауза после ошибок подряд: запрос не отправлен.
 	ErrPaused = errors.New("пауза после ошибок облака Home Connect")
+	// ErrBadResponse - облако ответило успехом, но тело ответа не разобрано.
+	ErrBadResponse = errors.New("облако Home Connect: ответ не разобран")
 )
 
 // APIError - ответ облака с ошибкой.
@@ -355,7 +357,7 @@ func decode(status int, data []byte, out any) error {
 		return nil
 	}
 	if err := json.Unmarshal(data, out); err != nil {
-		return fmt.Errorf("облако Home Connect: ответ не разобран: %w", err)
+		return fmt.Errorf("%w: %w", ErrBadResponse, err)
 	}
 	return nil
 }

@@ -31,17 +31,22 @@ type Program struct {
 	Options []Value `json:"options,omitempty"`
 }
 
-// OptionInfo - параметр программы и его допустимые значения.
+// Constraints - допустимые значения параметра программы или настройки.
+type Constraints struct {
+	Min           *float64 `json:"min"`
+	Max           *float64 `json:"max"`
+	StepSize      *float64 `json:"stepsize"`
+	AllowedValues []string `json:"allowedvalues"`
+	// Access - у настройки: read или readWrite.
+	Access string `json:"access"`
+}
+
+// OptionInfo - параметр программы или настройка и допустимые значения.
 type OptionInfo struct {
-	Key         string `json:"key"`
-	Type        string `json:"type"`
-	Unit        string `json:"unit"`
-	Constraints struct {
-		Min           *float64 `json:"min"`
-		Max           *float64 `json:"max"`
-		StepSize      *float64 `json:"stepsize"`
-		AllowedValues []string `json:"allowedvalues"`
-	} `json:"constraints"`
+	Key         string      `json:"key"`
+	Type        string      `json:"type"`
+	Unit        string      `json:"unit"`
+	Constraints Constraints `json:"constraints"`
 }
 
 func appliancePath(haID string) string {
@@ -79,6 +84,15 @@ func (c *Client) Settings(ctx context.Context, haID string) ([]Value, error) {
 	}
 	err := c.call(ctx, http.MethodGet, appliancePath(haID)+"/settings", nil, &out)
 	return out.Data.Settings, err
+}
+
+// Setting - настройка прибора и её допустимые значения: общий список настроек их не содержит.
+func (c *Client) Setting(ctx context.Context, haID, key string) (OptionInfo, error) {
+	var out struct {
+		Data OptionInfo `json:"data"`
+	}
+	err := c.call(ctx, http.MethodGet, appliancePath(haID)+"/settings/"+url.PathEscape(key), nil, &out)
+	return out.Data, err
 }
 
 // SelectedProgram - выбранная программа или nil, если её нет.

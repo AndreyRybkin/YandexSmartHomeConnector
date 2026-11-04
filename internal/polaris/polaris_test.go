@@ -413,3 +413,20 @@ func TestKettleFinished(t *testing.T) {
 	a.message(c, KeyMode, "0")
 	expect("команда шлюза", false)
 }
+
+// У прибора другого типа числа разбираются сами, строки с ведущим нулём остаются строками.
+func TestOtherTypeValues(t *testing.T) {
+	f := newFixture(t, t.TempDir(), nil)
+	a := f.hub.Appliance(testID)
+	a.message("c", KeyDevType, "999")
+	a.message("c", "sensor/humidity", "45.5")
+	a.message("c", "error/code", "00")
+	a.message("c", KeyMode, "0")
+	st := a.State()
+	if st.Values[KeyMode] != "0" {
+		t.Fatalf("режим: %#v", st.Values[KeyMode])
+	}
+	if st.Values["sensor/humidity"] != 45.5 || st.Values["error/code"] != "00" {
+		t.Fatalf("значения: %v", st.Values)
+	}
+}

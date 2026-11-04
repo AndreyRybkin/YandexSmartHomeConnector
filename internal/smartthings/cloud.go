@@ -252,6 +252,7 @@ func (c *Cloud) RefreshAccount(ctx context.Context) error {
 	if len(list) > maxDevices {
 		list = list[:maxDevices]
 	}
+	c.loadDisabled(ctx, list)
 	data, err := json.Marshal(list)
 	if err == nil {
 		err = atomicfile.Write(c.listPath(), data)
@@ -271,6 +272,55 @@ func (c *Cloud) RefreshAccount(ctx context.Context) error {
 	c.loadDefs(ctx, refs)
 	signal(c.changes)
 	return nil
+}
+
+// loadDisabled заполняет отключённые компоненты в новом списке: страница «Подключения» не должна
+// предлагать камеру, которой у устройства нет. Запрос - только к устройствам с этим списком, а при
+// сбое остаётся прежнее значение.
+func (c *Cloud) loadDisabled(ctx context.Context, list []Device) {
+	for i := range list {
+		d := &list[i]
+		if prev := c.device(d.ID); prev != nil {
+			d.DisabledComponents = prev.DisabledComponents
+		}
+		if !d.hasDisabledList() {
+			continue
+		}
+		st, err := c.status(ctx, d.ID)
+		if err != nil {
+			if ctx.Err() == nil {
+				c.log.Warn("SmartThings: отключённые компоненты не загружены", "device_id", d.ID, "err", err)
+			}
+			continue
+		}
+		d.DisabledComponents = disabledComponents(st)
+	}
+}
+
+// setDisabled запоминает отключённые компоненты устройства. Новый список меняет приборы, которые
+// видит Алиса, поэтому шлюз собирает их заново.
+func (c *Cloud) setDisabled(id string, list []string) {
+	c.mu.Lock()
+	changed := false
+	for i := range c.devices {
+		if c.devices[i].ID == id && !slices.Equal(c.devices[i].DisabledComponents, list) {
+			c.devices[i].DisabledComponents = list
+			changed = true
+		}
+	}
+	c.mu.Unlock()
+	if changed {
+		signal(c.changes)
+	}
+}
+
+// status - состояние устройства.
+func (c *Cloud) status(ctx context.Context, id string) (Status, error) {
+	var st struct {
+		Components Status `json:"components"`
+	}
+	err := c.API.do(ctx, http.MethodGet, "/v1/devices/"+url.PathEscape(id)+"/status", nil, &st)
+	return st.Components, err
 }
 
 // sameHost сообщает, что адрес - на облаке SmartThings из настроек.
@@ -365,7 +415,8 @@ func (c *Cloud) Appliance(deviceID, component string) *Appliance {
 	a := c.appliances[key]
 	if a == nil {
 		a = &Appliance{cloud: c, deviceID: deviceID, component: component, values: map[string]any{},
-			units: map[string]string{}, lists: map[string]map[string][]string{}}
+			units: map[string]string{}, lists: map[string]map[string][]string{}, limits: map[string]limit{},
+			disabled: map[string][]string{}}
 		c.appliances[key] = a
 	}
 	return a
@@ -665,6 +716,8 @@ type event struct {
 		Attribute   string          `json:"attribute"`
 		Value       json.RawMessage `json:"value"`
 		Unit        string          `json:"unit"`
+		// StateChange - новое ли значение; у нажатия кнопки false значит, что нажатия не было.
+		StateChange *bool `json:"stateChange"`
 	} `json:"deviceEvent"`
 	// Формат события связи документация не описывает: шлюз берёт deviceId и state или status.
 	HealthEvent *struct {
@@ -684,8 +737,12 @@ func (c *Cloud) handle(name, payload string) {
 	switch {
 	case e.DeviceEvent != nil:
 		d := e.DeviceEvent
+		v := AttrValue{Value: d.Value, Unit: d.Unit, StateChange: d.StateChange}
+		if d.ComponentID == mainComponent && d.Capability == capDisabledComponents {
+			c.setDisabled(d.DeviceID, listValues(v))
+		}
 		for _, a := range c.running(d.DeviceID) {
-			a.apply(d.ComponentID, d.Capability, d.Attribute, AttrValue{Value: d.Value, Unit: d.Unit})
+			a.apply(d.ComponentID, d.Capability, d.Attribute, v)
 		}
 	case e.HealthEvent != nil:
 		h := e.HealthEvent
@@ -727,17 +784,16 @@ func (c *Cloud) prepare(ctx context.Context, id string) {
 	} else {
 		c.setHealth(id, health.State != "OFFLINE")
 	}
-	var st struct {
-		Components Status `json:"components"`
-	}
-	if err := c.API.do(ctx, http.MethodGet, "/v1/devices/"+url.PathEscape(id)+"/status", nil, &st); err != nil {
+	st, err := c.status(ctx, id)
+	if err != nil {
 		if ctx.Err() == nil {
 			c.log.Warn("SmartThings: состояние устройства не загружено", "device_id", id, "err", err)
 		}
 		return
 	}
+	c.setDisabled(id, disabledComponents(st))
 	for _, a := range c.running(id) {
-		a.load(st.Components)
+		a.load(st)
 	}
 }
 

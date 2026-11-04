@@ -87,8 +87,48 @@ type Mode struct {
 	// Programs - программа Home Connect -> режим Алисы.
 	Programs map[string]string `yaml:"programs"`
 	Option   string            `yaml:"option"`
+	// FallbackOption - другая настройка с теми же значениями: она действует, если у прибора нет Option
+	// или значений Option. Так один тип приборов сообщает одно и то же под разными именами.
+	FallbackOption string `yaml:"fallback_option,omitempty"`
 	// Values - значение Home Connect -> режим Алисы.
 	Values map[string]string `yaml:"values"`
+	// AlsoValues - другие значения прибора для режимов Алисы: одно и то же приборы одного типа
+	// называют по-разному. Команда отправляет значение из Values, а если его у прибора нет, -
+	// значение отсюда, которое у него есть.
+	AlsoValues map[string]string `yaml:"also_values,omitempty"`
+}
+
+// DeviceValues - все значения прибора и их режимы Алисы: Values и AlsoValues.
+func (m *Mode) DeviceValues() map[string]string {
+	if len(m.AlsoValues) == 0 {
+		return m.Values
+	}
+	out := maps.Clone(m.Values)
+	if out == nil {
+		out = map[string]string{}
+	}
+	maps.Copy(out, m.AlsoValues)
+	return out
+}
+
+// ValueFor - значение прибора для режима Алисы; known - значения этого прибора. Пусто - такого
+// режима в профиле нет.
+func (m *Mode) ValueFor(mode string, known []string) string {
+	var first string
+	for _, source := range []map[string]string{m.Values, m.AlsoValues} {
+		for _, k := range slices.Sorted(maps.Keys(source)) {
+			if source[k] != mode {
+				continue
+			}
+			if len(m.AlsoValues) == 0 || slices.Contains(known, k) {
+				return k
+			}
+			if first == "" {
+				first = k
+			}
+		}
+	}
+	return first
 }
 
 // Range - умение range: число в параметре программы или в настройке.
@@ -404,7 +444,9 @@ func (m Mode) MarshalYAML() (any, error) {
 		{"instance", true, m.Instance},
 		{"programs", m.Programs != nil, m.Programs},
 		{"option", m.Option != "", m.Option},
+		{"fallback_option", m.FallbackOption != "", m.FallbackOption},
 		{"values", m.Values != nil, m.Values},
+		{"also_values", m.AlsoValues != nil, m.AlsoValues},
 	})
 }
 
@@ -507,6 +549,9 @@ func (p *Profile) Validate() error {
 			}
 			seen[v] = true
 		}
+		if err := m.checkExtras(); err != nil {
+			return err
+		}
 	}
 	if programModes > 1 {
 		return errors.New("modes: выбор программы может быть только в одном режиме")
@@ -575,6 +620,25 @@ func (p *Profile) Validate() error {
 			if _, err := path.Match(k, ""); err != nil {
 				return fmt.Errorf("events.button %s: неверный шаблон", k)
 			}
+		}
+	}
+	return nil
+}
+
+// checkExtras проверяет запасную настройку и другие значения режима: они дополняют option с values.
+func (m *Mode) checkExtras() error {
+	if m.FallbackOption != "" && (m.Option == "" || m.FallbackOption == m.Option) {
+		return fmt.Errorf("modes %s: fallback_option задаётся с option и отличается от него", m.Instance)
+	}
+	if m.AlsoValues != nil && m.Option == "" {
+		return fmt.Errorf("modes %s: also_values задаётся с option и values", m.Instance)
+	}
+	for k, v := range m.AlsoValues {
+		if _, ok := m.Values[k]; ok {
+			return fmt.Errorf("modes %s: значение %q и в values, и в also_values", m.Instance, k)
+		}
+		if !slices.Contains(ModeValues, v) {
+			return fmt.Errorf("modes %s: режим %q не поддерживается", m.Instance, v)
 		}
 	}
 	return nil

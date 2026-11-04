@@ -38,7 +38,7 @@ var typeNames = map[string]string{
 	"Oven": "Духовой шкаф", "Dishwasher": "Посудомоечная машина", "Washer": "Стиральная машина",
 	"Dryer": "Сушильная машина", "WasherDryer": "Стирально-сушильная машина", "Refrigerator": "Холодильник",
 	"Freezer": "Морозильник", "FridgeFreezer": "Холодильник с морозильником", "WineCooler": "Винный шкаф",
-	"CoffeeMaker": "Кофемашина", "Hob": "Варочная панель", "Hood": "Вытяжка", "CleaningRobot": "Робот-пылесос",
+	"CoffeeMaker": "Кофемашина", "Hob": "Варочная панель", "Cooktop": "Варочная панель", "Hood": "Вытяжка", "CleaningRobot": "Робот-пылесос",
 	"CookProcessor": "Кухонный процессор", "WarmingDrawer": "Шкаф для подогрева",
 	"AirConditioner": "Кондиционер", "Microwave": "Микроволновая печь",
 	profile.AllInOneType: "Все свойства в одном приборе", profile.PolarisKettleType: "Чайник Polaris", profile.DeLonghiType: "Кофемашина De'Longhi", profile.LGTVType: "Телевизор LG", profile.SamsungTVType: "Телевизор Samsung",
