@@ -21,8 +21,9 @@ func init() {
 		Properties: []Property{{Type: "float", Instance: "temperature", Status: "sensor/temperature", Unit: celsius},
 			{Type: "float", Instance: "water_level", Status: "weight", Unit: percent, Convert: WeightToPercent, Min: &noWater, Max: &fullWater}},
 		Events: &Events{
-			// Переход в режим 0 - конец работы, и после выключения вручную: чайник их не различает.
-			Button: map[string]string{"mode=0": "click", "error/empty_base=true": "long_press"},
+			// Polaris.Event.BoilFinished - чайник перестал работать сам: его не сняли с базы и не выключили
+			// командой шлюза. Выключение кнопкой на чайнике от конца работы не отличить.
+			Button: map[string]string{"Polaris.Event.BoilFinished": "click", "error/empty_base=true": "long_press"},
 			// Код 01 - мало воды; пустой ли чайник, прибор отдельно не сообщает.
 			WaterLevel: []string{"Polaris.Alarm.Water"},
 		},

@@ -317,3 +317,99 @@ func TestFound(t *testing.T) {
 	f.hub.message(mqttbroker.Message{Client: "x", Topic: "polaris/dev1/state/devtype", Payload: []byte("999")})
 	waitFor(t, "тип", func() bool { return unknown.Describe().Type == "Polaris999" })
 }
+
+// Цель 0 в простое не уходит Алисе; шаг без цели считается от температуры воды.
+func TestKettleNoTarget(t *testing.T) {
+	f := newFixture(t, t.TempDir(), nil)
+	a := f.hub.Appliance(testID)
+	f.connect()
+	waitFor(t, "значения", func() bool { return a.State().Values[KeySensor] == 31.0 })
+	if v, ok := a.State().Values[KeyTemperature]; ok {
+		t.Fatalf("цель в простое: %v", v)
+	}
+	p, err := profile.Resolve(profile.PolarisKettleType, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &hcdevice.Device{ID: "kettle", Profile: p, Appliance: a}
+	for _, ds := range d.States() {
+		for _, c := range ds.Capabilities {
+			if sv, ok := c.State.(alice.StateValue); ok && sv.Instance == "temperature" {
+				t.Fatalf("цель в состоянии Алисы: %v", sv.Value)
+			}
+		}
+	}
+	step := action(alice.CapRange, "temperature", 10.0)
+	step.State.Relative = true
+	if code := d.Act(context.Background(), "kettle", step); code != "" {
+		t.Fatalf("шаг: %s", code)
+	}
+	f.expect("temperature=41", "mode=3")
+	step.State.Value = 90.0
+	if code := d.Act(context.Background(), "kettle", step); code != alice.CodeInvalidValue {
+		t.Fatalf("шаг за предел: %q", code)
+	}
+	f.state(KeyTemperature, "80")
+	waitFor(t, "цель", func() bool { return a.State().Values[KeyTemperature] == 80.0 })
+}
+
+// Конец работы - только если чайник выключился сам: не снят с базы и не выключен командой шлюза.
+func TestKettleFinished(t *testing.T) {
+	f := newFixture(t, t.TempDir(), nil)
+	a := f.hub.Appliance(testID)
+	a.finishAfter = 50 * time.Millisecond
+	finished := make(chan struct{}, 8)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go a.Run(ctx, func(events []string) {
+		if slices.Contains(events, EventBoilFinished) {
+			finished <- struct{}{}
+		}
+	})
+	waitFor(t, "подписка", func() bool {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		return a.notify != nil
+	})
+	const c = "client"
+	expect := func(what string, want bool) {
+		t.Helper()
+		select {
+		case <-finished:
+			if !want {
+				t.Fatalf("%s: конец работы", what)
+			}
+		case <-time.After(200 * time.Millisecond):
+			if want {
+				t.Fatalf("%s: нет конца работы", what)
+			}
+		}
+	}
+	a.message(c, KeyMode, "0")
+	expect("первое значение после запуска", false)
+	a.message(c, KeyMode, "1")
+	a.message(c, KeyMode, "0")
+	expect("чайник выключился сам", true)
+	// Снят с базы: порядок сообщений не важен.
+	a.message(c, KeyMode, "1")
+	a.message(c, KeyEmptyBase, "true")
+	a.message(c, KeyMode, "0")
+	expect("база, затем режим", false)
+	a.message(c, KeyEmptyBase, "false")
+	a.message(c, KeyMode, "1")
+	a.message(c, KeyMode, "0")
+	a.message(c, KeyEmptyBase, "true")
+	expect("режим, затем база", false)
+	a.message(c, KeyEmptyBase, "false")
+	// Снова включён за время ожидания.
+	a.message(c, KeyMode, "1")
+	a.message(c, KeyMode, "0")
+	a.message(c, KeyMode, "1")
+	expect("снова работает", false)
+	// Выключен командой шлюза.
+	if err := a.Set(context.Background(), KeyMode, "0"); err != nil {
+		t.Fatal(err)
+	}
+	a.message(c, KeyMode, "0")
+	expect("команда шлюза", false)
+}

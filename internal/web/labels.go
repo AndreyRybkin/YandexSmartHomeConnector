@@ -170,15 +170,15 @@ var unitNames = map[string]string{
 // stateNames - состояние работы прибора одним словом. Перечисления Home Connect - по полному
 // имени значения; режимы кофемашины - по имени и значению; значения LG - как есть.
 var stateNames = map[string]string{
-	"BSH.Common.EnumType.OperationState.Inactive":       "выключен",
-	appliance.OperationReady:                            "готов",
-	appliance.OperationDelayed:                          "ждёт отложенного старта",
-	appliance.OperationRun:                              "работает",
-	appliance.OperationPause:                            "на паузе",
-	"BSH.Common.EnumType.OperationState.ActionRequired": "ждёт действия на приборе",
-	appliance.OperationFinished:                         "программа закончена",
-	"BSH.Common.EnumType.OperationState.Error":          "ошибка",
-	"BSH.Common.EnumType.OperationState.Aborting":       "отменяет программу",
+	"BSH.Common.EnumType.OperationState.Inactive": "выключен",
+	appliance.OperationReady:                      "готов",
+	appliance.OperationDelayed:                    "ждёт отложенного старта",
+	appliance.OperationRun:                        "работает",
+	appliance.OperationPause:                      "на паузе",
+	appliance.OperationActionRequired:             "ждёт действия на приборе",
+	appliance.OperationFinished:                   "программа закончена",
+	"BSH.Common.EnumType.OperationState.Error":    "ошибка",
+	"BSH.Common.EnumType.OperationState.Aborting": "отменяет программу",
 
 	delonghi.StatusMode + "=0":  "выключена",
 	delonghi.StatusMode + "=1":  "включается",

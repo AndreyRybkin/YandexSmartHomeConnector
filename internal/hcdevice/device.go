@@ -758,8 +758,9 @@ func (d *Device) Act(ctx context.Context, id string, a *alice.Action) string {
 			if !on {
 				return code(d.Appliance.Stop(ctx))
 			}
+			// Программу на панели выбрал человек: шлюз не заменяет её своей, даже если её нет в профиле.
 			program := st.SelectedProgram
-			if pm := p.ProgramMode(); pm == nil || pm.Programs[program] == "" {
+			if program == "" {
 				program = p.DefaultProgram
 			}
 			if program == "" {
@@ -886,9 +887,12 @@ func (d *Device) start(ctx context.Context, st *appliance.State, program string)
 	}
 	desc := d.Appliance.Describe()
 	options := map[string]any{}
-	for k, v := range d.Profile.DefaultOptions {
-		if _, ok := desc.Options[k]; ok {
-			options[k] = v
+	// Параметры по умолчанию написаны для программ профиля: чужой программе они могут не подойти.
+	if pm := d.Profile.ProgramMode(); program == d.Profile.DefaultProgram || (pm != nil && pm.Programs[program] != "") {
+		for k, v := range d.Profile.DefaultOptions {
+			if _, ok := desc.Options[k]; ok {
+				options[k] = v
+			}
 		}
 	}
 	d.mu.Lock()

@@ -263,3 +263,30 @@ func TestForget(t *testing.T) {
 		t.Fatal("объект не забыт")
 	}
 }
+
+// Снимок облака не содержит событий: уровень соли после переподключения потока не сбрасывается.
+func TestSnapshotKeepsEvents(t *testing.T) {
+	programPause = time.Millisecond
+	const salt = "Dishcare.Dishwasher.Event.SaltLack"
+	c := newCloud(t, hcfake.New(t, ovenFake()), t.TempDir())
+	a := c.Appliance(haID)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := a.loadState(ctx); err != nil {
+		t.Fatal(err)
+	}
+	a.mu.Lock()
+	a.state.Values[salt] = appliance.EventPresent
+	a.state.Values[appliance.StatusOperationState] = "старое"
+	a.mu.Unlock()
+	if err := a.loadState(ctx); err != nil {
+		t.Fatal(err)
+	}
+	st := a.State()
+	if st.Values[salt] != appliance.EventPresent {
+		t.Fatalf("уровень соли: %v", st.Values[salt])
+	}
+	if st.Values[appliance.StatusOperationState] != appliance.OperationReady {
+		t.Fatalf("состояние из снимка: %v", st.Values[appliance.StatusOperationState])
+	}
+}

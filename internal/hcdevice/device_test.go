@@ -114,10 +114,12 @@ func TestDeviceWithoutEvents(t *testing.T) {
 
 // props - прибор со свойствами, как прибор LG: настройки меняются сразу.
 type props struct {
-	desc   appliance.Description
-	state  appliance.State
-	sets   []string
-	notify chan appliance.Notify
+	desc  appliance.Description
+	state appliance.State
+	sets  []string
+	// options - параметры последнего запуска.
+	options map[string]any
+	notify  chan appliance.Notify
 }
 
 func (p *props) Describe() appliance.Description { return p.desc }
@@ -127,8 +129,9 @@ func (p *props) Run(ctx context.Context, notify appliance.Notify) {
 	<-ctx.Done()
 }
 func (p *props) Select(context.Context, string) error { return appliance.ErrNotSupported }
-func (p *props) Start(_ context.Context, program string, _ map[string]any) error {
+func (p *props) Start(_ context.Context, program string, options map[string]any) error {
 	p.sets = append(p.sets, "start="+program)
+	p.options = options
 	return nil
 }
 func (p *props) Stop(context.Context) error            { return appliance.ErrNotSupported }
@@ -741,5 +744,49 @@ func TestOwnPropertyOverEvents(t *testing.T) {
 	}
 	if p.Events.Button == nil {
 		t.Fatal("исходный профиль изменён")
+	}
+}
+
+// «Включи» запускает программу, выбранную на панели, даже вне профиля, и не подставляет ей параметры
+// по умолчанию. Программа по умолчанию нужна, только если ничего не выбрано.
+func TestTurnOnSelected(t *testing.T) {
+	const washer, cotton, dessous = "LaundryCare.Washer", "LaundryCare.Washer.Program.Cotton", "LaundryCare.Washer.Program.Dessous"
+	p := &profile.Profile{YandexType: "washing_machine", OnOff: "program", DefaultProgram: cotton,
+		DefaultOptions: map[string]any{"speed": 800.0},
+		Modes:          []profile.Mode{{Instance: "program", Programs: map[string]string{cotton: "normal"}}}}
+	for _, c := range []struct {
+		selected, want string
+		options        int
+	}{{dessous, dessous, 0}, {cotton, cotton, 1}, {"", cotton, 1}} {
+		a := newProps(map[string]any{appliance.StatusOperationState: appliance.OperationReady})
+		a.desc = appliance.Description{Type: washer, Programs: []string{cotton, dessous}, Options: map[string]appliance.Option{"speed": {Min: 0, Max: 1400, Step: 200}}}
+		a.state.SelectedProgram = c.selected
+		d := &Device{ID: "w", Profile: p, Appliance: a}
+		action := &alice.Action{Type: alice.CapOnOff, State: alice.ActionState{Instance: "on", Value: true}}
+		if code := d.Act(context.Background(), "w", action); code != "" {
+			t.Fatalf("выбрана %q: код %s", c.selected, code)
+		}
+		if !slices.Equal(a.sets, []string{"start=" + c.want}) || len(a.options) != c.options {
+			t.Fatalf("выбрана %q: %v параметры %v", c.selected, a.sets, a.options)
+		}
+	}
+}
+
+// Программа, которая ждёт действия человека, идёт: Алиса видит прибор включённым.
+func TestActionRequiredIsRunning(t *testing.T) {
+	st := appliance.State{Values: map[string]any{appliance.StatusOperationState: appliance.OperationActionRequired}}
+	if !st.Running() {
+		t.Fatal("ActionRequired не считается работой")
+	}
+}
+
+// Духовка без быстрого нагрева сообщает о конце разогрева другим событием.
+func TestOvenRegularPreheat(t *testing.T) {
+	p, err := profile.Resolve("Oven", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := p.Events.Match("Cooking.Oven.Event.RegularPreheatFinished"); !ok || v != "double_click" {
+		t.Fatalf("кнопка: %q %v", v, ok)
 	}
 }

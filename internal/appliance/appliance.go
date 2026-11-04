@@ -25,14 +25,16 @@ const (
 	OperationPause    = "BSH.Common.EnumType.OperationState.Pause"
 	OperationFinished = "BSH.Common.EnumType.OperationState.Finished"
 	OperationDelayed  = "BSH.Common.EnumType.OperationState.DelayedStart"
-	DoorOpen          = "BSH.Common.EnumType.DoorState.Open"
-	DoorClosed        = "BSH.Common.EnumType.DoorState.Closed"
-	PowerOn           = "BSH.Common.EnumType.PowerState.On"
-	PowerOff          = "BSH.Common.EnumType.PowerState.Off"
-	PowerStandby      = "BSH.Common.EnumType.PowerState.Standby"
-	EventPresent      = "BSH.Common.EnumType.EventPresentState.Present"
-	EventOff          = "BSH.Common.EnumType.EventPresentState.Off"
-	EventConfirmed    = "BSH.Common.EnumType.EventPresentState.Confirmed"
+	// OperationActionRequired - программа идёт, но ждёт действия человека.
+	OperationActionRequired = "BSH.Common.EnumType.OperationState.ActionRequired"
+	DoorOpen                = "BSH.Common.EnumType.DoorState.Open"
+	DoorClosed              = "BSH.Common.EnumType.DoorState.Closed"
+	PowerOn                 = "BSH.Common.EnumType.PowerState.On"
+	PowerOff                = "BSH.Common.EnumType.PowerState.Off"
+	PowerStandby            = "BSH.Common.EnumType.PowerState.Standby"
+	EventPresent            = "BSH.Common.EnumType.EventPresentState.Present"
+	EventOff                = "BSH.Common.EnumType.EventPresentState.Off"
+	EventConfirmed          = "BSH.Common.EnumType.EventPresentState.Confirmed"
 )
 
 // Ошибки команд. Пакет hcdevice переводит их в коды ошибок Яндекса.
@@ -113,10 +115,10 @@ type State struct {
 	SelectedProgram string
 }
 
-// Running сообщает, идёт ли программа: работает, на паузе или ждёт отложенного старта.
+// Running сообщает, идёт ли программа: работает, на паузе, ждёт отложенного старта или действия человека.
 func (s State) Running() bool {
 	switch s.Values[StatusOperationState] {
-	case OperationRun, OperationPause, OperationDelayed:
+	case OperationRun, OperationPause, OperationDelayed, OperationActionRequired:
 		return true
 	}
 	return false
@@ -145,8 +147,8 @@ type Appliance interface {
 }
 
 // Stepper - прибор, который меняет число на шаг сам, не сообщая текущего значения: так
-// телевизор кнопками пульта переключает канал. «Следующий канал» без текущего значения
-// уходит прибору шагом.
+// телевизор кнопками пульта переключает канал, а чайник без цели считает шаг от температуры воды.
+// «Следующий канал» без текущего значения уходит прибору шагом.
 type Stepper interface {
 	Step(ctx context.Context, key string, delta float64) error
 }

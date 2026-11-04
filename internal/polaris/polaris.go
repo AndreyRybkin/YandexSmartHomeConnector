@@ -63,6 +63,20 @@ const (
 	KeyTea = "tea"
 	// KeyWaterAlarm - вода заканчивается: виртуальная функция из error/code.
 	KeyWaterAlarm = "Polaris.Alarm.Water"
+	// KeyEmptyBase - чайник снят с базы.
+	KeyEmptyBase = "error/empty_base"
+	// KeySensor - температура воды.
+	KeySensor = "sensor/temperature"
+	// EventBoilFinished - чайник перестал работать сам: виртуальное событие шлюза.
+	EventBoilFinished = "Polaris.Event.BoilFinished"
+)
+
+const (
+	// finishWait - сколько шлюз ждёт error/empty_base после перехода mode в 0: снятый с базы чайник
+	// присылает оба значения, порядок шлюзу неизвестен.
+	finishWait = 2 * time.Second
+	// offWait - сколько после команды выключения переход mode в 0 считается её результатом.
+	offWait = 10 * time.Second
 )
 
 // Пределы температуры нагрева.
@@ -75,7 +89,7 @@ const (
 var teaTemperatures = map[string]int{"black": 100, "green": 80, "flower": 80, "red": 90, "puerh": 95, "oolong": 90, "white": 65, "herbal": 90}
 
 // numeric - функции с числовым значением. Остальные - строки: «00» и «05» в program_data не числа.
-var numeric = map[string]bool{KeyTemperature: true, "sensor/temperature": true, "weight": true, "diag/rssi": true, "timezone": true, "volume": true}
+var numeric = map[string]bool{KeyTemperature: true, KeySensor: true, "weight": true, "diag/rssi": true, "timezone": true, "volume": true}
 
 // Found - прибор, который подключался к брокеру.
 type Found struct {

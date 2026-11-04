@@ -8,11 +8,15 @@ import (
 	"slices"
 	"strconv"
 	"sync"
+	"time"
 
 	"hcgateway/internal/appliance"
 )
 
-var _ appliance.Appliance = (*Appliance)(nil)
+var (
+	_ appliance.Appliance = (*Appliance)(nil)
+	_ appliance.Stepper   = (*Appliance)(nil)
+)
 
 // Appliance - прибор Polaris как прибор по профилю. Программ у него нет: всё, что он умеет, -
 // записать значение в топик control/<имя>.
@@ -30,11 +34,17 @@ type Appliance struct {
 	client string
 	notify appliance.Notify
 	runs   int
+	// offAt - когда шлюз выключил чайник командой; modeGen - номер последнего сообщения mode: ожидание
+	// конца работы действует, только пока не пришло новое.
+	offAt   time.Time
+	modeGen int
+	// finishAfter - значение finishWait; в тестах короче.
+	finishAfter time.Duration
 }
 
 func newAppliance(h *Hub, id string) *Appliance {
 	f := h.load(id)
-	return &Appliance{hub: h, id: id, devType: f.DevType, reports: f.Reports, values: map[string]any{}}
+	return &Appliance{hub: h, id: id, devType: f.DevType, reports: f.Reports, values: map[string]any{}, finishAfter: finishWait}
 }
 
 // DeviceID - идентификатор прибора в топиках.
@@ -88,7 +98,19 @@ func (a *Appliance) message(client, key, value string) {
 		return
 	}
 	a.online, a.client = true, client
+	previous, known := a.values[KeyMode]
 	a.values[key] = parseValue(key, value)
+	// Температура 0 в простое значит, что цель не задана: Алисе такую цель передавать нельзя.
+	if f, ok := a.values[key].(float64); ok && key == KeyTemperature && f < minTemperature {
+		delete(a.values, key)
+	}
+	if key == KeyMode {
+		a.modeGen++
+		if known && previous != modeOff && value == modeOff && time.Since(a.offAt) >= offWait {
+			gen := a.modeGen
+			time.AfterFunc(a.finishAfter, func() { a.finished(gen) })
+		}
+	}
 	save := false
 	if key == KeyDevType && value != a.devType {
 		a.devType, save = value, true
@@ -115,6 +137,17 @@ func (a *Appliance) message(client, key, value string) {
 	}
 	if notify != nil {
 		notify(nil)
+	}
+}
+
+// finished сообщает о конце работы, если чайник всё ещё выключен и его не сняли с базы.
+func (a *Appliance) finished(gen int) {
+	a.mu.Lock()
+	notify := a.notify
+	done := a.online && a.modeGen == gen && a.values[KeyEmptyBase] != true
+	a.mu.Unlock()
+	if done && notify != nil {
+		notify([]string{EventBoilFinished})
 	}
 }
 
@@ -159,6 +192,17 @@ func (a *Appliance) Command(context.Context, string) error {
 	return appliance.ErrNotSupported
 }
 
+// Step меняет цель нагрева на шаг, когда цель не задана: шаг считается от температуры воды.
+func (a *Appliance) Step(ctx context.Context, key string, delta float64) error {
+	a.mu.Lock()
+	current, ok := a.values[KeySensor].(float64)
+	a.mu.Unlock()
+	if key != KeyTemperature || !ok {
+		return appliance.ErrNotSupported
+	}
+	return a.Set(ctx, key, math.Round(current+delta))
+}
+
 // Set записывает значение. Температура и чай сразу запускают разогрев: иначе «нагрей до 80» ничего
 // бы не сделало.
 func (a *Appliance) Set(_ context.Context, key string, value any) error {
@@ -190,6 +234,7 @@ func (a *Appliance) Set(_ context.Context, key string, value any) error {
 		if mode == modeOff {
 			a.mu.Lock()
 			delete(a.values, KeyTea)
+			a.offAt = time.Now()
 			a.mu.Unlock()
 		}
 		return a.hub.publish(a.id, KeyMode, mode)

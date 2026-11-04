@@ -251,6 +251,12 @@ func (a *Appliance) loadState(ctx context.Context) error {
 		}
 	}
 	a.mu.Lock()
+	// В снимке облака нет событий: без них уровень соли или воды вернулся бы в normal.
+	for k, v := range a.state.Values {
+		if strings.Contains(k, ".Event.") {
+			st.Values[k] = v
+		}
+	}
 	a.state, a.present = st, true
 	a.changedLocked(nil)
 	return nil

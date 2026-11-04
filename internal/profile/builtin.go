@@ -63,8 +63,9 @@ var builtin = map[string]*Profile{
 		Properties: []Property{doorOpen,
 			{Type: "float", Instance: "temperature", Status: "Cooking.Oven.Status.CurrentCavityTemperature", Unit: celsius}},
 		Events: &Events{Button: map[string]string{
-			"BSH.Common.Event.ProgramFinished":   "click",
-			"Cooking.Oven.Event.PreheatFinished": "double_click",
+			"BSH.Common.Event.ProgramFinished":          "click",
+			"Cooking.Oven.Event.PreheatFinished":        "double_click",
+			"Cooking.Oven.Event.RegularPreheatFinished": "double_click",
 			// Те же события у духовки с номером камеры в именах.
 			"Cooking.Oven.Event.Cavity.001.ProgramFinished":        "click",
 			"Cooking.Oven.Event.Cavity.001.RegularPreheatFinished": "double_click",
