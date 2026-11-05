@@ -14,6 +14,7 @@ import (
 	"hcgateway/internal/config"
 	"hcgateway/internal/delonghi"
 	"hcgateway/internal/hcdevice"
+	"hcgateway/internal/i18n"
 	"hcgateway/internal/profile"
 )
 
@@ -359,5 +360,38 @@ func TestQuietPages(t *testing.T) {
 	if !strings.Contains(body, `<div class="wrap" hidden>`) || strings.Contains(body, "DEVICE_UNREACHABLE") ||
 		!strings.Contains(body, "Лента недоступна: видны только пресеты из настроек.") || strings.Contains(body, "Нет связи с лентой") {
 		t.Fatal("лента без связи: лишние строки")
+	}
+}
+
+// Названия рецептов: в строке режима, в состоянии прибора и в списке из облака. Номер без названия остаётся номером.
+func TestRecipeNames(t *testing.T) {
+	if got := programShort(delonghi.ProgramPrefix + "15"); got != "рецепт 15 - Капучино, сначала молоко" {
+		t.Fatalf("строка режима: %s", got)
+	}
+	if got := programShort(delonghi.ProgramPrefix + "50"); got != "рецепт 50" {
+		t.Fatalf("номер без названия: %s", got)
+	}
+	p := &profile.Profile{Modes: []profile.Mode{{Instance: "coffee_mode", Programs: map[string]string{delonghi.ProgramPrefix + "6": "americano"}}}}
+	for program, want := range map[string]string{"6": nameOr(modeValueNames, "americano"), "8": "Латте макиато", "50": "рецепт 50"} {
+		if got := programLabel(p, delonghi.ProgramPrefix+program); got != want {
+			t.Fatalf("состояние, рецепт %s: %s", program, got)
+		}
+	}
+	if got := i18n.Translate(i18n.EN, programShort(delonghi.ProgramPrefix+"8")); got != "recipe 8 - Latte macchiato" {
+		t.Fatalf("английский текст: %s", got)
+	}
+
+	f := newFixture(t, "devices:\n  coffee:\n    name: Кофемашина\n    source: delonghi\n    serial: TESTSERIAL1\n    host: 127.0.0.1\n")
+	f.writeUser(testPassword)
+	f.login()
+	f.ui.statsMu.Lock()
+	f.ui.stats = map[string][]delonghi.RecipeStat{"coffee": {{ID: 6, Brew: 3}, {ID: 8, Brew: 2}, {ID: 50, Brew: 1}}}
+	f.ui.statsMu.Unlock()
+	_, body := f.get("/devices/coffee")
+	for _, want := range []string{"<td>8</td><td>Латте макиато</td><td>2</td><td></td>", "<td>50</td><td></td><td>1</td>",
+		`label="Латте макиато, 2 варок"`, `label="1 варок"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("на странице нет %s", want)
+		}
 	}
 }

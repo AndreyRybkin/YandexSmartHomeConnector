@@ -126,7 +126,8 @@ type coffeeView struct {
 
 type statRow struct {
 	ID, Brew int
-	Drink    string
+	// Name - название рецепта; пусто - номера нет в таблице названий. Hint - подпись в подсказке поля.
+	Drink, Name, Hint string
 }
 
 type recipeRow struct {
@@ -155,7 +156,12 @@ func (s *Server) coffeeView(id string, d config.Device) *coffeeView {
 	}
 	s.statsMu.Lock()
 	for _, st := range s.stats[id] {
-		v.Stats = append(v.Stats, statRow{ID: st.ID, Brew: st.Brew, Drink: byNumber[st.ID]})
+		row := statRow{ID: st.ID, Brew: st.Brew, Drink: byNumber[st.ID], Name: recipeNames[strconv.Itoa(st.ID)]}
+		row.Hint = row.Drink
+		if row.Hint == "" {
+			row.Hint = row.Name
+		}
+		v.Stats = append(v.Stats, row)
 	}
 	s.statsMu.Unlock()
 	drink := d.DefaultDrink

@@ -42,7 +42,7 @@
 <label>Профиль пользователя машины <input name="profile_id" value="{{.ProfileID}}" inputmode="numeric" size="3"> <span class="muted">в нём машина хранит настройки напитков</span></label>
 <p>Номер рецепта машины для напитков Алисы <span class="muted">пусто - напитка нет в Алисе</span></p>
 {{range .Recipes}}<label>{{.Label}} <input name="recipe.{{.Drink}}" value="{{.Value}}" inputmode="numeric" size="4" list="dl-recipes"></label>{{end}}
-<datalist id="dl-recipes">{{range .Stats}}<option value="{{.ID}}" label="{{with .Drink}}{{.}}, {{end}}{{.Brew}} варок">{{end}}</datalist>
+<datalist id="dl-recipes">{{range .Stats}}<option value="{{.ID}}" label="{{with .Hint}}{{.}}, {{end}}{{.Brew}} варок">{{end}}</datalist>
 <label>Напиток для «включи» включённой машины <select name="default_drink">{{template "opts" .Drinks}}</select></label>{{end}}{{end}}
 {{if eq .Source "homeconnect-cloud"}}<label>Прибор аккаунта Home Connect {{if .HaIDs}}<select name="ha_id">{{template "opts" .HaIDs}}</select>{{else}}<input name="ha_id" value="{{.Conf.HaID}}" maxlength="64">{{end}} <span class="muted">если прибор заменили новым, выберите новый: идентификатор в Алисе не изменится</span></label>{{end}}
 <button class="primary">Сохранить</button>
@@ -61,8 +61,8 @@
 </section>{{end}}
 {{with .Coffee}}<section class="field" id="coffee"><h2>Рецепты кофемашины</h2>
 <p class="muted">Номера рецептов и сколько раз каждый сварили - из облака De'Longhi. Сварите напиток из приложения, загрузите список: номер с выросшим числом варок - номер этого напитка.</p>
-{{if .Stats}}<div class="wrap"><table><tr><th>Рецепт</th><th>Варок</th><th>Напиток Алисы</th></tr>
-{{range .Stats}}<tr><td>{{.ID}}</td><td>{{.Brew}}</td><td>{{.Drink}}</td></tr>{{end}}</table></div>{{end}}
+{{if .Stats}}<div class="wrap"><table><tr><th>Рецепт</th><th>Название</th><th>Варок</th><th>Напиток Алисы</th></tr>
+{{range .Stats}}<tr><td>{{.ID}}</td><td>{{.Name}}</td><td>{{.Brew}}</td><td>{{.Drink}}</td></tr>{{end}}</table></div>{{end}}
 <form method="post" action="/devices/{{$p.Data.ID}}/recipes" class="cmd"><input type="hidden" name="csrf" value="{{$p.CSRF}}"><button>Загрузить рецепты из облака</button></form>
 </section>
 <section class="field" id="pin"><h2>Сертификат кофемашины</h2>

@@ -301,9 +301,23 @@ func plain(list []string, cur, blank string, names map[string]string) []choice {
 	return out
 }
 
+// recipeNames - названия рецептов кофемашины по номеру, из открытой таблицы протокола ECAM. У машин
+// De'Longhi с приложением My Coffee Lounge проверены только 1, 6 и 15; номеров больше 27 в таблице нет.
+var recipeNames = map[string]string{
+	"1": "Эспрессо", "2": "Кофе", "3": "Длинный кофе", "4": "Два эспрессо", "5": "Доппио+", "6": "Американо",
+	"7": "Капучино, сначала кофе", "8": "Латте макиато", "9": "Кофе с молоком", "10": "Флэт уайт",
+	"11": "Эспрессо макиато", "12": "Горячее молоко", "13": "Капучино доппио+", "14": "Холодное молоко",
+	"15": "Капучино, сначала молоко", "16": "Горячая вода", "17": "Пар", "18": "Шоколад", "19": "Ристретто",
+	"20": "Длинный эспрессо", "21": "Кофе со сливками", "22": "Чай", "23": "Кофейник", "24": "Кортадо",
+	"25": "Лонг блэк", "26": "Дорожная кружка", "27": "Кофе со льдом",
+}
+
 // programShort - программа прибора коротко: последняя часть имени, у кофемашины - «рецепт N».
 func programShort(program string) string {
 	if n, ok := strings.CutPrefix(program, delonghi.ProgramPrefix); ok {
+		if name, ok := recipeNames[n]; ok {
+			return "рецепт " + n + " - " + name
+		}
 		return "рецепт " + n
 	}
 	return short(program)
@@ -331,13 +345,19 @@ func stateLabel(key, value string) string {
 	return short(value)
 }
 
-// programLabel - программа по-русски: режим Алисы, которому она сопоставлена, иначе
-// последняя часть имени.
+// programLabel - программа по-русски: режим Алисы, которому она сопоставлена, иначе название рецепта
+// кофемашины или последняя часть имени.
 func programLabel(p *profile.Profile, program string) string {
 	if pm := p.ProgramMode(); pm != nil {
 		if v, ok := pm.Programs[program]; ok {
 			return nameOr(modeValueNames, v)
 		}
+	}
+	if n, ok := strings.CutPrefix(program, delonghi.ProgramPrefix); ok {
+		if name, ok := recipeNames[n]; ok {
+			return name
+		}
+		return "рецепт " + n
 	}
 	return short(program)
 }
